@@ -1712,14 +1712,8 @@ void Application::DrawMaterialLibraryPanel() {
 
             ImGui::BeginGroup();
             const bool selected = (m_selectedMaterial == i);
-            if (selected) {
-                // 選択枠。サムネイルの上に重ねず、背景として敷く。
-                ImGui::GetWindowDrawList()->AddRectFilled(
-                    ImGui::GetCursorScreenPos(),
-                    ImVec2(ImGui::GetCursorScreenPos().x + thumbnailSize,
-                           ImGui::GetCursorScreenPos().y + thumbnailSize),
-                    ImGui::GetColorU32(ImGuiCol_HeaderActive));
-            }
+            // サムネイルは円の外を抜いてあるので、下に敷いた色が四隅から透ける。
+            // 選択の手掛かりとしては弱いため、枠を画像の後に重ねる。
             if (asset.thumbnail.IsValid()) {
                 ImGui::Image(static_cast<ImTextureID>(asset.thumbnail.srv.gpu.ptr),
                              ImVec2(thumbnailSize, thumbnailSize));
@@ -1729,7 +1723,10 @@ void Application::DrawMaterialLibraryPanel() {
             } else if (ImGui::Button("##thumbnail", ImVec2(thumbnailSize, thumbnailSize))) {
                 m_selectedMaterial = i;
             }
-            if (ImGui::IsItemHovered()) {
+            const bool hovered = ImGui::IsItemHovered();
+            ui::ThumbnailFrame(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), selected,
+                               hovered);
+            if (hovered) {
                 ImGui::SetTooltip("%s", asset.name.c_str());
             }
             ImGui::EndGroup();
@@ -2163,21 +2160,17 @@ void Application::DrawTextureLibraryPanel() {
             ImGui::PushID(static_cast<int>(entry.id));
 
             ImGui::BeginGroup();
-            if (m_selectedTexture == i) {
-                // 選択枠。サムネイルの上に重ねず、背景として敷く。
-                ImGui::GetWindowDrawList()->AddRectFilled(
-                    ImGui::GetCursorScreenPos(),
-                    ImVec2(ImGui::GetCursorScreenPos().x + thumbnailSize,
-                           ImGui::GetCursorScreenPos().y + thumbnailSize),
-                    ImGui::GetColorU32(ImGuiCol_HeaderActive));
-            }
             // リニアなテクスチャ（EXR）は表示用に焼き直したものを描く。
             // 元のまま描くと極端に暗く、一覧で見分けられない。
             ImGui::Image(static_cast<ImTextureID>(entry.PreviewHandle().ptr),
                          ImVec2(thumbnailSize, thumbnailSize));
+            const bool hovered = ImGui::IsItemHovered();
             if (ImGui::IsItemClicked()) {
                 m_selectedTexture = i;
             }
+            // 選択枠は画像の**後**に描く。背景として敷くと不透明な画像に隠れる。
+            ui::ThumbnailFrame(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                               m_selectedTexture == i, hovered);
             // 読み込んだ直後のものは枠内へ送る。一覧はスクロールするので、
             // 追加しただけでは見えない位置に入ることがある。
             if (m_selectedTexture == i && m_scrollToSelectedTexture) {

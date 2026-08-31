@@ -69,6 +69,16 @@ void PropertyValue(const char* label, const char* format, ...);
 // 値列いっぱいに広げないボタン。幅は kButtonWidth / kWideButtonWidth のどちらか。
 bool Button(const char* label, float width = kButtonWidth);
 
+// --- サムネイル一覧 -------------------------------------------------------
+
+// サムネイル 1 枚ぶんの選択枠。**画像を描いた後に呼ぶこと。**
+//
+// 選択は「背景を敷く」では表せない。サムネイルが不透明だと下の色が完全に隠れる。
+// 画像の上に枠を重ねて描く。
+//
+// 呼ぶ前に ImGui::Image / Button を置き、その矩形（GetItemRectMin / Max）を渡す。
+void ThumbnailFrame(const ImVec2& min, const ImVec2& max, bool selected, bool hovered);
+
 // 通知の意味色。ステータスバーで警告とエラーを区別するためだけに使う。
 // グレー基調を崩さないよう彩度は低く抑えてある。配色の一部なので UiStyle.cpp に置く。
 ImU32 WarnColor();

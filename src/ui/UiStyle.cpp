@@ -118,6 +118,33 @@ float ValueWidth(float minWidth, float maxWidth) {
 
 }  // namespace
 
+// サムネイルの選択枠。画像の上に重ねて描く。
+//
+// 背景を敷く方式では表せない。サムネイルが不透明だと下が完全に隠れるため。
+// 選択はアクセント、ホバーは押せることが分かる程度の弱い枠にとどめる。
+void ThumbnailFrame(const ImVec2& min, const ImVec2& max, bool selected, bool hovered) {
+    if (!selected && !hovered) {
+        return;
+    }
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const float rounding = ImGui::GetStyle().FrameRounding;
+
+    if (selected) {
+        // 枠は矩形の内側へ寄せて描く。ちょうど境界へ置くと、
+        // 隣のサムネイルとの間で線の太さが揃わない。
+        const float thickness = Scaled(2.0f);
+        const float inset = thickness * 0.5f;
+        drawList->AddRect(ImVec2(min.x + inset, min.y + inset),
+                          ImVec2(max.x - inset, max.y - inset),
+                          ImGui::GetColorU32(ImGuiCol_CheckMark), rounding, 0, thickness);
+        return;
+    }
+
+    drawList->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_HeaderHovered), rounding, 0,
+                      Scaled(1.0f));
+}
+
 ImU32 WarnColor() {
     return ImGui::GetColorU32(kWarn);
 }
