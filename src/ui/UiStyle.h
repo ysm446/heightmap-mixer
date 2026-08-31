@@ -45,9 +45,13 @@ void PropertyLabel(const char* label, const char* tooltip = nullptr);
 void PropertyLabelEmpty(const char* id);
 void PropertyEnd();
 
+// snapStep を渡すと、**ドラッグ中だけ**その刻みへ吸着する。
+// 「UV スケールを 2.00 にしたい」のように、きりのいい値を狙う行で使う。
+// Ctrl + クリックの直接入力は丸めない（狙って入れた値を動かさないため）。
 bool PropertyFloat(const char* label, float* value, float minValue, float maxValue,
                    float defaultValue, const char* tooltip = nullptr,
-                   const char* format = "%.3f", ImGuiSliderFlags flags = 0);
+                   const char* format = "%.3f", ImGuiSliderFlags flags = 0,
+                   float snapStep = 0.0f);
 bool PropertyInt(const char* label, int* value, int minValue, int maxValue, int defaultValue,
                  const char* tooltip = nullptr);
 bool PropertyBool(const char* label, bool* value, bool defaultValue,

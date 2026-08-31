@@ -19,6 +19,20 @@ enum class PreviewShape {
     Cube,
 };
 
+// ビューポートに何を出すか。シェーダの MM_VIEW_* と一致させること。
+//
+// シェーディング結果以外は「チャンネルの中身をそのまま見る」ための表示で、
+// 露出もトーンマップも掛けない。
+enum class DebugView : uint32_t {
+    Shaded = 0,
+    BaseColor = 1,
+    Normal = 2,
+    Roughness = 3,
+    Metallic = 4,
+    AmbientOcclusion = 5,
+    Height = 6,
+};
+
 enum class TonemapMode : uint32_t {
     None = 0,
     Reinhard = 1,
@@ -87,6 +101,8 @@ public:
     MaterialSettings& Material() { return m_material; }
     PreviewShape& Shape() { return m_shape; }
     TonemapMode& Tonemap() { return m_tonemap; }
+    DebugView& Debug() { return m_debugView; }
+    DebugView Debug() const { return m_debugView; }
     SkySettings& Sky() { return m_sky; }
     const Environment& GetEnvironment() const { return m_environment; }
     // 読み込み済みの HDRI のパス。手続き的な空を使っているときは空。
@@ -131,6 +147,7 @@ private:
     SkySettings m_sky;
     PreviewShape m_shape = PreviewShape::Sphere;
     TonemapMode m_tonemap = TonemapMode::Aces;
+    DebugView m_debugView = DebugView::Shaded;
     float m_iblIntensity = 1.0f;
     float m_materialUvScale = 1.0f;
     uint32_t m_materialResolution = 1024;

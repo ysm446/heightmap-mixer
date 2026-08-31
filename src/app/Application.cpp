@@ -67,6 +67,17 @@ float DegreesToRadians(float degrees) {
     return degrees * (3.14159265358979323846f / 180.0f);
 }
 
+// -pi .. pi へ折り返す。方位角を一周させるときに使う（UI のスライダーもこの範囲）。
+float WrapAngle(float radians) {
+    constexpr float kPi = 3.14159265358979323846f;
+    constexpr float kTwoPi = kPi * 2.0f;
+    radians = std::fmod(radians + kPi, kTwoPi);
+    if (radians < 0.0f) {
+        radians += kTwoPi;
+    }
+    return radians - kPi;
+}
+
 }  // namespace
 
 namespace {
@@ -87,6 +98,11 @@ const char* const kMaskSourceLabels[] = {
     "下地の傾斜", "下地の曲率", "下地の窪み", "ペイント",
 };
 const char* const kChannelLabels[] = {"BaseColor", "Normal", "Surface", "Height"};
+
+// ビューポートの表示モード。renderer::DebugView と並びを合わせること。
+const char* const kDebugViewLabels[] = {
+    "シェーディング", "ベースカラー", "法線", "ラフネス", "メタルネス", "AO", "ハイト",
+};
 const char* const kResolutionLabels[] = {"512", "1024", "2048"};
 constexpr uint32_t kResolutionValues[] = {512, 1024, 2048};
 
@@ -133,13 +149,13 @@ bool DrawNoiseTypeRow(const char* label, compositor::NoiseType& type,
 bool DrawNoiseRows(compositor::NoiseParams& noise, const compositor::NoiseParams& defaults) {
     bool changed = DrawNoiseTypeRow("種類", noise.type, defaults.type);
     changed |= ui::PropertyFloat("周波数", &noise.scale, 0.5f, 64.0f, defaults.scale,
-                                 "大きいほど細かい模様になる", "%.1f");
+                                 "大きいほど細かい模様になる", "%.1f", 0, 0.5f);
     changed |= ui::PropertyFloat("量", &noise.amount, 0.0f, 3.0f, defaults.amount,
                                  "ノイズの寄与。0 で効かなくなる", "%.2f");
     changed |= ui::PropertyInt("オクターブ", &noise.octaves, 1, 8, defaults.octaves,
                                "重ねる段数。多いほど細部が増え、計算も増える");
     changed |= ui::PropertyFloat("オフセット", &noise.offset, 0.0f, 64.0f, defaults.offset,
-                                 "同じ設定で別の模様がほしいときにずらす", "%.1f");
+                                 "同じ設定で別の模様がほしいときにずらす", "%.1f", 0, 0.5f);
     return changed;
 }
 
@@ -260,6 +276,36 @@ bool DrawMapSlotRow(const char* label, compositor::MapSlot& slot,
 
     ui::PropertyEnd();
     return changed;
+}
+
+// ライトのギズモが残る時間（秒）。掴むのをやめてから薄くなって消える。
+constexpr double kLightGizmoFadeSeconds = 0.35;
+// ライトを掴んだときの感度。参考にした terrain-editor と同じ 0.25 度 / ピクセル。
+constexpr float kLightDegreesPerPixel = 0.25f;
+
+// ビューポートに重ねる線を描くための投影。カメラの行列をそのまま使う。
+struct ProjectedPoint {
+    ImVec2 screen{};
+    bool visible = false;
+};
+
+ProjectedPoint ProjectToViewport(const DirectX::XMMATRIX& viewProjection,
+                                 const DirectX::XMFLOAT3& world, const ImVec2& min,
+                                 const ImVec2& size) {
+    using namespace DirectX;
+    const XMVECTOR clip = XMVector3Transform(XMLoadFloat3(&world), viewProjection);
+    const float w = XMVectorGetW(clip);
+    ProjectedPoint out;
+    // カメラの後ろに回った点は描かない。
+    if (w <= 1e-4f) {
+        return out;
+    }
+    const float ndcX = XMVectorGetX(clip) / w;
+    const float ndcY = XMVectorGetY(clip) / w;
+    out.screen = ImVec2(min.x + (ndcX * 0.5f + 0.5f) * size.x,
+                        min.y + (0.5f - ndcY * 0.5f) * size.y);
+    out.visible = true;
+    return out;
 }
 
 // ビューポート左下に置く座標軸ギズモ。
@@ -569,6 +615,18 @@ void Application::DrawUi() {
             if (ImGui::MenuItem("レイアウトをリセット")) {
                 m_rebuildLayout = true;
             }
+            // ビューポートに何を出すか。合成したチャンネルをそのまま覗ける。
+            if (ImGui::BeginMenu("ビューポートに表示")) {
+                renderer::DebugView& current = m_renderer.Debug();
+                for (int i = 0; i < IM_ARRAYSIZE(kDebugViewLabels); ++i) {
+                    const auto view = static_cast<renderer::DebugView>(i);
+                    if (ImGui::MenuItem(kDebugViewLabels[i], nullptr, current == view)) {
+                        current = view;
+                    }
+                }
+                ImGui::EndMenu();
+            }
+
             ImGui::Separator();
             ImGui::MenuItem("設定", nullptr, &m_showSettings);
             ImGui::MenuItem("ImGui デモ", nullptr, &m_showDemoWindow);
@@ -634,6 +692,159 @@ compositor::MaterialLayer* Application::CurrentPaintLayer() {
         return nullptr;
     }
     return &layer;
+}
+
+// L + 左ドラッグでライトの向きを変える。
+//
+// 修飾キー（Ctrl / Shift / Alt）は付けない。Alt は軌道、Ctrl は数値の直接入力に
+// 使っているので、それらと重ならないようにする。
+bool Application::HandleLightDrag(bool itemActive) {
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool shortcut =
+        ImGui::IsKeyDown(ImGuiKey_L) && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt;
+    if (!shortcut || !itemActive || !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        m_lightDragActive = false;
+        return false;
+    }
+
+    m_lightDragActive = true;
+    m_lightGizmoUntil = ImGui::GetTime() + kLightGizmoFadeSeconds;
+
+    renderer::LightSettings& light = m_renderer.Light();
+    const float step = DegreesToRadians(kLightDegreesPerPixel);
+    // 方位角は一周させる。仰角は UI のスライダーと同じ範囲に収める。
+    light.azimuth = WrapAngle(light.azimuth + io.MouseDelta.x * step);
+    // 真下からの光も見たいので、下は -89 度まで許す。
+    light.elevation = std::clamp(light.elevation - io.MouseDelta.y * step,
+                                 DegreesToRadians(-89.0f), DegreesToRadians(89.0f));
+    return true;
+}
+
+// ライトの向きを示すギズモ。地面のリング、水平方向、仰角の弧、光が来る向きの矢印。
+//
+// 色はテーマから引かない。座標軸ギズモと同じく「意味を持つ色」として固定する。
+void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewportMax) {
+    const double now = ImGui::GetTime();
+    if (!m_lightDragActive && now >= m_lightGizmoUntil) {
+        return;
+    }
+    const float fade =
+        m_lightDragActive
+            ? 1.0f
+            : static_cast<float>(std::clamp((m_lightGizmoUntil - now) / kLightGizmoFadeSeconds,
+                                            0.0, 1.0));
+    if (fade <= 0.001f) {
+        return;
+    }
+
+    using namespace DirectX;
+    const renderer::Camera& camera = m_renderer.GetCamera();
+    const XMMATRIX viewProjection = camera.ViewMatrix() * camera.ProjectionMatrix();
+    const ImVec2 size(viewportMax.x - viewportMin.x, viewportMax.y - viewportMin.y);
+    if (size.x <= 0.0f || size.y <= 0.0f) {
+        return;
+    }
+
+    const renderer::LightSettings& light = m_renderer.Light();
+    const XMFLOAT3 direction = light.Direction();
+    // プレビューのメッシュ（半径 1）の外側を通す。
+    constexpr float kRadius = 1.5f;
+    const XMFLOAT3 origin{0.0f, 0.0f, 0.0f};
+    const XMFLOAT3 horizontal{std::sin(light.azimuth), 0.0f, std::cos(light.azimuth)};
+
+    const auto color = [fade](int r, int g, int b, int a) {
+        return IM_COL32(r, g, b, static_cast<int>(static_cast<float>(a) * fade));
+    };
+    const auto offset = [](const XMFLOAT3& base, const XMFLOAT3& dir, float amount) {
+        return XMFLOAT3{base.x + dir.x * amount, base.y + dir.y * amount,
+                        base.z + dir.z * amount};
+    };
+    const auto project = [&](const XMFLOAT3& world) {
+        return ProjectToViewport(viewProjection, world, viewportMin, size);
+    };
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->PushClipRect(viewportMin, viewportMax, true);
+
+    const auto drawWorldLine = [&](const XMFLOAT3& a, const XMFLOAT3& b, ImU32 lineColor,
+                                   float thickness) {
+        const ProjectedPoint pa = project(a);
+        const ProjectedPoint pb = project(b);
+        if (pa.visible && pb.visible) {
+            drawList->AddLine(pa.screen, pb.screen, lineColor, thickness);
+        }
+    };
+
+    // 地面のリング。方位角の目安になる。
+    constexpr int kRingSegments = 72;
+    ProjectedPoint previous;
+    for (int i = 0; i <= kRingSegments; ++i) {
+        const float t = (static_cast<float>(i) / kRingSegments) * 2.0f * 3.14159265f;
+        const ProjectedPoint current =
+            project(XMFLOAT3{std::sin(t) * kRadius, 0.0f, std::cos(t) * kRadius});
+        if (i > 0 && previous.visible && current.visible) {
+            drawList->AddLine(previous.screen, current.screen, color(150, 160, 175, 130), 1.6f);
+        }
+        previous = current;
+    }
+
+    // 水平方向への投影と、そこから仰角ぶんの弧。
+    drawWorldLine(origin, offset(origin, horizontal, kRadius), color(150, 160, 175, 170), 1.8f);
+
+    constexpr int kArcSegments = 32;
+    ProjectedPoint previousArc;
+    for (int i = 0; i <= kArcSegments; ++i) {
+        const float angle = light.elevation * (static_cast<float>(i) / kArcSegments);
+        const ProjectedPoint current = project(XMFLOAT3{horizontal.x * std::cos(angle) * kRadius,
+                                                        std::sin(angle) * kRadius,
+                                                        horizontal.z * std::cos(angle) * kRadius});
+        if (i > 0 && previousArc.visible && current.visible) {
+            drawList->AddLine(previousArc.screen, current.screen, color(255, 206, 112, 150), 1.6f);
+        }
+        previousArc = current;
+    }
+
+    // 光が来る向きの矢印。ライトの位置から原点へ向ける。
+    const ProjectedPoint arrowStart = project(offset(origin, direction, kRadius));
+    const ProjectedPoint arrowEnd = project(offset(origin, direction, kRadius * 0.22f));
+    if (arrowStart.visible && arrowEnd.visible) {
+        const ImU32 lightColor = color(255, 188, 76, 245);
+        ImVec2 screenDir(arrowEnd.screen.x - arrowStart.screen.x,
+                         arrowEnd.screen.y - arrowStart.screen.y);
+        const float length = std::sqrt(screenDir.x * screenDir.x + screenDir.y * screenDir.y);
+        if (length > 0.001f) {
+            screenDir.x /= length;
+            screenDir.y /= length;
+            const ImVec2 side(-screenDir.y, screenDir.x);
+            const float head = ui::Scaled(14.0f);
+            const float halfWidth = ui::Scaled(6.0f);
+            const ImVec2 base(arrowEnd.screen.x - screenDir.x * head,
+                              arrowEnd.screen.y - screenDir.y * head);
+            drawList->AddLine(arrowStart.screen, base, lightColor, ui::Scaled(3.5f));
+            drawList->AddTriangleFilled(
+                arrowEnd.screen, ImVec2(base.x + side.x * halfWidth, base.y + side.y * halfWidth),
+                ImVec2(base.x - side.x * halfWidth, base.y - side.y * halfWidth), lightColor);
+        }
+    }
+
+    if (const ProjectedPoint center = project(origin); center.visible) {
+        drawList->AddCircle(center.screen, ui::Scaled(5.0f), color(200, 210, 220, 200), 20, 1.6f);
+    }
+
+    // いまの値。掴んだまま数字を確かめられるようにする。
+    char text[64] = {};
+    std::snprintf(text, sizeof(text), "方位角 %.0f 度   仰角 %.0f 度",
+                  RadiansToDegrees(light.azimuth), RadiansToDegrees(light.elevation));
+    const ImVec2 textSize = ImGui::CalcTextSize(text);
+    const ImVec2 padding(ui::Scaled(8.0f), ui::Scaled(5.0f));
+    const ImVec2 textMin(viewportMin.x + ui::Scaled(14.0f), viewportMin.y + ui::Scaled(14.0f));
+    const ImVec2 textMax(textMin.x + textSize.x + padding.x * 2.0f,
+                         textMin.y + textSize.y + padding.y * 2.0f);
+    drawList->AddRectFilled(textMin, textMax, color(8, 10, 12, 190), ui::Scaled(4.0f));
+    drawList->AddText(ImVec2(textMin.x + padding.x, textMin.y + padding.y),
+                      color(235, 235, 235, 255), text);
+
+    drawList->PopClipRect();
 }
 
 void Application::HandlePaintInput(compositor::MaterialLayer& layer, bool itemActive,
@@ -766,10 +977,13 @@ void Application::DrawViewportPanel() {
             const bool itemActive = ImGui::IsItemActive();
             const bool itemHovered = ImGui::IsItemHovered();
 
+            // L + 左ドラッグはライトの向き。ブラシや軌道より先に見る。
+            const bool lightDragging = HandleLightDrag(itemActive);
+
             // ペイントモードの間は左 / 右ドラッグをブラシが受け取る。
             // 視点操作を残すため、軌道は Alt + 左ドラッグへ移す。
             compositor::MaterialLayer* paintLayer = CurrentPaintLayer();
-            const bool brushEnabled = (paintLayer != nullptr) && !io.KeyAlt;
+            const bool brushEnabled = (paintLayer != nullptr) && !io.KeyAlt && !lightDragging;
 
             if (brushEnabled) {
                 HandlePaintInput(*paintLayer, itemActive, imageOrigin, available);
@@ -777,8 +991,8 @@ void Application::DrawViewportPanel() {
                 m_strokeActive = false;
             }
 
-            // ブラシが受け取ったドラッグは視点操作に回さない。
-            if (itemActive && !m_strokeActive) {
+            // ブラシやライトが受け取ったドラッグは視点操作に回さない。
+            if (itemActive && !m_strokeActive && !lightDragging) {
                 if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                     camera.Orbit(io.MouseDelta.x * 0.006f, io.MouseDelta.y * 0.006f);
                 } else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) ||
@@ -791,8 +1005,9 @@ void Application::DrawViewportPanel() {
                 camera.Zoom(io.MouseWheel);
             }
 
-            DrawAxisGizmo(camera, imageOrigin,
-                          ImVec2(imageOrigin.x + available.x, imageOrigin.y + available.y));
+            const ImVec2 imageMax(imageOrigin.x + available.x, imageOrigin.y + available.y);
+            DrawAxisGizmo(camera, imageOrigin, imageMax);
+            DrawLightGizmo(imageOrigin, imageMax);
 
             // ブラシの当たる範囲を円で示す。半径はビューポートのピクセル単位なので、
             // 表示倍率で割って ImGui の座標へ戻す。
@@ -824,7 +1039,7 @@ void Application::DrawMaterialPanel() {
 
             if (m_renderer.UseMaterialTextures()) {
                 ui::PropertyFloat("UV スケール", &m_renderer.MaterialUvScale(), 0.25f, 8.0f, 1.0f,
-                                  "マテリアルをメッシュ上に何回並べるか", "%.2f");
+                                  "マテリアルをメッシュ上に何回並べるか", "%.2f", 0, 0.25f);
 
                 int resolution = ResolutionIndex(m_renderer.MaterialResolution());
                 if (ui::PropertyCombo("合成解像度", &resolution, kResolutionLabels,
@@ -853,7 +1068,7 @@ void Application::DrawMaterialPanel() {
             if (ui::PropertyFloat("焦点距離", &focalLength, 12.0f, 200.0f,
                                   renderer::FocalLengthFromFovY(kDefaultCamera.fovY),
                                   "35mm フルサイズ換算。小さいほど広角で、遠近が強く出る",
-                                  "%.0f mm", ImGuiSliderFlags_Logarithmic)) {
+                                  "%.0f mm", ImGuiSliderFlags_Logarithmic, 1.0f)) {
                 camera.FovY() = renderer::FovYFromFocalLength(focalLength);
             }
             ui::PropertyValue("画角", "%.1f 度（垂直）", RadiansToDegrees(camera.FovY()));
@@ -881,7 +1096,7 @@ void Application::DrawLightingPanel() {
                 light.azimuth = DegreesToRadians(azimuthDeg);
             }
             float elevationDeg = RadiansToDegrees(light.elevation);
-            if (ui::PropertyFloat("仰角", &elevationDeg, -5.0f, 89.0f,
+            if (ui::PropertyFloat("仰角", &elevationDeg, -89.0f, 89.0f,
                                   RadiansToDegrees(kDefaultLight.elevation),
                                   "太陽の高さ。低いほど影が伸びる", "%.0f 度")) {
                 light.elevation = DegreesToRadians(elevationDeg);
@@ -1102,7 +1317,7 @@ void Application::DrawLayerPanel() {
         }
         changed |= ui::PropertyFloat("UV スケール", &layer.uvScale, 0.25f, 16.0f,
                                      kDefaultLayer.uvScale,
-                                     "このレイヤーの模様を何回並べるか", "%.2f");
+                                     "このレイヤーの模様を何回並べるか", "%.2f", 0, 0.25f);
         ui::EndPropertyTable();
     }
     if (layer.material != compositor::kNoMaterialAsset) {
@@ -1618,6 +1833,15 @@ void Application::DrawStatusBar() {
                 paintLayer != nullptr) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_CheckMark));
                 ImGui::Text("ペイント中: %s", paintLayer->name.c_str());
+                ImGui::PopStyleColor();
+                ImGui::TextDisabled("|");
+            }
+
+            // 既定以外の表示になっていることは見落としやすいので、常に出す。
+            if (m_renderer.Debug() != renderer::DebugView::Shaded) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
+                ImGui::Text("表示: %s",
+                            kDebugViewLabels[static_cast<size_t>(m_renderer.Debug())]);
                 ImGui::PopStyleColor();
                 ImGui::TextDisabled("|");
             }

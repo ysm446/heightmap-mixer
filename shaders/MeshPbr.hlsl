@@ -44,8 +44,19 @@ struct MeshConstants
     uint materialHeightIndex;
 
     float materialUvScale;
-    float3 pad4;
+    // ビューポートに何を出すか（0 = シェーディング結果）。MM_VIEW_* と一致させる。
+    uint debugView;
+    float2 pad4;
 };
+
+// ビューポートの表示モード。C++ 側の renderer::DebugView と一致させること。
+#define MM_VIEW_SHADED     0
+#define MM_VIEW_BASECOLOR  1
+#define MM_VIEW_NORMAL     2
+#define MM_VIEW_ROUGHNESS  3
+#define MM_VIEW_METALLIC   4
+#define MM_VIEW_AO         5
+#define MM_VIEW_HEIGHT     6
 
 ConstantBuffer<MeshConstants> g_mesh : register(b1);
 
@@ -122,6 +133,58 @@ PsOutput PsMain(VsOutput input)
         const float3 bitangent = cross(geometricNormal, tangent) * input.tangentSign;
         normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y +
                            geometricNormal * tangentNormal.z);
+    }
+
+    // --- デバッグ表示 ------------------------------------------------------
+    // チャンネルの中身をそのまま出す。露出もトーンマップも掛けない
+    // （後段の TonemapPass が debugView を見て素通しする）。
+    if (g_mesh.debugView != MM_VIEW_SHADED)
+    {
+        float3 debugColor = float3(0.0f, 0.0f, 0.0f);
+        if (g_mesh.debugView == MM_VIEW_BASECOLOR)
+        {
+            // ベースカラーはリニアで持っているので、見た目を合わせて sRGB で出す。
+            debugColor = LinearToSrgb(saturate(baseColor));
+        }
+        else if (g_mesh.debugView == MM_VIEW_NORMAL)
+        {
+            // タンジェント空間の法線マップと同じ見え方にする。
+            float3 tangentNormal = float3(0.0f, 0.0f, 1.0f);
+            if (g_mesh.useMaterialTextures != 0u)
+            {
+                Texture2D<float2> normalMap = ResourceDescriptorHeap[g_mesh.materialNormalIndex];
+                tangentNormal = DecodeTangentNormal(
+                    normalMap.Sample(g_samplerAnisoWrap, input.uv * g_mesh.materialUvScale));
+            }
+            debugColor = tangentNormal * 0.5f + 0.5f;
+        }
+        else if (g_mesh.debugView == MM_VIEW_ROUGHNESS)
+        {
+            debugColor = roughnessValue.xxx;
+        }
+        else if (g_mesh.debugView == MM_VIEW_METALLIC)
+        {
+            debugColor = metallicValue.xxx;
+        }
+        else if (g_mesh.debugView == MM_VIEW_AO)
+        {
+            debugColor = ambientOcclusion.xxx;
+        }
+        else if (g_mesh.debugView == MM_VIEW_HEIGHT)
+        {
+            float height = 0.0f;
+            if (g_mesh.useMaterialTextures != 0u)
+            {
+                Texture2D<float> heightMap = ResourceDescriptorHeap[g_mesh.materialHeightIndex];
+                height = heightMap.Sample(g_samplerAnisoWrap, input.uv * g_mesh.materialUvScale);
+            }
+            debugColor = saturate(height).xxx;
+        }
+
+        PsOutput debugOutput;
+        debugOutput.color = float4(debugColor, 1.0f);
+        debugOutput.materialUv = float4(frac(input.uv * g_mesh.materialUvScale), 1.0f, 0.0f);
+        return debugOutput;
     }
 
     float3 diffuseColor;

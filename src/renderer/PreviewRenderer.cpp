@@ -54,7 +54,8 @@ struct MeshConstants {
     uint32_t materialHeightIndex;
 
     float materialUvScale;
-    float pad4[3];
+    uint32_t debugView;
+    float pad4[2];
 };
 
 // GPU 側の SkyboxConstants と一致させること。
@@ -76,6 +77,7 @@ struct TonemapConstants {
     uint32_t height;
     float exposure;
     uint32_t tonemapMode;
+    uint32_t debugView;
 };
 
 void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, rhi::GpuTexture& texture,
@@ -429,6 +431,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.materialSurfaceIndex = materialTextures.surface.SrvIndex();
     constants.materialHeightIndex = materialTextures.height.SrvIndex();
     constants.materialUvScale = m_materialUvScale;
+    constants.debugView = static_cast<uint32_t>(m_debugView);
 
     const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(MeshConstants), 256);
     if (!cb.IsValid()) {
@@ -449,7 +452,8 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     // UV バッファには書かないので、シーンカラーだけを束ね直す。
     commandList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
-    if (m_showSkybox && m_environment.IsReady()) {
+    // デバッグ表示のときは背景を描かない。チャンネルの値だけを見たいため。
+    if (m_showSkybox && m_environment.IsReady() && m_debugView == DebugView::Shaded) {
         rhi::GraphicsPipelineDesc skyboxPipelineDesc;
         skyboxPipelineDesc.shaderPath = L"Skybox.hlsl";
         skyboxPipelineDesc.vertexEntry = L"VsMain";
@@ -495,8 +499,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     const TonemapConstants tonemapConstants{
-        m_sceneColor.SrvIndex(), m_output.UavIndex(),        m_width,
-        m_height,                m_exposure.Exposure(),      static_cast<uint32_t>(m_tonemap)};
+        m_sceneColor.SrvIndex(),   m_output.UavIndex(),
+        m_width,                   m_height,
+        m_exposure.Exposure(),     static_cast<uint32_t>(m_tonemap),
+        static_cast<uint32_t>(m_debugView)};
 
     commandList->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
     commandList->SetPipelineState(tonemapPipeline);

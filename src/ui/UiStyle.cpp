@@ -59,6 +59,18 @@ void DrawTooltip(const char* tooltip) {
     ImGui::EndTooltip();
 }
 
+// 数値行のツールチップ。**直接入力できることは気づきにくい**ので必ず添える。
+// 戻り値は次に呼ぶまでの一時領域を指す（そのまま PropertyLabel へ渡す前提）。
+const char* NumericTooltip(const char* tooltip) {
+    static char buffer[512];
+    constexpr const char* kInputHelp = "Ctrl + クリックで直接入力";
+    if (tooltip == nullptr || tooltip[0] == '\0') {
+        return kInputHelp;
+    }
+    std::snprintf(buffer, sizeof(buffer), "%s\n%s", tooltip, kInputHelp);
+    return buffer;
+}
+
 // 既定値マーカー。既定値と違うときだけ明るく塗り、押すと既定値へ戻す。
 //
 // 「既定値から変えてあるか」の視覚表現はこの点だけに集約する。
@@ -266,13 +278,19 @@ void PropertyEnd() {
 
 bool PropertyFloat(const char* label, float* value, float minValue, float maxValue,
                    float defaultValue, const char* tooltip, const char* format,
-                   ImGuiSliderFlags flags) {
+                   ImGuiSliderFlags flags, float snapStep) {
     // 読み込み直後の範囲外値を UI 側で吸収する。
     *value = std::clamp(*value, minValue, maxValue);
 
-    PropertyLabel(label, tooltip);
+    PropertyLabel(label, NumericTooltip(tooltip));
     ImGui::SetNextItemWidth(ValueWidth(kSliderMinWidth, kSliderMaxWidth));
     bool changed = ImGui::SliderFloat("##value", value, minValue, maxValue, format, flags);
+
+    // ドラッグ中だけ刻みへ吸着させる。マウスを押していないときの変更
+    // （Ctrl + クリックの直接入力、キーボード）は丸めない。
+    if (changed && snapStep > 0.0f && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        *value = std::clamp(std::round(*value / snapStep) * snapStep, minValue, maxValue);
+    }
 
     if (ResetDot(NearlyEqual(*value, defaultValue), FormatFloat(defaultValue, format))) {
         *value = std::clamp(defaultValue, minValue, maxValue);
@@ -286,7 +304,7 @@ bool PropertyInt(const char* label, int* value, int minValue, int maxValue, int 
                  const char* tooltip) {
     *value = std::clamp(*value, minValue, maxValue);
 
-    PropertyLabel(label, tooltip);
+    PropertyLabel(label, NumericTooltip(tooltip));
     ImGui::SetNextItemWidth(ValueWidth(kSliderMinWidth, kSliderMaxWidth));
     bool changed = ImGui::SliderInt("##value", value, minValue, maxValue);
 

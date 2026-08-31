@@ -104,6 +104,11 @@ private:
     compositor::MaterialLayer* CurrentPaintLayer();
     // レイヤーパネルのマスク欄に出すペイント関連の UI。
     bool DrawPaintSection(compositor::MaterialLayer& layer);
+    // ビューポート上の L + 左ドラッグでライトの向きを変える。
+    // 掴んでいる間は true を返す（軌道やブラシへ渡さない）。
+    bool HandleLightDrag(bool itemActive);
+    // ライトの向きを示すギズモ。動かしている間と、その直後だけ出す。
+    void DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewportMax);
     // ビューポート上のドラッグをブラシへ渡す。ペイントモードのときだけ呼ぶ。
     void HandlePaintInput(compositor::MaterialLayer& layer, bool itemActive,
                           const ImVec2& imageOrigin, const ImVec2& imageSize);
@@ -123,6 +128,9 @@ private:
     compositor::BrushSettings m_brush;
     // ペイントモード中はビューポートの左ドラッグがブラシになる。
     bool m_paintMode = false;
+    // ライトの向きを掴んでいる間。ギズモは離してからも少しの間だけ残す。
+    bool m_lightDragActive = false;
+    double m_lightGizmoUntil = 0.0;
     // ストローク中の状態。前フレームのカーソル位置から線分としてブラシを積む。
     bool m_strokeActive = false;
     float m_strokeLastX = 0.0f;
