@@ -81,6 +81,11 @@ set(hm_sources
     src/app/Application.h
     src/core/Log.cpp
     src/core/Log.h
+    src/compositor/MaterialEvaluator.cpp
+    src/compositor/MaterialEvaluator.h
+    src/compositor/MaterialLayer.h
+    src/compositor/MaterialStack.cpp
+    src/compositor/MaterialStack.h
     src/core/ImageIo.cpp
     src/core/ImageIo.h
     src/core/Window.cpp

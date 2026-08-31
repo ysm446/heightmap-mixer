@@ -1,0 +1,76 @@
+#include "compositor/MaterialStack.h"
+
+namespace hm::compositor {
+
+MaterialStack::MaterialStack() {
+    // 既定は「岩の隙間に砂が溜まる」構成。ハイトブレンドの効果が一目で分かる。
+    //
+    // マスクは不透明度として高さと同じ土俵で競合する。
+    // 双方のマスクを 0.5 にすると a = 岩の高さ + 0.5、b = 砂の高さ + 0.5 となり、
+    // 高さの大小だけで勝敗が決まる。砂の基準高さが「砂が溜まる水位」になる。
+    MaterialLayer rock;
+    rock.name = "岩";
+    rock.baseColor = {0.30f, 0.28f, 0.26f};
+    rock.roughness = 0.70f;
+    rock.metallic = 0.0f;
+    rock.heightSource = ValueSource::Noise;
+    rock.heightBase = 0.0f;
+    rock.heightNoise = NoiseParams{7.0f, 1.0f, 6, 0.0f};
+    rock.normalStrength = 1.0f;
+    rock.mask.source = ValueSource::Constant;
+    rock.mask.constant = 1.0f;
+    rock.blendRange = 0.2f;
+    m_layers.push_back(rock);
+
+    MaterialLayer sand;
+    sand.name = "砂";
+    sand.baseColor = {0.68f, 0.58f, 0.40f};
+    sand.roughness = 0.90f;
+    sand.metallic = 0.0f;
+    sand.heightSource = ValueSource::Noise;
+    // 砂が溜まる水位。岩の高さ（0〜1）の中央より少し下に置く。
+    sand.heightBase = 0.42f;
+    sand.heightNoise = NoiseParams{26.0f, 0.05f, 4, 11.0f};
+    sand.normalStrength = 0.25f;
+    sand.mask.source = ValueSource::Constant;
+    sand.mask.constant = 0.5f;
+    sand.blendRange = 0.05f;
+    m_layers.push_back(sand);
+}
+
+MaterialLayer& MaterialStack::Add(const MaterialLayer& layer) {
+    m_layers.push_back(layer);
+    MarkDirty();
+    return m_layers.back();
+}
+
+void MaterialStack::Remove(size_t index) {
+    if (index >= m_layers.size()) {
+        return;
+    }
+    m_layers.erase(m_layers.begin() + static_cast<ptrdiff_t>(index));
+    MarkDirty();
+}
+
+void MaterialStack::Move(size_t index, int delta) {
+    if (index >= m_layers.size() || delta == 0) {
+        return;
+    }
+    const auto target = static_cast<ptrdiff_t>(index) + delta;
+    if (target < 0 || target >= static_cast<ptrdiff_t>(m_layers.size())) {
+        return;
+    }
+    std::swap(m_layers[index], m_layers[static_cast<size_t>(target)]);
+    MarkDirty();
+}
+
+size_t MaterialStack::FirstEnabledIndex() const {
+    for (size_t i = 0; i < m_layers.size(); ++i) {
+        if (m_layers[i].enabled) {
+            return i;
+        }
+    }
+    return static_cast<size_t>(-1);
+}
+
+}  // namespace hm::compositor

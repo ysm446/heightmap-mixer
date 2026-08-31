@@ -1,5 +1,6 @@
 #pragma once
 
+#include "compositor/MaterialEvaluator.h"
 #include "renderer/Camera.h"
 #include "renderer/Environment.h"
 #include "renderer/Mesh.h"
@@ -61,13 +62,15 @@ public:
     // 環境マップの作り直しは GPU 待機を伴うため、フレームの外で呼ぶこと。
     void RequestSkyRebuild() { m_skyRebuildRequested = true; }
     void RequestHdrLoad(const std::filesystem::path& path) { m_pendingHdrPath = path; }
-    void ProcessPendingEnvironment(rhi::Device& device, rhi::PipelineCache& pipelineCache);
+    // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
+    // フレームの外でまとめて処理する。
+    void ProcessPendingWork(rhi::Device& device, rhi::PipelineCache& pipelineCache);
 
     // 表示先のサイズに合わせてレンダーターゲットを作り直す。
     bool Resize(rhi::Device& device, uint32_t width, uint32_t height);
 
     void Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                ID3D12GraphicsCommandList* commandList);
+                ID3D12GraphicsCommandList* commandList, const compositor::MaterialStack& stack);
 
     Camera& GetCamera() { return m_camera; }
     ExposureSettings& Exposure() { return m_exposure; }
@@ -79,6 +82,11 @@ public:
     const Environment& GetEnvironment() const { return m_environment; }
     float& IblIntensity() { return m_iblIntensity; }
     bool& ShowSkybox() { return m_showSkybox; }
+    bool& UseMaterialTextures() { return m_useMaterialTextures; }
+    float& MaterialUvScale() { return m_materialUvScale; }
+    const compositor::MaterialEvaluator& Evaluator() const { return m_evaluator; }
+    uint32_t MaterialResolution() const { return m_materialResolution; }
+    void RequestMaterialResolution(uint32_t resolution) { m_requestedMaterialResolution = resolution; }
 
     // 表示用テクスチャを PNG に書き出す。フレームの外で呼ぶこと。
     bool SaveOutputToPng(rhi::Device& device, const std::filesystem::path& path);
@@ -105,10 +113,15 @@ private:
     LightSettings m_light;
     MaterialSettings m_material;
     Environment m_environment;
+    compositor::MaterialEvaluator m_evaluator;
     SkySettings m_sky;
     PreviewShape m_shape = PreviewShape::Sphere;
     TonemapMode m_tonemap = TonemapMode::Aces;
     float m_iblIntensity = 1.0f;
+    float m_materialUvScale = 1.0f;
+    uint32_t m_materialResolution = 1024;
+    uint32_t m_requestedMaterialResolution = 1024;
+    bool m_useMaterialTextures = true;
     bool m_showSkybox = true;
     bool m_skyRebuildRequested = false;
     std::filesystem::path m_pendingHdrPath;

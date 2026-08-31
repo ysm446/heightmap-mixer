@@ -5,8 +5,10 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace hm {
 namespace {
@@ -46,13 +48,17 @@ float DegreesToRadians(float degrees) {
     return degrees * (3.14159265358979323846f / 180.0f);
 }
 
-// 既定レイアウトを適用するフレーム。
+// 既定レイアウトを適用し始めるフレーム。
 // 1 フレーム目はビューポートの作業領域がまだ確定していないことがあるため、
-// 数フレーム待ってから一度だけ配置する。
+// 数フレーム待ってから適用する。
 constexpr uint32_t kDefaultLayoutFrame = 3;
 
 // DPI や画面解像度に依存しないよう、メインビューポートの作業領域に対する比率で置く。
-// apply が false のときは何もしない（保存済みレイアウトを尊重する）。
+//
+// 条件は ImGuiCond_FirstUseEver。保存済みレイアウト(ini)にあるウィンドウには効かず、
+// 新しく追加したウィンドウだけが既定位置に置かれる。
+// 「ini が無い初回起動だけ適用する」方式にすると、後から増やしたパネルが
+// 既存 ini の環境で配置されないまま重なってしまう。
 void SetDefaultWindowRect(bool apply, float relativeX, float relativeY, float relativeWidth,
                           float relativeHeight) {
     if (!apply) {
@@ -63,9 +69,9 @@ void SetDefaultWindowRect(bool apply, float relativeX, float relativeY, float re
     const ImVec2 size = viewport->WorkSize;
 
     ImGui::SetNextWindowPos(ImVec2(origin.x + size.x * relativeX, origin.y + size.y * relativeY),
-                            ImGuiCond_Always);
+                            ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(size.x * relativeWidth, size.y * relativeHeight),
-                             ImGuiCond_Always);
+                             ImGuiCond_FirstUseEver);
 }
 
 }  // namespace
@@ -104,11 +110,6 @@ bool Application::Initialize(const StartupOptions& options) {
     if (!m_renderer.Resize(m_device, m_requestedViewportWidth, m_requestedViewportHeight)) {
         return false;
     }
-
-    // ImGui の初期化前に判定する。初期化すると ini が生成されうるため。
-    std::error_code layoutCheckError;
-    m_applyDefaultLayout =
-        !std::filesystem::exists(std::filesystem::path(kImGuiIniFileName), layoutCheckError);
 
     if (!m_imgui.Initialize(m_window, m_device)) {
         return false;
@@ -165,8 +166,9 @@ int Application::Run() {
 
         PollShaderHotReload();
 
-        // 環境マップの作り直しは GPU 待機を伴うため、フレームの外で処理する。
-        m_renderer.ProcessPendingEnvironment(m_device, m_pipelineCache);
+        // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
+        // フレームの外で処理する。
+        m_renderer.ProcessPendingWork(m_device, m_pipelineCache);
 
         // ビューポートの作り直しは GPU 待機を伴うため、フレームの外で行う。
         if (m_requestedViewportWidth != m_renderer.Width() ||
@@ -184,7 +186,7 @@ int Application::Run() {
             continue;
         }
 
-        m_renderer.Render(m_device, m_pipelineCache, commandList);
+        m_renderer.Render(m_device, m_pipelineCache, commandList, m_materialStack);
 
         // レンダラがターゲットを差し替えているので、ImGui を描く前に戻す。
         m_device.BindBackBuffer(commandList);
@@ -219,10 +221,12 @@ void Application::DrawUi() {
 
     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
 
-    // 既定レイアウトは初回起動時に一度だけ適用する。
-    const bool applyLayout = m_applyDefaultLayout && (m_frameCounter == kDefaultLayoutFrame);
+    // ビューポートの作業領域が確定してから既定レイアウトを流す。
+    // 実際に効くのは ini に無いウィンドウだけ（FirstUseEver）。
+    const bool applyLayout = m_frameCounter >= kDefaultLayoutFrame;
 
     DrawViewportPanel(applyLayout);
+    DrawLayerPanel(applyLayout);
     DrawMaterialPanel(applyLayout);
     DrawLightingPanel(applyLayout);
     DrawInfoPanel(applyLayout);
@@ -233,7 +237,7 @@ void Application::DrawUi() {
 }
 
 void Application::DrawViewportPanel(bool applyLayout) {
-    SetDefaultWindowRect(applyLayout, 0.27f, 0.00f, 0.46f, 0.98f);
+    SetDefaultWindowRect(applyLayout, 0.27f, 0.00f, 0.44f, 0.98f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     const bool open = ImGui::Begin("ビューポート");
     ImGui::PopStyleVar();
@@ -279,8 +283,8 @@ void Application::DrawViewportPanel(bool applyLayout) {
 }
 
 void Application::DrawMaterialPanel(bool applyLayout) {
-    SetDefaultWindowRect(applyLayout, 0.01f, 0.00f, 0.25f, 0.38f);
-    if (ImGui::Begin("マテリアル")) {
+    SetDefaultWindowRect(applyLayout, 0.72f, 0.00f, 0.275f, 0.31f);
+    if (ImGui::Begin("プレビュー設定")) {
         static const char* const kShapeLabels[] = {"球", "平面", "キューブ"};
         int shape = static_cast<int>(m_renderer.Shape());
         if (ImGui::Combo("形状", &shape, kShapeLabels, IM_ARRAYSIZE(kShapeLabels))) {
@@ -288,10 +292,30 @@ void Application::DrawMaterialPanel(bool applyLayout) {
         }
 
         ImGui::Separator();
-        renderer::MaterialSettings& material = m_renderer.Material();
-        ImGui::ColorEdit3("ベースカラー", &material.baseColor.x);
-        ImGui::SliderFloat("ラフネス", &material.roughness, 0.0f, 1.0f);
-        ImGui::SliderFloat("メタルネス", &material.metallic, 0.0f, 1.0f);
+        ImGui::Checkbox("合成結果を使う", &m_renderer.UseMaterialTextures());
+        if (m_renderer.UseMaterialTextures()) {
+            ImGui::SliderFloat("UV スケール", &m_renderer.MaterialUvScale(), 0.25f, 8.0f);
+
+            static const char* const kResolutionLabels[] = {"512", "1024", "2048"};
+            static const uint32_t kResolutionValues[] = {512, 1024, 2048};
+            int selected = 1;
+            for (int i = 0; i < IM_ARRAYSIZE(kResolutionValues); ++i) {
+                if (kResolutionValues[i] == m_renderer.MaterialResolution()) {
+                    selected = i;
+                    break;
+                }
+            }
+            if (ImGui::Combo("合成解像度", &selected, kResolutionLabels,
+                             IM_ARRAYSIZE(kResolutionLabels))) {
+                m_renderer.RequestMaterialResolution(kResolutionValues[selected]);
+            }
+        } else {
+            // 合成を使わないときの単色マテリアル。
+            renderer::MaterialSettings& material = m_renderer.Material();
+            ImGui::ColorEdit3("ベースカラー", &material.baseColor.x);
+            ImGui::SliderFloat("ラフネス", &material.roughness, 0.0f, 1.0f);
+            ImGui::SliderFloat("メタルネス", &material.metallic, 0.0f, 1.0f);
+        }
 
         ImGui::Separator();
         if (ImGui::Button("カメラをリセット")) {
@@ -303,7 +327,7 @@ void Application::DrawMaterialPanel(bool applyLayout) {
 }
 
 void Application::DrawLightingPanel(bool applyLayout) {
-    SetDefaultWindowRect(applyLayout, 0.01f, 0.40f, 0.25f, 0.58f);
+    SetDefaultWindowRect(applyLayout, 0.72f, 0.32f, 0.275f, 0.45f);
     if (ImGui::Begin("ライティングと露出")) {
         renderer::LightSettings& light = m_renderer.Light();
 
@@ -374,8 +398,150 @@ void Application::DrawLightingPanel(bool applyLayout) {
     ImGui::End();
 }
 
+void Application::DrawLayerPanel(bool applyLayout) {
+    SetDefaultWindowRect(applyLayout, 0.005f, 0.00f, 0.26f, 0.98f);
+    if (!ImGui::Begin("レイヤー")) {
+        ImGui::End();
+        return;
+    }
+
+    std::vector<compositor::MaterialLayer>& layers = m_materialStack.Layers();
+    const auto layerCount = static_cast<int>(layers.size());
+    m_selectedLayer = std::clamp(m_selectedLayer, 0, (layerCount > 0) ? layerCount - 1 : 0);
+
+    if (ImGui::Button("追加")) {
+        compositor::MaterialLayer layer;
+        layer.name = "レイヤー " + std::to_string(layers.size() + 1);
+        m_materialStack.Add(layer);
+        m_selectedLayer = static_cast<int>(layers.size()) - 1;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("複製") && layerCount > 0) {
+        compositor::MaterialLayer copy = layers[static_cast<size_t>(m_selectedLayer)];
+        copy.name += " のコピー";
+        m_materialStack.Add(copy);
+        m_selectedLayer = static_cast<int>(layers.size()) - 1;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("削除") && layerCount > 1) {
+        m_materialStack.Remove(static_cast<size_t>(m_selectedLayer));
+        m_selectedLayer = std::max(0, m_selectedLayer - 1);
+    }
+
+    if (ImGui::Button("上へ")) {
+        // 一覧は上が最前面なので、表示上の「上へ」はスタックでは後ろへ動かす。
+        m_materialStack.Move(static_cast<size_t>(m_selectedLayer), 1);
+        m_selectedLayer = std::min(m_selectedLayer + 1, layerCount - 1);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("下へ")) {
+        m_materialStack.Move(static_cast<size_t>(m_selectedLayer), -1);
+        m_selectedLayer = std::max(m_selectedLayer - 1, 0);
+    }
+
+    ImGui::Separator();
+
+    // 一覧は上が最前面になるよう逆順に並べる。
+    if (ImGui::BeginChild("layerList", ImVec2(0.0f, 160.0f * m_imgui.DpiScale()),
+                          ImGuiChildFlags_Borders)) {
+        for (int i = layerCount - 1; i >= 0; --i) {
+            compositor::MaterialLayer& layer = layers[static_cast<size_t>(i)];
+            ImGui::PushID(i);
+            if (ImGui::Checkbox("##enabled", &layer.enabled)) {
+                m_materialStack.MarkDirty();
+            }
+            ImGui::SameLine();
+            if (ImGui::Selectable(layer.name.c_str(), m_selectedLayer == i)) {
+                m_selectedLayer = i;
+            }
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+
+    if (layerCount == 0) {
+        ImGui::End();
+        return;
+    }
+
+    compositor::MaterialLayer& layer = layers[static_cast<size_t>(m_selectedLayer)];
+    bool changed = false;
+
+    ImGui::SeparatorText("基本");
+    char nameBuffer[128] = {};
+    std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", layer.name.c_str());
+    if (ImGui::InputText("名前", nameBuffer, sizeof(nameBuffer))) {
+        layer.name = nameBuffer;
+    }
+    changed |= ImGui::ColorEdit3("ベースカラー", &layer.baseColor.x);
+    changed |= ImGui::SliderFloat("ラフネス", &layer.roughness, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("メタルネス", &layer.metallic, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("AO", &layer.ambientOcclusion, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("UV スケール", &layer.uvScale, 0.25f, 16.0f);
+
+    ImGui::SeparatorText("ハイト");
+    static const char* const kSourceLabels[] = {"定数", "ノイズ"};
+    int heightSource = static_cast<int>(layer.heightSource);
+    if (ImGui::Combo("ハイトの出どころ", &heightSource, kSourceLabels,
+                     IM_ARRAYSIZE(kSourceLabels))) {
+        layer.heightSource = static_cast<compositor::ValueSource>(heightSource);
+        changed = true;
+    }
+    changed |= ImGui::SliderFloat("基準の高さ", &layer.heightBase, -2.0f, 2.0f);
+    if (layer.heightSource == compositor::ValueSource::Noise) {
+        changed |= ImGui::SliderFloat("周波数##h", &layer.heightNoise.scale, 0.5f, 64.0f);
+        changed |= ImGui::SliderFloat("量##h", &layer.heightNoise.amount, 0.0f, 3.0f);
+        changed |= ImGui::SliderInt("オクターブ##h", &layer.heightNoise.octaves, 1, 8);
+        changed |= ImGui::SliderFloat("オフセット##h", &layer.heightNoise.offset, 0.0f, 64.0f);
+    }
+    changed |= ImGui::SliderFloat("法線の強さ", &layer.normalStrength, 0.0f, 4.0f);
+
+    ImGui::SeparatorText("マスク");
+    int maskSource = static_cast<int>(layer.mask.source);
+    if (ImGui::Combo("マスクの出どころ", &maskSource, kSourceLabels, IM_ARRAYSIZE(kSourceLabels))) {
+        layer.mask.source = static_cast<compositor::ValueSource>(maskSource);
+        changed = true;
+    }
+    changed |= ImGui::SliderFloat("定数##m", &layer.mask.constant, 0.0f, 1.0f);
+    if (layer.mask.source == compositor::ValueSource::Noise) {
+        changed |= ImGui::SliderFloat("周波数##m", &layer.mask.noise.scale, 0.5f, 64.0f);
+        changed |= ImGui::SliderFloat("量##m", &layer.mask.noise.amount, 0.0f, 2.0f);
+        changed |= ImGui::SliderInt("オクターブ##m", &layer.mask.noise.octaves, 1, 8);
+        changed |= ImGui::SliderFloat("オフセット##m", &layer.mask.noise.offset, 0.0f, 64.0f);
+    }
+    changed |= ImGui::SliderFloat("レベル下限", &layer.mask.levelsLow, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("レベル上限", &layer.mask.levelsHigh, 0.0f, 1.0f);
+    changed |= ImGui::Checkbox("反転", &layer.mask.invert);
+
+    ImGui::SeparatorText("合成");
+    changed |= ImGui::SliderFloat("境界の柔らかさ", &layer.blendRange, 0.0f, 1.0f);
+    ImGui::TextDisabled("0 に近いほど硬い置き換えになる");
+
+    ImGui::Text("書き込むチャンネル");
+    static const char* const kChannelLabels[] = {"BaseColor", "Normal", "Surface", "Height"};
+    for (uint32_t i = 0; i < 4; ++i) {
+        bool enabled = (layer.channelMask & (1u << i)) != 0u;
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::Checkbox(kChannelLabels[i], &enabled)) {
+            layer.channelMask = enabled ? (layer.channelMask | (1u << i))
+                                        : (layer.channelMask & ~(1u << i));
+            changed = true;
+        }
+        ImGui::PopID();
+        if (i != 3) {
+            ImGui::SameLine();
+        }
+    }
+
+    if (changed) {
+        m_materialStack.MarkDirty();
+    }
+
+    ImGui::End();
+}
+
 void Application::DrawInfoPanel(bool applyLayout) {
-    SetDefaultWindowRect(applyLayout, 0.74f, 0.00f, 0.25f, 0.45f);
+    SetDefaultWindowRect(applyLayout, 0.72f, 0.78f, 0.275f, 0.20f);
     if (ImGui::Begin("情報")) {
         const ImGuiIO& io = ImGui::GetIO();
         ImGui::Text("heightmap-mixer %s", HM_APP_VERSION);
@@ -385,6 +551,10 @@ void Application::DrawInfoPanel(bool applyLayout) {
         ImGui::Text("ビューポート: %u x %u", m_renderer.Width(), m_renderer.Height());
         ImGui::Text("フレームスロット: %u / %u", m_device.FrameIndex(), rhi::kFrameCount);
         ImGui::Separator();
+        ImGui::Text("合成: %u x %u / %u レイヤー / %u タイル",
+                    m_renderer.MaterialResolution(), m_renderer.MaterialResolution(),
+                    m_renderer.Evaluator().EvaluatedLayerCount(),
+                    m_renderer.Evaluator().EvaluatedTileCount());
         ImGui::Text("PSO キャッシュ: %zu 件", m_pipelineCache.PipelineCount());
         ImGui::Text("解放待ち: %zu 件", m_device.PendingDeletionCount());
         ImGui::Text("アップロード最大使用量: %llu KB / %llu KB",

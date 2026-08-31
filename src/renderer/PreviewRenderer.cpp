@@ -43,7 +43,15 @@ struct MeshConstants {
     uint32_t irradianceIndex;
     uint32_t prefilteredIndex;
     uint32_t brdfLutIndex;
-    uint32_t pad3;
+    uint32_t useMaterialTextures;
+
+    uint32_t materialBaseColorIndex;
+    uint32_t materialNormalIndex;
+    uint32_t materialSurfaceIndex;
+    uint32_t materialHeightIndex;
+
+    float materialUvScale;
+    float pad4[3];
 };
 
 // GPU 側の SkyboxConstants と一致させること。
@@ -113,10 +121,14 @@ bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipeli
     if (!m_environment.Initialize(device, pipelineCache)) {
         return false;
     }
+    if (!m_evaluator.Create(device, m_materialResolution)) {
+        return false;
+    }
     return true;
 }
 
 void PreviewRenderer::Shutdown(rhi::Device& device) {
+    m_evaluator.Destroy(device);
     m_environment.Shutdown(device);
     m_sphere.Release(device);
     m_plane.Release(device);
@@ -124,8 +136,16 @@ void PreviewRenderer::Shutdown(rhi::Device& device) {
     ReleaseTargets(device);
 }
 
-void PreviewRenderer::ProcessPendingEnvironment(rhi::Device& device,
-                                                rhi::PipelineCache& pipelineCache) {
+void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
+                                        rhi::PipelineCache& pipelineCache) {
+    if (m_requestedMaterialResolution != m_materialResolution) {
+        if (m_evaluator.Resize(device, m_requestedMaterialResolution)) {
+            m_materialResolution = m_requestedMaterialResolution;
+        } else {
+            m_requestedMaterialResolution = m_materialResolution;
+        }
+    }
+
     if (!m_pendingHdrPath.empty()) {
         const std::filesystem::path path = m_pendingHdrPath;
         m_pendingHdrPath.clear();
@@ -274,10 +294,14 @@ bool PreviewRenderer::Resize(rhi::Device& device, uint32_t width, uint32_t heigh
 }
 
 void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                             ID3D12GraphicsCommandList* commandList) {
+                             ID3D12GraphicsCommandList* commandList,
+                             const compositor::MaterialStack& stack) {
     if (!m_sceneColor.IsValid() || !m_output.IsValid()) {
         return;
     }
+
+    // レイヤースタックに変更があれば、メッシュを描く前に評価し直す。
+    m_evaluator.EvaluateIfDirty(device, pipelineCache, commandList, stack);
 
     rhi::GraphicsPipelineDesc meshPipelineDesc;
     meshPipelineDesc.shaderPath = L"MeshPbr.hlsl";
@@ -346,6 +370,15 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.irradianceIndex = m_environment.IrradianceSrvIndex();
     constants.prefilteredIndex = m_environment.PrefilteredSrvIndex();
     constants.brdfLutIndex = m_environment.BrdfLutSrvIndex();
+
+    const compositor::MaterialTextureSet& materialTextures = m_evaluator.Textures();
+    const bool useMaterial = m_useMaterialTextures && materialTextures.IsValid();
+    constants.useMaterialTextures = useMaterial ? 1u : 0u;
+    constants.materialBaseColorIndex = materialTextures.baseColor.SrvIndex();
+    constants.materialNormalIndex = materialTextures.normal.SrvIndex();
+    constants.materialSurfaceIndex = materialTextures.surface.SrvIndex();
+    constants.materialHeightIndex = materialTextures.height.SrvIndex();
+    constants.materialUvScale = m_materialUvScale;
 
     const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(MeshConstants), 256);
     if (!cb.IsValid()) {

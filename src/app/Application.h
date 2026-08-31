@@ -1,5 +1,6 @@
 #pragma once
 
+#include "compositor/MaterialStack.h"
 #include "core/Window.h"
 #include "renderer/PreviewRenderer.h"
 #include "rhi/Device.h"
@@ -35,12 +36,15 @@ private:
     void DrawMaterialPanel(bool applyLayout);
     void DrawLightingPanel(bool applyLayout);
     void DrawInfoPanel(bool applyLayout);
+    void DrawLayerPanel(bool applyLayout);
 
     Window m_window;
     rhi::Device m_device;
     rhi::ShaderCompiler m_shaderCompiler;
     rhi::PipelineCache m_pipelineCache;
     renderer::PreviewRenderer m_renderer;
+    compositor::MaterialStack m_materialStack;
+    int m_selectedLayer = 0;
     ImGuiLayer m_imgui;
 
     // ビューポートの表示サイズ。UI 側で決まり、次のフレーム頭で反映する。
@@ -56,8 +60,6 @@ private:
     bool m_vsync = true;
     bool m_showDemoWindow = false;
     bool m_hotReloadEnabled = true;
-    // 保存済みレイアウト(ini)が無い初回起動のときだけ既定配置を適用する。
-    bool m_applyDefaultLayout = false;
     uint32_t m_frameCounter = 0;
 };
 
