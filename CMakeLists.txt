@@ -208,6 +208,28 @@ add_custom_command(TARGET material_mixer POST_BUILD
     COMMENT "dxil.dll を配置"
 )
 
+# --- テスト ---------------------------------------------------------------
+# UI の相互作用（ドラッグ、ホバー）は `--screenshot-ui` では確認できない。
+# ImGui へマウスイベントを注入して確かめる。GPU もウィンドウも要らないので、
+# アプリ本体とは別の実行ファイルにしてある。
+#
+# UiStyle は imgui にしか依存しないため、そのままテストへ組み込める。
+# **テストがアプリの実コードを呼ぶこと**が重要で、同じ処理を書き写すと
+# 実装だけ元に戻したときに検出できない。
+enable_testing()
+
+add_executable(material_mixer_tests
+    tests/UiInteractionTests.cpp
+    src/ui/UiStyle.cpp
+    src/ui/UiStyle.h
+)
+
+target_include_directories(material_mixer_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_options(material_mixer_tests PRIVATE /W4 /permissive- /utf-8 /Zc:preprocessor)
+target_link_libraries(material_mixer_tests PRIVATE imgui::imgui)
+
+add_test(NAME ui-interaction COMMAND material_mixer_tests)
+
 set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT material_mixer)
 set_target_properties(material_mixer PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:material_mixer>"

@@ -155,6 +155,22 @@ void ThumbnailFrame(const ImVec2& min, const ImVec2& max, bool selected, bool ho
                       Scaled(1.0f));
 }
 
+Thumbnail ThumbnailButton(const char* id, ImTextureID texture, float size, bool selected) {
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const ImVec2 max(min.x + size, min.y + size);
+
+    // ID を持つアイテムを先に置く。これが無いとドラッグ元にできない。
+    ImGui::InvisibleButton(id, ImVec2(size, size));
+
+    Thumbnail state;
+    state.hovered = ImGui::IsItemHovered();
+    state.clicked = ImGui::IsItemClicked();
+
+    ImGui::GetWindowDrawList()->AddImage(texture, min, max);
+    ThumbnailFrame(min, max, selected, state.hovered);
+    return state;
+}
+
 ImU32 WarnColor() {
     return ImGui::GetColorU32(kWarn);
 }

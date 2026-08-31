@@ -79,6 +79,19 @@ cmake --build --preset x64-release
 
 初回は vcpkg が依存をビルドするため数分かかる。2 回目以降はキャッシュが効く。
 
+## テスト
+
+```powershell
+ctest --test-dir build -C Debug --output-on-failure
+```
+
+UI の相互作用（ドラッグ&ドロップ、ホバー）のテスト。ImGui へマウスイベントを
+注入して確かめるので、GPU もウィンドウも要らず一瞬で終わる。
+
+**`--screenshot-ui` では確認できない操作を押さえるためのもの。**
+この種の不具合は壊れても画面に何も出ないため、手で気づくのが難しい
+（実際、ドラッグ&ドロップは長らく動いていなかった）。
+
 ## 実行
 
 ```powershell

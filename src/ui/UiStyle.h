@@ -79,6 +79,21 @@ bool Button(const char* label, float width = kButtonWidth);
 // 呼ぶ前に ImGui::Image / Button を置き、その矩形（GetItemRectMin / Max）を渡す。
 void ThumbnailFrame(const ImVec2& min, const ImVec2& max, bool selected, bool hovered);
 
+struct Thumbnail {
+    bool clicked = false;
+    bool hovered = false;
+};
+
+// サムネイル 1 枚。**ドラッグ元にできる形で置く。**
+//
+// `ImGui::Image()` は ID を持たないアイテムなので、そのままでは
+// `BeginDragDropSource()` がドラッグを開始できず、黙って false を返す。
+// ここでは `InvisibleButton` で ID を確保してから画像を描く。
+//
+// 戻った直後に `BeginDragDropSource()` を置いてよい
+// （枠の描画は最後のアイテムを変えない）。
+Thumbnail ThumbnailButton(const char* id, ImTextureID texture, float size, bool selected);
+
 // 通知の意味色。ステータスバーで警告とエラーを区別するためだけに使う。
 // グレー基調を崩さないよう彩度は低く抑えてある。配色の一部なので UiStyle.cpp に置く。
 ImU32 WarnColor();
