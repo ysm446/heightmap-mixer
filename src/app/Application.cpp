@@ -4,6 +4,7 @@
 #include "ui/UiStyle.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <DirectXMath.h>
 
@@ -51,32 +52,6 @@ float RadiansToDegrees(float radians) {
 
 float DegreesToRadians(float degrees) {
     return degrees * (3.14159265358979323846f / 180.0f);
-}
-
-// 既定レイアウトを適用し始めるフレーム。
-// 1 フレーム目はビューポートの作業領域がまだ確定していないことがあるため、
-// 数フレーム待ってから適用する。
-constexpr uint32_t kDefaultLayoutFrame = 3;
-
-// DPI や画面解像度に依存しないよう、メインビューポートの作業領域に対する比率で置く。
-//
-// 条件は ImGuiCond_FirstUseEver。保存済みレイアウト(ini)にあるウィンドウには効かず、
-// 新しく追加したウィンドウだけが既定位置に置かれる。
-// 「ini が無い初回起動だけ適用する」方式にすると、後から増やしたパネルが
-// 既存 ini の環境で配置されないまま重なってしまう。
-void SetDefaultWindowRect(bool apply, float relativeX, float relativeY, float relativeWidth,
-                          float relativeHeight) {
-    if (!apply) {
-        return;
-    }
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    const ImVec2 origin = viewport->WorkPos;
-    const ImVec2 size = viewport->WorkSize;
-
-    ImGui::SetNextWindowPos(ImVec2(origin.x + size.x * relativeX, origin.y + size.y * relativeY),
-                            ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(size.x * relativeWidth, size.y * relativeHeight),
-                             ImGuiCond_FirstUseEver);
 }
 
 }  // namespace
@@ -420,23 +395,38 @@ void Application::DrawUi() {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("表示")) {
+            if (ImGui::MenuItem("レイアウトをリセット")) {
+                m_rebuildLayout = true;
+            }
+            ImGui::Separator();
             ImGui::MenuItem("ImGui デモ", nullptr, &m_showDemoWindow);
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
     }
 
-    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+    // パネルはすべてドックへ収める。絶対座標で置くと、ウィンドウの大きさが
+    // 変わったときや、別の大きさで保存された ini を読んだときに画面外へはみ出す。
+    const ImGuiID dockspaceId = ImGui::GetID("HeightmapMixerDockSpace");
 
-    // ビューポートの作業領域が確定してから既定レイアウトを流す。
-    // 実際に効くのは ini に無いウィンドウだけ（FirstUseEver）。
-    const bool applyLayout = m_frameCounter >= kDefaultLayoutFrame;
+    // ini にドックの配置が無ければ既定レイアウトを組む。
+    // DockSpaceOverViewport がノードを作る前に判定すること。
+    if (!m_layoutChecked) {
+        m_layoutChecked = true;
+        m_rebuildLayout = (ImGui::DockBuilderGetNode(dockspaceId) == nullptr);
+    }
+    if (m_rebuildLayout) {
+        m_rebuildLayout = false;
+        BuildDefaultLayout(dockspaceId);
+    }
 
-    DrawViewportPanel(applyLayout);
-    DrawLayerPanel(applyLayout);
-    DrawMaterialPanel(applyLayout);
-    DrawLightingPanel(applyLayout);
-    DrawInfoPanel(applyLayout);
+    ImGui::DockSpaceOverViewport(dockspaceId, ImGui::GetMainViewport());
+
+    DrawViewportPanel();
+    DrawLayerPanel();
+    DrawMaterialPanel();
+    DrawLightingPanel();
+    DrawInfoPanel();
 
     if (m_showDemoWindow) {
         ImGui::ShowDemoWindow(&m_showDemoWindow);
@@ -507,8 +497,45 @@ void Application::HandlePaintInput(compositor::MaterialLayer& layer, bool itemAc
     m_strokeLastY = y;
 }
 
-void Application::DrawViewportPanel(bool applyLayout) {
-    SetDefaultWindowRect(applyLayout, 0.27f, 0.00f, 0.44f, 0.98f);
+// 既定のドックレイアウト。
+//
+//   +----------+----------------+--------------------+
+//   | レイヤー  | ビューポート    | プレビュー設定      |
+//   |          |                +--------------------+
+//   |          |                | ライティングと露出   |
+//   |          |                +--------------------+
+//   |          |                | 情報                |
+//   +----------+----------------+--------------------+
+//
+// 比率で組むので、ウィンドウの大きさが変わってもパネルははみ出さない。
+void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
+    ImGui::DockBuilderRemoveNode(dockspaceId);
+    ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+    // 分割する前に大きさを入れておかないと、分割比が当てにならない。
+    ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->WorkSize);
+
+    ImGuiID center = dockspaceId;
+    ImGuiID left = 0;
+    ImGuiID right = 0;
+    ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.24f, &left, &center);
+    // 残り幅に対する比率。全体では 0.27 ぶんになる。
+    ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.355f, &right, &center);
+
+    ImGuiID rightBottom = 0;
+    ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.28f, &rightBottom, &right);
+    ImGuiID rightTop = 0;
+    ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, 0.36f, &rightTop, &right);
+
+    ImGui::DockBuilderDockWindow("レイヤー", left);
+    ImGui::DockBuilderDockWindow("ビューポート", center);
+    ImGui::DockBuilderDockWindow("プレビュー設定", rightTop);
+    ImGui::DockBuilderDockWindow("ライティングと露出", right);
+    ImGui::DockBuilderDockWindow("情報", rightBottom);
+
+    ImGui::DockBuilderFinish(dockspaceId);
+}
+
+void Application::DrawViewportPanel() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     // ホイールでウィンドウがスクロールしないようにする（ズームに使うため）。
     const bool open = ImGui::Begin("ビューポート", nullptr,
@@ -590,8 +617,7 @@ void Application::DrawViewportPanel(bool applyLayout) {
     ImGui::End();
 }
 
-void Application::DrawMaterialPanel(bool applyLayout) {
-    SetDefaultWindowRect(applyLayout, 0.72f, 0.00f, 0.275f, 0.26f);
+void Application::DrawMaterialPanel() {
     if (ImGui::Begin("プレビュー設定")) {
         if (ui::BeginPropertyTable("previewRows")) {
             static const char* const kShapeLabels[] = {"球", "平面", "キューブ"};
@@ -641,8 +667,7 @@ void Application::DrawMaterialPanel(bool applyLayout) {
     ImGui::End();
 }
 
-void Application::DrawLightingPanel(bool applyLayout) {
-    SetDefaultWindowRect(applyLayout, 0.72f, 0.27f, 0.275f, 0.46f);
+void Application::DrawLightingPanel() {
     if (ImGui::Begin("ライティングと露出")) {
         renderer::LightSettings& light = m_renderer.Light();
 
@@ -802,8 +827,7 @@ void Application::DrawLayerList() {
     }
 }
 
-void Application::DrawLayerPanel(bool applyLayout) {
-    SetDefaultWindowRect(applyLayout, 0.005f, 0.00f, 0.26f, 0.98f);
+void Application::DrawLayerPanel() {
     if (!ImGui::Begin("レイヤー")) {
         ImGui::End();
         return;
@@ -1087,8 +1111,7 @@ bool Application::DrawPaintSection(compositor::MaterialLayer& layer) {
     return changed;
 }
 
-void Application::DrawInfoPanel(bool applyLayout) {
-    SetDefaultWindowRect(applyLayout, 0.72f, 0.74f, 0.275f, 0.24f);
+void Application::DrawInfoPanel() {
     if (ImGui::Begin("情報")) {
         const ImGuiIO& io = ImGui::GetIO();
 

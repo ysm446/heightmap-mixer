@@ -42,11 +42,13 @@ public:
 private:
     void PollShaderHotReload();
     void DrawUi();
-    void DrawViewportPanel(bool applyLayout);
-    void DrawMaterialPanel(bool applyLayout);
-    void DrawLightingPanel(bool applyLayout);
-    void DrawInfoPanel(bool applyLayout);
-    void DrawLayerPanel(bool applyLayout);
+    // 既定のドックレイアウトを組む。ini に配置が無いときと、明示的な要求で呼ぶ。
+    void BuildDefaultLayout(ImGuiID dockspaceId);
+    void DrawViewportPanel();
+    void DrawMaterialPanel();
+    void DrawLightingPanel();
+    void DrawInfoPanel();
+    void DrawLayerPanel();
     // レイヤー一覧。ドラッグで並べ替える。
     void DrawLayerList();
     // ペイントの対象になるレイヤー。ペイントモードで、選択中のレイヤーが
@@ -91,6 +93,9 @@ private:
     float m_clearColor[4] = {0.09f, 0.09f, 0.11f, 1.0f};
     bool m_vsync = true;
     bool m_showDemoWindow = false;
+    // ドックレイアウトの初期化。ini に配置が無ければ既定レイアウトを組む。
+    bool m_layoutChecked = false;
+    bool m_rebuildLayout = false;
     bool m_hotReloadEnabled = true;
     uint32_t m_frameCounter = 0;
 };
