@@ -4,6 +4,8 @@
 
 #include "core/Log.h"
 
+#include <vector>
+
 #include <pix3.h>
 
 #include <utility>
@@ -151,15 +153,52 @@ bool Device::CreateFactoryAndDevice(bool enableDebugLayer) {
 
     // デバッガ未接続で SetBreakOnSeverity を有効にすると、警告のたびにプロセスが落ちる。
     // デバッガ接続時のみ break させ、それ以外はメッセージの出力に留める。
-    if (enableDebugLayer && ::IsDebuggerPresent()) {
-        ComPtr<ID3D12InfoQueue> infoQueue;
-        if (SUCCEEDED(m_device.As(&infoQueue))) {
-            infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
-            infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
-            infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, TRUE);
+    if (enableDebugLayer && SUCCEEDED(m_device.As(&m_infoQueue))) {
+        // デバッガ未接続で break させるとプロセスごと落ちる。繋がっているときだけ。
+        if (::IsDebuggerPresent()) {
+            m_infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+            m_infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
+            m_infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, TRUE);
         }
     }
     return true;
+}
+
+// デバッグレイヤーのメッセージをログへ流す。
+//
+// 溜めたままにすると上限で古いものが捨てられるので、汲んだら消す。
+void Device::DrainDebugMessages() {
+    if (m_infoQueue == nullptr) {
+        return;
+    }
+
+    const UINT64 count = m_infoQueue->GetNumStoredMessages();
+    std::vector<uint8_t> buffer;
+    for (UINT64 i = 0; i < count; ++i) {
+        SIZE_T length = 0;
+        if (FAILED(m_infoQueue->GetMessage(i, nullptr, &length)) || length == 0) {
+            continue;
+        }
+        buffer.resize(length);
+        auto* message = reinterpret_cast<D3D12_MESSAGE*>(buffer.data());
+        if (FAILED(m_infoQueue->GetMessage(i, message, &length))) {
+            continue;
+        }
+
+        switch (message->Severity) {
+            case D3D12_MESSAGE_SEVERITY_CORRUPTION:
+            case D3D12_MESSAGE_SEVERITY_ERROR:
+                MM_LOG_ERROR("D3D12: %s", message->pDescription);
+                break;
+            case D3D12_MESSAGE_SEVERITY_WARNING:
+                MM_LOG_WARN("D3D12: %s", message->pDescription);
+                break;
+            default:
+                // INFO と MESSAGE は数が多く、内容も定型なので出さない。
+                break;
+        }
+    }
+    m_infoQueue->ClearStoredMessages();
 }
 
 bool Device::CreateCommandObjects() {

@@ -121,9 +121,13 @@ bool PipelineCache::CreateGlobalRootSignature() {
     desc.Desc_1_1.pStaticSamplers = samplers;
     // 入力レイアウトを使うグラフィックス PSO には
     // ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT が必須。無いと PSO 作成が E_INVALIDARG で落ちる。
+    // **SAMPLER_HEAP_DIRECTLY_INDEXED は付けない。**
+    // サンプラは上の静的サンプラ（s0..s4）で足りており、
+    // シェーダは SamplerDescriptorHeap[] を使っていない。
+    // 付けるとサンプラヒープの SetDescriptorHeaps が必須になり、
+    // ルートシグネチャを設定するたびに検証エラーが出る。
     desc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
-                          D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED |
-                          D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+                          D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
 
     ComPtr<ID3DBlob> blob;
     ComPtr<ID3DBlob> errorBlob;

@@ -41,6 +41,11 @@ public:
 
     // GPU の完了を待つ。リソース破棄やリサイズの前に必ず呼ぶ。
     void WaitForGpu();
+    // デバッグレイヤーが溜めたメッセージをアプリのログへ流す。
+    //
+    // **これが無いと、検証エラーはデバッガを繋がない限り誰の目にも触れない。**
+    // デバッグレイヤーを有効にしている意味が無くなるので、毎フレーム汲み出す。
+    void DrainDebugMessages();
 
     // 次の EndFrame でバックバッファを PNG に書き出す。UI 込みの見た目を確認する開発用。
     // 画面キャプチャは他ウィンドウを掴むことがあるため、アプリ側から書き出す。
@@ -77,6 +82,8 @@ private:
     ComPtr<IDXGIFactory6> m_factory;
     ComPtr<IDXGIAdapter4> m_adapter;
     ComPtr<ID3D12Device> m_device;
+    // デバッグレイヤーのメッセージ置き場。Release ビルドでは null。
+    ComPtr<ID3D12InfoQueue> m_infoQueue;
     ComPtr<ID3D12CommandQueue> m_commandQueue;
     ComPtr<IDXGISwapChain3> m_swapChain;
 

@@ -615,6 +615,10 @@ int Application::Run() {
         }
 
         m_device.EndFrame(m_vsync);
+
+        // デバッグレイヤーが溜めた検証エラーをログ（とステータスバー）へ流す。
+        // 汲まないとデバッガを繋がない限り誰の目にも触れない。
+        m_device.DrainDebugMessages();
         ++m_frameCounter;
 
         // 開発用のスクリーンショット。書き出したら終了する。
