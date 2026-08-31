@@ -50,13 +50,14 @@ struct MeshConstants
 };
 
 // ビューポートの表示モード。C++ 側の renderer::DebugView と一致させること。
-#define MM_VIEW_SHADED     0
-#define MM_VIEW_BASECOLOR  1
-#define MM_VIEW_NORMAL     2
-#define MM_VIEW_ROUGHNESS  3
-#define MM_VIEW_METALLIC   4
-#define MM_VIEW_AO         5
-#define MM_VIEW_HEIGHT     6
+#define MM_VIEW_SHADED          0
+#define MM_VIEW_BASECOLOR       1
+#define MM_VIEW_NORMAL_TANGENT  2
+#define MM_VIEW_NORMAL_WORLD    3
+#define MM_VIEW_ROUGHNESS       4
+#define MM_VIEW_METALLIC        5
+#define MM_VIEW_AO              6
+#define MM_VIEW_HEIGHT          7
 
 ConstantBuffer<MeshConstants> g_mesh : register(b1);
 
@@ -146,9 +147,9 @@ PsOutput PsMain(VsOutput input)
             // ベースカラーはリニアで持っているので、見た目を合わせて sRGB で出す。
             debugColor = LinearToSrgb(saturate(baseColor));
         }
-        else if (g_mesh.debugView == MM_VIEW_NORMAL)
+        else if (g_mesh.debugView == MM_VIEW_NORMAL_TANGENT)
         {
-            // タンジェント空間の法線マップと同じ見え方にする。
+            // 法線マップそのものの見え方（接空間）。
             float3 tangentNormal = float3(0.0f, 0.0f, 1.0f);
             if (g_mesh.useMaterialTextures != 0u)
             {
@@ -157,6 +158,11 @@ PsOutput PsMain(VsOutput input)
                     normalMap.Sample(g_samplerAnisoWrap, input.uv * g_mesh.materialUvScale));
             }
             debugColor = tangentNormal * 0.5f + 0.5f;
+        }
+        else if (g_mesh.debugView == MM_VIEW_NORMAL_WORLD)
+        {
+            // 陰影に実際に使う向き。法線マップを当てたあとのワールド空間法線。
+            debugColor = normal * 0.5f + 0.5f;
         }
         else if (g_mesh.debugView == MM_VIEW_ROUGHNESS)
         {

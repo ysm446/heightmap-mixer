@@ -101,7 +101,8 @@ const char* const kChannelLabels[] = {"BaseColor", "Normal", "Surface", "Height"
 
 // ビューポートの表示モード。renderer::DebugView と並びを合わせること。
 const char* const kDebugViewLabels[] = {
-    "シェーディング", "ベースカラー", "法線", "ラフネス", "メタルネス", "AO", "ハイト",
+    "シェーディング", "ベースカラー", "法線（接空間）", "法線（ワールド）",
+    "ラフネス",       "メタルネス",   "AO",             "ハイト",
 };
 const char* const kResolutionLabels[] = {"512", "1024", "2048"};
 constexpr uint32_t kResolutionValues[] = {512, 1024, 2048};

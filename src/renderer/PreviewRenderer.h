@@ -26,11 +26,13 @@ enum class PreviewShape {
 enum class DebugView : uint32_t {
     Shaded = 0,
     BaseColor = 1,
-    Normal = 2,
-    Roughness = 3,
-    Metallic = 4,
-    AmbientOcclusion = 5,
-    Height = 6,
+    // 法線マップそのもの（接空間）と、陰影に使う向き（ワールド空間）。
+    NormalTangent = 2,
+    NormalWorld = 3,
+    Roughness = 4,
+    Metallic = 5,
+    AmbientOcclusion = 6,
+    Height = 7,
 };
 
 enum class TonemapMode : uint32_t {
