@@ -33,6 +33,16 @@ constexpr ImVec4 kGrabActive = Gray(0.510f);    // #828282
 constexpr ImVec4 kText = Gray(0.804f);          // #CDCDCD
 constexpr ImVec4 kTextDisabled = Gray(0.455f);  // #747474
 
+// 既定値マーカーの「既定値のまま」の色。専用に持つ。
+//
+// もとは kTextDisabled (#747474) を使っていたが、アクセント (#96A3AD) と明度が近く、
+// **変えてあるかどうかがひと目で分からなかった。** はっきり暗く落として差をつける。
+// kTextDisabled 自体は補助テキストでも使うので、そちらは動かさない。
+constexpr ImVec4 kResetDot = Gray(0.271f);         // #454545
+// 既定値のままでもホバーで少し持ち上げる。押せることが分かるようにするため。
+// アクセントには寄せない（変更済みと紛らわしくなる）。
+constexpr ImVec4 kResetDotHovered = Gray(0.455f);  // #747474
+
 // 唯一のアクセント。彩度を持たせすぎるとグレー基調が崩れるので、
 // わずかに青へ寄せた明るい灰にとどめる。選択・チェック・つまみの強調にだけ使う。
 constexpr ImVec4 kAccent = ImVec4(0.588f, 0.639f, 0.678f, 1.0f);  // #96A3AD
@@ -86,7 +96,7 @@ bool ResetDot(bool isDefault, const std::string& defaultText) {
     const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
     const bool hovered = ImGui::IsItemHovered();
 
-    ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    ImU32 color = ImGui::GetColorU32(hovered ? kResetDotHovered : kResetDot);
     if (!isDefault) {
         color = ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_CheckMark);
     }
