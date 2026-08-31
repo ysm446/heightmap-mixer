@@ -240,6 +240,23 @@ bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
         }
         ImGui::EndDragDropTarget();
     }
+
+    // 割り当ててあるものをホバーで出す。コンボの幅では名前が入りきらず、
+    // `T_Dusty_Gravel_Grou...` のように切れて見分けられないため。
+    //
+    // **ドロップの受け口より後に置くこと。** SetTooltip は内部でウィンドウを作るので、
+    // 先に呼ぶと BeginDragDropTarget が見る「直前のアイテム」が変わってしまう。
+    // ドラッグ中は ImGui 自身がプレビューを出すので、重ねない。
+    // 遅延はプロパティ行のツールチップと揃える（即座には出さない）。
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) &&
+        ImGui::GetDragDropPayload() == nullptr) {
+        if (const compositor::LibraryTexture* current = library.Find(slot); current != nullptr) {
+            ImGui::SetTooltip("%s\n%u x %u", current->name.c_str(), current->texture.width,
+                              current->texture.height);
+        } else {
+            ImGui::SetTooltip("なし\nテクスチャ一覧からドラッグしても割り当てられる");
+        }
+    }
     return changed;
 }
 
