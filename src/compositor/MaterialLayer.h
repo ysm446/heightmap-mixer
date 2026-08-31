@@ -33,6 +33,13 @@ enum class ValueSource : uint32_t {
 using TextureId = uint32_t;
 inline constexpr TextureId kNoTexture = 0;
 
+// ペイントマスクの ID。0 は「なし」。PaintMaskStore が払い出す。
+using PaintMaskId = uint32_t;
+inline constexpr PaintMaskId kNoPaintMask = 0;
+
+// シェーダへ渡す「参照しない」を表すインデックス。
+inline constexpr uint32_t kInvalidTextureIndex = 0xFFFFFFFFu;
+
 // レイヤーが参照するテクスチャ。0 のスロットは定数値を使う。
 struct LayerTextures {
     TextureId baseColor = kNoTexture;         // sRGB として読む
@@ -72,6 +79,7 @@ enum class MaskSource : uint32_t {
     Slope = 4,      // 下地の傾斜（0 = 平坦、1 = 急）
     Curvature = 5,  // 下地の曲率（0.5 = 平坦、> 0.5 = 凸、< 0.5 = 凹）
     Cavity = 6,     // 下地の窪み（簡易 AO。1 に近いほど窪んでいる）
+    Paint = 7,      // ブラシで描いたマスク（PaintMaskStore が持つテクスチャ）
 };
 
 // 中間結果由来かどうか。真なら評価前にマスク生成パスが要る。
@@ -92,6 +100,8 @@ struct LayerMask {
     float levelsLow = 0.0f;
     float levelsHigh = 1.0f;
     bool invert = false;
+    // ペイントマスク。source が Paint のときだけ参照する。
+    PaintMaskId paint = kNoPaintMask;
 };
 
 // 1 レイヤーぶんの設定。

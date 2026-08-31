@@ -1,6 +1,7 @@
 #pragma once
 
 #include "compositor/MaterialEvaluator.h"
+#include "compositor/PaintMask.h"
 #include "compositor/TextureLibrary.h"
 #include "renderer/Camera.h"
 #include "renderer/Environment.h"
@@ -72,7 +73,12 @@ public:
 
     void Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                 ID3D12GraphicsCommandList* commandList, const compositor::MaterialStack& stack,
-                const compositor::TextureLibrary& textures);
+                const compositor::TextureLibrary& textures,
+                const compositor::PaintMaskStore& paintMasks);
+
+    // ペイントのブラシパスが UV バッファを読むための準備をする。
+    // フレーム内、Render より前に呼ぶこと（読むのは前フレームの内容）。
+    compositor::PaintContext PrepareUvBufferForRead(ID3D12GraphicsCommandList* commandList);
 
     Camera& GetCamera() { return m_camera; }
     ExposureSettings& Exposure() { return m_exposure; }
@@ -107,6 +113,9 @@ private:
     Mesh m_cube;
 
     rhi::GpuTexture m_sceneColor;  // 線形 HDR
+    // メッシュ描画の 2 枚目のターゲット。xy: マテリアル UV、z: メッシュに当たったか。
+    // ビューポートのカーソル位置からマテリアルの UV を引くために使う。
+    rhi::GpuTexture m_materialUv;
     rhi::GpuTexture m_depth;
     rhi::GpuTexture m_output;  // トーンマップ後の表示用
 

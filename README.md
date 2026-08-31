@@ -81,7 +81,8 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe)
 
 ```
 heightmap_mixer.exe [--hdri <path>] [--texture <path>]...
-                    [--screenshot <path>] [--screenshot-frame <n>]
+                    [--screenshot <path>] [--screenshot-ui <path>]
+                    [--screenshot-frame <n>]
 ```
 
 | オプション | 内容 |
@@ -89,9 +90,10 @@ heightmap_mixer.exe [--hdri <path>] [--texture <path>]...
 | `--hdri <path>` | 起動時に Radiance HDR (.hdr) を環境マップとして読み込む |
 | `--texture <path>` | 起動時にテクスチャライブラリへ読み込む（繰り返し指定可） |
 | `--screenshot <path>` | 指定フレームまで描いてビューポートを PNG に書き出し、終了する |
+| `--screenshot-ui <path>` | 同じく、UI 込みのウィンドウ全体を PNG に書き出して終了する |
 | `--screenshot-frame <n>` | 書き出すフレーム番号（既定 8） |
 
-`--screenshot` は画面キャプチャに頼らず描画結果を確認するための開発用オプション。
+`--screenshot` / `--screenshot-ui` は画面キャプチャに頼らず結果を確認するための開発用オプション。
 リモートデスクトップ経由や自動確認で使う。
 
 ## 操作
@@ -102,15 +104,27 @@ heightmap_mixer.exe [--hdri <path>] [--texture <path>]...
 | ビューポートで中ボタン / 右ドラッグ | 注視点の平行移動 |
 | ビューポートでホイール | ズーム |
 | パネルのタイトルバーをドラッグ | パネルの移動 |
+| レイヤー一覧をドラッグ | レイヤーの並べ替え |
+| スライダーを Ctrl + クリック | 数値を直接入力 |
+| 行の右端の点をクリック | その値を既定値に戻す |
+
+ペイントモード中はビューポートのドラッグがブラシに変わる。
+
+| 操作 | 動作 |
+| --- | --- |
+| 左ドラッグ | マスクを塗る |
+| 右ドラッグ | マスクを消す |
+| Alt + 左ドラッグ | カメラの回転 |
 
 ### パネル
 
-- **レイヤー**（左）— レイヤーの追加 / 複製 / 削除 / 並べ替えと、選択中レイヤーの編集。
-  一覧は上が最前面。
+- **レイヤー**（左）— レイヤーの追加 / 複製 / 削除と、選択中レイヤーの編集。
+  一覧は上が最前面で、ドラッグして並べ替える。
 - **ビューポート**（中央）— 合成結果を貼ったプレビュー。
 - **プレビュー設定**（右上）— 形状、合成結果の使用可否、UV スケール、合成解像度。
 - **ライティングと露出**（右中）— ライト、露出、環境（IBL）、トーンマップ。
-- **情報**（右下）— フレームレート、解像度、合成のレイヤー数とタイル数、PSO キャッシュ数。
+- **情報**（右下）— フレームレート、解像度、合成のレイヤー数とタイル数、
+  ペイントマスクの枚数と履歴の段数、PSO キャッシュ数。
 
 ### 合成の勘どころ
 
@@ -131,11 +145,11 @@ heightmap_mixer.exe [--hdri <path>] [--texture <path>]...
 CMakeLists.txt / CMakePresets.json / vcpkg.json
 src/
   app/          アプリ本体、エントリポイント、UI パネル
-  compositor/   レイヤースタックの定義、GPU 評価器、テクスチャライブラリ
+  compositor/   レイヤースタックの定義、GPU 評価器、テクスチャ / ペイントマスク
   core/         ログ、Win32 ウィンドウ、画像入出力
   renderer/     PBR プレビュー描画、カメラ、メッシュ、IBL 環境
   rhi/          DX12 ラッパ（device, descriptor, PSO, resource, shader）
-  ui/           Dear ImGui の統合
+  ui/           Dear ImGui の統合、テーマとプロパティ行
 shaders/        HLSL（実行時に DXC でコンパイル、ホットリロード対応）
 docs/
   plan/         goals / plan / progress — 進捗管理の入口
@@ -152,6 +166,7 @@ docs/
 | [docs/plan/progress.md](docs/plan/progress.md) | 進捗、完了済み作業、実装上の注意点 |
 | [docs/design/rhi.md](docs/design/rhi.md) | bindless、ルートシグネチャ、リソース管理、シェーダ |
 | [docs/design/rendering.md](docs/design/rendering.md) | 描画の流れ、露出とトーンマップ、IBL、行列の規約 |
-| [docs/design/compositing.md](docs/design/compositing.md) | チャンネル定義、ハイトブレンド、RNM、タイル評価、テクスチャ |
+| [docs/design/compositing.md](docs/design/compositing.md) | チャンネル定義、ハイトブレンド、RNM、マスク生成、ペイント、タイル評価 |
+| [docs/design/design-guide.md](docs/design/design-guide.md) | UI のレイアウト、配色、プロパティ行 |
 | [docs/changelog.md](docs/changelog.md) | 変更履歴 |
 | [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | 作業ルール |

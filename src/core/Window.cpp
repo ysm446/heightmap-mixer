@@ -28,8 +28,11 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
         return false;
     }
 
+    // width / height はクライアント領域（描画される中身）のサイズとして扱う。
+    // AdjustWindowRect は 96 DPI の枠しか見ないため、実際の DPI 版を使う。
+    // 高 DPI で枠が太くなるぶんクライアント領域が縮むのを防ぐ。
     RECT rect = {0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
-    ::AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
+    ::AdjustWindowRectExForDpi(&rect, WS_OVERLAPPEDWINDOW, FALSE, 0, ::GetDpiForSystem());
 
     m_hwnd = ::CreateWindowExW(0, kWindowClassName, title, WS_OVERLAPPEDWINDOW,
                                CW_USEDEFAULT, CW_USEDEFAULT,
@@ -58,6 +61,9 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
             const LONG fittedHeight = (windowHeight < workHeight) ? windowHeight : workHeight;
             ::SetWindowPos(m_hwnd, nullptr, monitorInfo.rcWork.left, monitorInfo.rcWork.top,
                            fittedWidth, fittedHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+            HM_LOG_WARN("ウィンドウがモニタの作業領域に収まらないため縮めました "
+                        "(要求 %ux%u のクライアント領域は確保できません)",
+                        width, height);
         }
     }
 

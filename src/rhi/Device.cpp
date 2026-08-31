@@ -1,5 +1,7 @@
 #include "rhi/Device.h"
 
+#include "core/ImageIo.h"
+
 #include "core/Log.h"
 
 #include <pix3.h>
@@ -339,9 +341,49 @@ ID3D12GraphicsCommandList* Device::BeginFrame(const float clearColor[4]) {
     return m_commandList.Get();
 }
 
+void Device::CaptureBackBuffer() {
+    ID3D12Resource* backBuffer = m_backBuffers[m_frameIndex].Get();
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT rowCount = 0;
+    UINT64 rowSizeInBytes = 0;
+    UINT64 totalBytes = 0;
+    const D3D12_RESOURCE_DESC desc = backBuffer->GetDesc();
+    m_device->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, &rowCount, &rowSizeInBytes,
+                                    &totalBytes);
+
+    GpuBuffer readback;
+    if (!m_allocator.CreateReadbackBuffer(totalBytes, L"BackBufferCapture", readback)) {
+        m_capturePath.clear();
+        return;
+    }
+
+    // 記録中のコマンドリストへコピーを積む。Present 後はフリップモデルだと
+    // バックバッファの内容が破棄されうるため、必ずフレームの中で写す。
+    const auto toCopySource = CD3DX12_RESOURCE_BARRIER::Transition(
+        backBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    m_commandList->ResourceBarrier(1, &toCopySource);
+
+    const CD3DX12_TEXTURE_COPY_LOCATION destination(readback.resource.Get(), footprint);
+    const CD3DX12_TEXTURE_COPY_LOCATION source(backBuffer, 0);
+    m_commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+
+    const auto toRenderTarget = CD3DX12_RESOURCE_BARRIER::Transition(
+        backBuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    m_commandList->ResourceBarrier(1, &toRenderTarget);
+
+    // 保存はこのフレームを流し終えてから。EndFrame の末尾で回収する。
+    m_pendingCapture = std::move(readback);
+    m_pendingCaptureFootprint = footprint;
+}
+
 void Device::EndFrame(bool vsync) {
     if (!m_frameOpen) {
         return;
+    }
+
+    if (!m_capturePath.empty()) {
+        CaptureBackBuffer();
     }
 
     const auto toPresent = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -365,6 +407,29 @@ void Device::EndFrame(bool vsync) {
 
     m_frameOpen = false;
     MoveToNextFrame();
+
+    if (m_pendingCapture.IsValid()) {
+        // 開発用の書き出しなので、その場で待って保存する。
+        WaitForGpu();
+
+        void* mapped = nullptr;
+        const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(m_pendingCapture.sizeInBytes)};
+        if (HM_CHECK_HR(m_pendingCapture.resource->Map(0, &readRange, &mapped))) {
+            const bool saved = SaveRgba8Png(
+                m_capturePath, m_width, m_height, m_pendingCaptureFootprint.Footprint.RowPitch,
+                static_cast<const uint8_t*>(mapped) + m_pendingCaptureFootprint.Offset);
+            const D3D12_RANGE writtenRange = {0, 0};
+            m_pendingCapture.resource->Unmap(0, &writtenRange);
+            if (!saved) {
+                HM_LOG_ERROR("バックバッファの書き出しに失敗しました");
+            }
+        }
+
+        Defer(m_pendingCapture.resource);
+        Defer(m_pendingCapture.allocation);
+        m_pendingCapture = GpuBuffer{};
+        m_capturePath.clear();
+    }
 }
 
 void Device::BindBackBuffer(ID3D12GraphicsCommandList* commandList) {

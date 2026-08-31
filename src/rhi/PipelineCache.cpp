@@ -48,6 +48,8 @@ std::wstring GraphicsPipelineDesc::MakeKey() const {
     key += L"#";
     key += std::to_wstring(static_cast<int>(rtvFormat));
     key += L"#";
+    key += std::to_wstring(static_cast<int>(rtvFormat1));
+    key += L"#";
     key += std::to_wstring(static_cast<int>(dsvFormat));
     key += L"#";
     key += std::to_wstring(static_cast<int>(layout));
@@ -226,6 +228,10 @@ ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc
     psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     psoDesc.NumRenderTargets = (desc.rtvFormat != DXGI_FORMAT_UNKNOWN) ? 1 : 0;
     psoDesc.RTVFormats[0] = desc.rtvFormat;
+    if (desc.rtvFormat1 != DXGI_FORMAT_UNKNOWN) {
+        psoDesc.NumRenderTargets = 2;
+        psoDesc.RTVFormats[1] = desc.rtvFormat1;
+    }
     psoDesc.DSVFormat = desc.dsvFormat;
     psoDesc.SampleDesc.Count = 1;
 

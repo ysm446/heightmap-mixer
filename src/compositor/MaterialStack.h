@@ -17,6 +17,8 @@ public:
     MaterialLayer& Add(const MaterialLayer& layer);
     void Remove(size_t index);
     void Move(size_t index, int delta);
+    // from の位置のレイヤーを抜いて to の位置へ差し込む。一覧のドラッグ移動で使う。
+    void MoveTo(size_t from, size_t to);
 
     // 変更があったことを記録する。評価器はこれを見て再評価する。
     void MarkDirty() { ++m_revision; }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "compositor/MaterialStack.h"
+#include "compositor/PaintMask.h"
 #include "compositor/TextureLibrary.h"
 
 #include <vector>
@@ -48,14 +49,15 @@ public:
     // まだ評価されていない隣のタイルを読んでしまい、境界に継ぎ目が出る。
     void Evaluate(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                   ID3D12GraphicsCommandList* commandList, const MaterialStack& stack,
-                  const TextureLibrary& textures, const std::vector<TileRect>& tiles);
+                  const TextureLibrary& textures, const PaintMaskStore& paintMasks,
+                  const std::vector<TileRect>& tiles);
 
     // スタックに変更があったときだけ全体を評価し直す。
     // 全体はタイルに分割して評価する。エクスポート時と同じ経路を常に通しておくことで、
     // タイル評価が壊れたままになるのを防ぐ。
     void EvaluateIfDirty(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                          ID3D12GraphicsCommandList* commandList, const MaterialStack& stack,
-                         const TextureLibrary& textures);
+                         const TextureLibrary& textures, const PaintMaskStore& paintMasks);
 
     uint32_t TileSize() const { return m_tileSize; }
     void SetTileSize(uint32_t tileSize) { m_tileSize = (tileSize > 0) ? tileSize : 1; }

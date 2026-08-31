@@ -20,6 +20,8 @@ public:
     Window(const Window&) = delete;
     Window& operator=(const Window&) = delete;
 
+    // width / height はクライアント領域（描画される中身）のサイズ。
+    // ウィンドウ枠のぶんは内部で足す。
     bool Create(const wchar_t* title, uint32_t width, uint32_t height);
     void Destroy();
 

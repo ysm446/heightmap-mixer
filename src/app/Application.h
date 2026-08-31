@@ -1,6 +1,7 @@
 #pragma once
 
 #include "compositor/MaterialStack.h"
+#include "compositor/PaintMask.h"
 #include "compositor/TextureLibrary.h"
 #include "core/Window.h"
 #include "renderer/PreviewRenderer.h"
@@ -8,6 +9,8 @@
 #include "rhi/PipelineCache.h"
 #include "rhi/ShaderCompiler.h"
 #include "ui/ImGuiLayer.h"
+
+#include <imgui.h>
 
 #include <filesystem>
 #include <vector>
@@ -23,6 +26,9 @@ struct StartupOptions {
     // 指定すると、数フレーム描いてからビューポートを PNG に書き出して終了する。
     // 画面キャプチャに頼らず描画結果を確認するための開発用オプション。
     std::filesystem::path screenshotPath;
+    // 指定すると、ウィンドウ全体（UI 込み）を PNG に書き出して終了する。
+    // 画面キャプチャは他ウィンドウを掴むことがあるため、確認にはこちらを使う。
+    std::filesystem::path uiScreenshotPath;
     uint32_t screenshotFrame = 8;
 };
 
@@ -41,6 +47,16 @@ private:
     void DrawLightingPanel(bool applyLayout);
     void DrawInfoPanel(bool applyLayout);
     void DrawLayerPanel(bool applyLayout);
+    // レイヤー一覧。ドラッグで並べ替える。
+    void DrawLayerList();
+    // ペイントの対象になるレイヤー。ペイントモードで、選択中のレイヤーが
+    // ペイントマスクを持つときだけ返す。
+    compositor::MaterialLayer* CurrentPaintLayer();
+    // レイヤーパネルのマスク欄に出すペイント関連の UI。
+    bool DrawPaintSection(compositor::MaterialLayer& layer);
+    // ビューポート上のドラッグをブラシへ渡す。ペイントモードのときだけ呼ぶ。
+    void HandlePaintInput(compositor::MaterialLayer& layer, bool itemActive,
+                          const ImVec2& imageOrigin, const ImVec2& imageSize);
 
     Window m_window;
     rhi::Device m_device;
@@ -49,6 +65,14 @@ private:
     renderer::PreviewRenderer m_renderer;
     compositor::MaterialStack m_materialStack;
     compositor::TextureLibrary m_textureLibrary;
+    compositor::PaintMaskStore m_paintMasks;
+    compositor::BrushSettings m_brush;
+    // ペイントモード中はビューポートの左ドラッグがブラシになる。
+    bool m_paintMode = false;
+    // ストローク中の状態。前フレームのカーソル位置から線分としてブラシを積む。
+    bool m_strokeActive = false;
+    float m_strokeLastX = 0.0f;
+    float m_strokeLastY = 0.0f;
     int m_selectedLayer = 0;
     // テクスチャ読み込みの入力欄と、フレーム外で処理するための保留パス。
     char m_texturePathBuffer[512] = {};

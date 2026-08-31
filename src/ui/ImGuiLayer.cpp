@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "core/Window.h"
 #include "rhi/Device.h"
+#include "ui/UiStyle.h"
 
 #include <imgui.h>
 #include <imgui_impl_dx12.h>
@@ -13,6 +14,10 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg
 
 namespace hm {
 namespace {
+
+// UI の拡大率。クライアント領域を実ピクセルで固定しているため 1.0 で固定する。
+// 詳細は docs/design/design-guide.md の「寸法と DPI」を参照。
+constexpr float kUiScale = 1.0f;
 
 // ImGui バックエンドからのディスクリプタ確保要求を、こちらのアロケータへ橋渡しする。
 void SrvDescriptorAlloc(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* outCpu,
@@ -56,17 +61,17 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
     // これをしないと、ビューポートの余白をドラッグしただけでパネルが動いてしまう。
     io.ConfigWindowsMoveFromTitleBarOnly = true;
 
-    ImGui::StyleColorsDark();
+    // ウィンドウのクライアント領域は実ピクセルで固定してあるので、
+    // UI もそこへ 1:1 で載せる。モニタの DPI で UI まで拡大すると、
+    // 固定したはずの作業面積がモニタ設定によって変わってしまう。
+    // DPI 認識自体は有効なままなので、OS によるビットマップ拡大は起きない。
+    const float monitorDpiScale = ImGui_ImplWin32_GetDpiScaleForHwnd(window.Handle());
+    HM_LOG_INFO("モニタの DPI スケール: %.2f（UI スケールは %.2f 固定）", monitorDpiScale,
+                kUiScale);
+    m_dpiScale = kUiScale;
 
-    // 高 DPI ではフォントと余白をまとめてスケールする。
-    m_dpiScale = ImGui_ImplWin32_GetDpiScaleForHwnd(window.Handle());
-    if (m_dpiScale <= 0.0f) {
-        m_dpiScale = 1.0f;
-    }
-    if (m_dpiScale > 1.0f) {
-        ImGui::GetStyle().ScaleAllSizes(m_dpiScale);
-        HM_LOG_INFO("DPI スケール: %.2f", m_dpiScale);
-    }
+    // 配色と余白はここで一括して決める。個々のパネルで色を積まない。
+    ui::ApplyTheme(m_dpiScale);
 
     if (!ImGui_ImplWin32_Init(window.Handle())) {
         HM_LOG_ERROR("ImGui_ImplWin32_Init に失敗しました");
@@ -104,7 +109,7 @@ void ImGuiLayer::LoadFonts(float dpiScale) {
         "C:/Windows/Fonts/msgothic.ttc",
     };
 
-    const float fontSize = 16.0f * ((dpiScale > 0.0f) ? dpiScale : 1.0f);
+    const float fontSize = 17.0f * ((dpiScale > 0.0f) ? dpiScale : 1.0f);
 
     ImGuiIO& io = ImGui::GetIO();
     for (const char* path : kCandidates) {

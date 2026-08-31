@@ -10,9 +10,6 @@
 
 namespace hm::compositor {
 
-// シェーダへ渡す「参照しない」を表すインデックス。
-inline constexpr uint32_t kInvalidTextureIndex = 0xFFFFFFFFu;
-
 struct LibraryTexture {
     TextureId id = kNoTexture;
     std::string name;

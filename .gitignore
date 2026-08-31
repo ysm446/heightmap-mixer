@@ -7,3 +7,6 @@ vcpkg_installed/
 *.aps
 *.pdb
 *.ilk
+
+# ImGui がリポジトリのルートへ吐くレイアウト保存。環境ごとに違うのでコミットしない。
+*_imgui.ini

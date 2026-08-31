@@ -1,6 +1,7 @@
 #include "app/Application.h"
 
 #include "core/Log.h"
+#include "ui/UiStyle.h"
 
 #include <imgui.h>
 
@@ -13,8 +14,10 @@
 namespace hm {
 namespace {
 
-constexpr uint32_t kInitialWidth = 1600;
-constexpr uint32_t kInitialHeight = 900;
+// クライアント領域（描画される中身）のサイズ。ウィンドウ枠は含まない。
+// DPI では拡大しない。スクリーンショットや録画の解像度を固定するため。
+constexpr uint32_t kInitialWidth = 1920;
+constexpr uint32_t kInitialHeight = 1080;
 
 // ホットリロードの走査間隔（フレーム数）。毎フレーム走査するほどの頻度は要らない。
 constexpr uint32_t kHotReloadIntervalFrames = 30;
@@ -76,21 +79,73 @@ void SetDefaultWindowRect(bool apply, float relativeX, float relativeY, float re
 
 }  // namespace
 
-// ノイズの種類を選ぶコンボ。
-static bool DrawNoiseTypeCombo(const char* label, compositor::NoiseType& type) {
-    static const char* const kLabels[] = {"fBm", "尾根状", "セル状"};
+namespace {
+
+// 既定値マーカーが参照する値。数値リテラルではなく設定構造体の初期値を使う。
+const compositor::MaterialLayer kDefaultLayer;
+const compositor::BrushSettings kDefaultBrush;
+const renderer::LightSettings kDefaultLight;
+const renderer::ExposureSettings kDefaultExposure;
+const renderer::MaterialSettings kDefaultMaterial;
+const renderer::SkySettings kDefaultSky;
+
+const char* const kNoiseTypeLabels[] = {"fBm", "尾根状", "セル状"};
+const char* const kValueSourceLabels[] = {"定数", "ノイズ", "テクスチャ"};
+const char* const kMaskSourceLabels[] = {
+    "定数",       "ノイズ",     "テクスチャ", "下地の高さ",
+    "下地の傾斜", "下地の曲率", "下地の窪み", "ペイント",
+};
+const char* const kChannelLabels[] = {"BaseColor", "Normal", "Surface", "Height"};
+const char* const kResolutionLabels[] = {"512", "1024", "2048"};
+constexpr uint32_t kResolutionValues[] = {512, 1024, 2048};
+
+// レイヤー一覧のドラッグ＆ドロップで使うペイロードの種別。
+constexpr const char* kLayerDragDropType = "HM_LAYER";
+
+// ビューポートの背景色の既定値。Application のメンバ初期化と揃えること。
+constexpr float kDefaultClearColor[3] = {0.09f, 0.09f, 0.11f};
+
+// 解像度コンボの選択位置。一致するものが無ければ 1（1024）に寄せる。
+int ResolutionIndex(uint32_t resolution) {
+    for (int i = 0; i < IM_ARRAYSIZE(kResolutionValues); ++i) {
+        if (kResolutionValues[i] == resolution) {
+            return i;
+        }
+    }
+    return 1;
+}
+
+// ノイズの種類を選ぶ行。
+bool DrawNoiseTypeRow(const char* label, compositor::NoiseType& type,
+                      compositor::NoiseType defaultType) {
     int selected = static_cast<int>(type);
-    if (ImGui::Combo(label, &selected, kLabels, IM_ARRAYSIZE(kLabels))) {
+    if (ui::PropertyCombo(label, &selected, kNoiseTypeLabels, IM_ARRAYSIZE(kNoiseTypeLabels),
+                          static_cast<int>(defaultType),
+                          "fBm: 一般的な起伏 / 尾根状: 稜線や割れ目 / セル状: 石畳や砂利")) {
         type = static_cast<compositor::NoiseType>(selected);
         return true;
     }
     return false;
 }
 
-// テクスチャスロットの選択 UI。ライブラリの一覧からコンボで選ぶ。
-static bool DrawTextureSlot(const char* label, compositor::TextureId& slot,
-                            const compositor::TextureLibrary& library) {
-    const std::vector<compositor::LibraryTexture>& entries = library.Entries();
+// ノイズのパラメータをまとめて並べる。ハイトとマスクで共通。
+bool DrawNoiseRows(compositor::NoiseParams& noise, const compositor::NoiseParams& defaults) {
+    bool changed = DrawNoiseTypeRow("種類", noise.type, defaults.type);
+    changed |= ui::PropertyFloat("周波数", &noise.scale, 0.5f, 64.0f, defaults.scale,
+                                 "大きいほど細かい模様になる", "%.1f");
+    changed |= ui::PropertyFloat("量", &noise.amount, 0.0f, 3.0f, defaults.amount,
+                                 "ノイズの寄与。0 で効かなくなる", "%.2f");
+    changed |= ui::PropertyInt("オクターブ", &noise.octaves, 1, 8, defaults.octaves,
+                               "重ねる段数。多いほど細部が増え、計算も増える");
+    changed |= ui::PropertyFloat("オフセット", &noise.offset, 0.0f, 64.0f, defaults.offset,
+                                 "同じ設定で別の模様がほしいときにずらす", "%.1f");
+    return changed;
+}
+
+// テクスチャスロットを選ぶ行。ライブラリの一覧から選ぶ。
+bool DrawTextureSlotRow(const char* label, compositor::TextureId& slot,
+                        const compositor::TextureLibrary& library) {
+    ui::PropertyLabel(label, "「なし」なら定数値を使う");
 
     std::string preview = "なし";
     if (const compositor::LibraryTexture* current = library.Find(slot); current != nullptr) {
@@ -98,12 +153,14 @@ static bool DrawTextureSlot(const char* label, compositor::TextureId& slot,
     }
 
     bool changed = false;
-    if (ImGui::BeginCombo(label, preview.c_str())) {
+    ImGui::SetNextItemWidth(
+        std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x));
+    if (ImGui::BeginCombo("##value", preview.c_str())) {
         if (ImGui::Selectable("なし", slot == compositor::kNoTexture)) {
             slot = compositor::kNoTexture;
             changed = true;
         }
-        for (const compositor::LibraryTexture& entry : entries) {
+        for (const compositor::LibraryTexture& entry : library.Entries()) {
             ImGui::PushID(static_cast<int>(entry.id));
             if (ImGui::Selectable(entry.name.c_str(), slot == entry.id)) {
                 slot = entry.id;
@@ -113,8 +170,11 @@ static bool DrawTextureSlot(const char* label, compositor::TextureId& slot,
         }
         ImGui::EndCombo();
     }
+    ui::PropertyEnd();
     return changed;
 }
+
+}  // namespace
 
 bool Application::Initialize(const StartupOptions& options) {
     m_options = options;
@@ -122,14 +182,10 @@ bool Application::Initialize(const StartupOptions& options) {
     // ウィンドウ生成より前に済ませる必要がある。
     ImGuiLayer::EnableDpiAwareness();
 
-    // DPI 対応後はウィンドウサイズが物理ピクセルになるため、
-    // 初期サイズも DPI に合わせないと高 DPI 環境で相対的に小さくなる。
+    // クライアント領域を実ピクセルで 1920x1080 にする。DPI では拡大しない。
+    // UI の大きさは ImGui 側の DPI スケールで合わせる。
     // モニタからはみ出す場合は Window::Create 側で作業領域に収める。
-    const float systemDpiScale = static_cast<float>(::GetDpiForSystem()) / 96.0f;
-    const auto initialWidth = static_cast<uint32_t>(kInitialWidth * systemDpiScale);
-    const auto initialHeight = static_cast<uint32_t>(kInitialHeight * systemDpiScale);
-
-    if (!m_window.Create(L"heightmap-mixer", initialWidth, initialHeight)) {
+    if (!m_window.Create(L"heightmap-mixer", kInitialWidth, kInitialHeight)) {
         return false;
     }
 
@@ -179,6 +235,7 @@ bool Application::Initialize(const StartupOptions& options) {
 
 void Application::Shutdown() {
     m_device.WaitForGpu();
+    m_paintMasks.Destroy(m_device);
     m_textureLibrary.Destroy(m_device);
     m_renderer.Shutdown(m_device);
     m_imgui.Shutdown();
@@ -217,6 +274,8 @@ int Application::Run() {
         // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
         // フレームの外で処理する。
         m_renderer.ProcessPendingWork(m_device, m_pipelineCache);
+        // ペイントマスクの解像度変更も作り直しを伴うため、フレームの外で処理する。
+        m_paintMasks.ProcessPendingWork(m_device, m_pipelineCache);
 
         // テクスチャ読み込みも GPU 待機を伴うため、フレームの外で処理する。
         if (!m_pendingTexturePath.empty()) {
@@ -244,16 +303,35 @@ int Application::Run() {
             continue;
         }
 
+        // ブラシは前フレームの UV バッファを読むため、合成の評価より前に流す。
+        const compositor::PaintContext paintContext =
+            m_renderer.PrepareUvBufferForRead(commandList);
+        if (m_paintMasks.Process(m_device, m_pipelineCache, commandList, paintContext)) {
+            // マスクの中身が変わったので合成をやり直す。
+            m_materialStack.MarkDirty();
+        }
+
         m_renderer.Render(m_device, m_pipelineCache, commandList, m_materialStack,
-                          m_textureLibrary);
+                          m_textureLibrary, m_paintMasks);
 
         // レンダラがターゲットを差し替えているので、ImGui を描く前に戻す。
         m_device.BindBackBuffer(commandList);
         m_imgui.EndFrame(commandList);
+
+        // UI 込みの書き出しは、バックバッファが描き終わったこのフレームで写す。
+        const bool captureUi = !m_options.uiScreenshotPath.empty() &&
+                               (m_frameCounter + 1) >= m_options.screenshotFrame;
+        if (captureUi) {
+            m_device.RequestBackBufferCapture(m_options.uiScreenshotPath);
+        }
+
         m_device.EndFrame(m_vsync);
         ++m_frameCounter;
 
         // 開発用のスクリーンショット。書き出したら終了する。
+        if (captureUi) {
+            break;
+        }
         if (!m_options.screenshotPath.empty() && m_frameCounter >= m_options.screenshotFrame) {
             m_device.WaitForGpu();
             m_renderer.SaveOutputToPng(m_device, m_options.screenshotPath);
@@ -295,6 +373,70 @@ void Application::DrawUi() {
     }
 }
 
+compositor::MaterialLayer* Application::CurrentPaintLayer() {
+    if (!m_paintMode) {
+        return nullptr;
+    }
+    std::vector<compositor::MaterialLayer>& layers = m_materialStack.Layers();
+    if (layers.empty() || m_selectedLayer < 0 ||
+        m_selectedLayer >= static_cast<int>(layers.size())) {
+        return nullptr;
+    }
+
+    compositor::MaterialLayer& layer = layers[static_cast<size_t>(m_selectedLayer)];
+    if (layer.mask.source != compositor::MaskSource::Paint ||
+        layer.mask.paint == compositor::kNoPaintMask) {
+        return nullptr;
+    }
+    return &layer;
+}
+
+void Application::HandlePaintInput(compositor::MaterialLayer& layer, bool itemActive,
+                                   const ImVec2& imageOrigin, const ImVec2& imageSize) {
+    const ImGuiIO& io = ImGui::GetIO();
+
+    const bool addPressed = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    const bool erasePressed = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+    if (!itemActive || (!addPressed && !erasePressed)) {
+        m_strokeActive = false;
+        return;
+    }
+
+    // 画像はコンテンツ領域に合わせて拡縮して描いているため、
+    // ImGui の座標をレンダーターゲットのピクセル座標へ換算する。
+    const float scaleX = (imageSize.x > 0.0f)
+                             ? (static_cast<float>(m_renderer.Width()) / imageSize.x)
+                             : 1.0f;
+    const float scaleY = (imageSize.y > 0.0f)
+                             ? (static_cast<float>(m_renderer.Height()) / imageSize.y)
+                             : 1.0f;
+    const float x = (io.MousePos.x - imageOrigin.x) * scaleX;
+    const float y = (io.MousePos.y - imageOrigin.y) * scaleY;
+
+    if (!m_strokeActive) {
+        // ストロークを始める前の内容をアンドゥ履歴へ積む。
+        // アンドゥの単位は「1 ストローク」で、押しっぱなしの間は 1 段に収まる。
+        m_paintMasks.QueueSnapshot(m_device, layer.mask.paint);
+        m_strokeActive = true;
+        m_strokeLastX = x;
+        m_strokeLastY = y;
+    }
+
+    compositor::BrushStroke stroke;
+    stroke.target = layer.mask.paint;
+    stroke.fromX = m_strokeLastX;
+    stroke.fromY = m_strokeLastY;
+    stroke.toX = x;
+    stroke.toY = y;
+    stroke.brush = m_brush;
+    // 右ドラッグは加算 / 減算を入れ替える。消しゴムへ切り替えずに消せるようにするため。
+    stroke.brush.erase = erasePressed ? !m_brush.erase : m_brush.erase;
+    m_paintMasks.QueueStroke(stroke);
+
+    m_strokeLastX = x;
+    m_strokeLastY = y;
+}
+
 void Application::DrawViewportPanel(bool applyLayout) {
     SetDefaultWindowRect(applyLayout, 0.27f, 0.00f, 0.44f, 0.98f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
@@ -332,8 +474,22 @@ void Application::DrawViewportPanel(bool applyLayout) {
 
             const ImGuiIO& io = ImGui::GetIO();
             renderer::Camera& camera = m_renderer.GetCamera();
+            const bool itemActive = ImGui::IsItemActive();
+            const bool itemHovered = ImGui::IsItemHovered();
 
-            if (ImGui::IsItemActive()) {
+            // ペイントモードの間は左 / 右ドラッグをブラシが受け取る。
+            // 視点操作を残すため、軌道は Alt + 左ドラッグへ移す。
+            compositor::MaterialLayer* paintLayer = CurrentPaintLayer();
+            const bool brushEnabled = (paintLayer != nullptr) && !io.KeyAlt;
+
+            if (brushEnabled) {
+                HandlePaintInput(*paintLayer, itemActive, imageOrigin, available);
+            } else {
+                m_strokeActive = false;
+            }
+
+            // ブラシが受け取ったドラッグは視点操作に回さない。
+            if (itemActive && !m_strokeActive) {
                 if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                     camera.Orbit(io.MouseDelta.x * 0.006f, io.MouseDelta.y * 0.006f);
                 } else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) ||
@@ -342,8 +498,19 @@ void Application::DrawViewportPanel(bool applyLayout) {
                 }
             }
 
-            if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f) {
+            if (itemHovered && io.MouseWheel != 0.0f) {
                 camera.Zoom(io.MouseWheel);
+            }
+
+            // ブラシの当たる範囲を円で示す。半径はビューポートのピクセル単位なので、
+            // 表示倍率で割って ImGui の座標へ戻す。
+            if (brushEnabled && itemHovered && available.x > 0.0f) {
+                const float displayScale =
+                    available.x / static_cast<float>(std::max(m_renderer.Width(), 1u));
+                const float radius = m_brush.radiusPixels * displayScale;
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                drawList->AddCircle(io.MousePos, radius + 1.0f, IM_COL32(0, 0, 0, 140), 0, 3.0f);
+                drawList->AddCircle(io.MousePos, radius, IM_COL32(235, 235, 235, 200), 0, 1.5f);
             }
         }
     }
@@ -351,119 +518,215 @@ void Application::DrawViewportPanel(bool applyLayout) {
 }
 
 void Application::DrawMaterialPanel(bool applyLayout) {
-    SetDefaultWindowRect(applyLayout, 0.72f, 0.00f, 0.275f, 0.31f);
+    SetDefaultWindowRect(applyLayout, 0.72f, 0.00f, 0.275f, 0.26f);
     if (ImGui::Begin("プレビュー設定")) {
-        static const char* const kShapeLabels[] = {"球", "平面", "キューブ"};
-        int shape = static_cast<int>(m_renderer.Shape());
-        if (ImGui::Combo("形状", &shape, kShapeLabels, IM_ARRAYSIZE(kShapeLabels))) {
-            m_renderer.Shape() = static_cast<renderer::PreviewShape>(shape);
-        }
+        if (ui::BeginPropertyTable("previewRows")) {
+            static const char* const kShapeLabels[] = {"球", "平面", "キューブ"};
+            int shape = static_cast<int>(m_renderer.Shape());
+            if (ui::PropertyCombo("形状", &shape, kShapeLabels, IM_ARRAYSIZE(kShapeLabels), 0,
+                                  "マテリアルを貼って確かめるメッシュ")) {
+                m_renderer.Shape() = static_cast<renderer::PreviewShape>(shape);
+            }
 
-        ImGui::Separator();
-        ImGui::Checkbox("合成結果を使う", &m_renderer.UseMaterialTextures());
-        if (m_renderer.UseMaterialTextures()) {
-            ImGui::SliderFloat("UV スケール", &m_renderer.MaterialUvScale(), 0.25f, 8.0f);
+            ui::PropertyBool("合成結果", &m_renderer.UseMaterialTextures(), true,
+                             "オフにすると、レイヤー合成を使わず単色マテリアルで表示する");
 
-            static const char* const kResolutionLabels[] = {"512", "1024", "2048"};
-            static const uint32_t kResolutionValues[] = {512, 1024, 2048};
-            int selected = 1;
-            for (int i = 0; i < IM_ARRAYSIZE(kResolutionValues); ++i) {
-                if (kResolutionValues[i] == m_renderer.MaterialResolution()) {
-                    selected = i;
-                    break;
+            if (m_renderer.UseMaterialTextures()) {
+                ui::PropertyFloat("UV スケール", &m_renderer.MaterialUvScale(), 0.25f, 8.0f, 1.0f,
+                                  "マテリアルをメッシュ上に何回並べるか", "%.2f");
+
+                int resolution = ResolutionIndex(m_renderer.MaterialResolution());
+                if (ui::PropertyCombo("合成解像度", &resolution, kResolutionLabels,
+                                      IM_ARRAYSIZE(kResolutionLabels), 1,
+                                      "編集中のプレビュー解像度。上げるほど細部が出るが重くなる")) {
+                    m_renderer.RequestMaterialResolution(kResolutionValues[resolution]);
                 }
+            } else {
+                renderer::MaterialSettings& material = m_renderer.Material();
+                ui::PropertyColor("ベースカラー", &material.baseColor.x,
+                                  &kDefaultMaterial.baseColor.x);
+                ui::PropertyFloat("ラフネス", &material.roughness, 0.0f, 1.0f,
+                                  kDefaultMaterial.roughness, nullptr, "%.2f");
+                ui::PropertyFloat("メタルネス", &material.metallic, 0.0f, 1.0f,
+                                  kDefaultMaterial.metallic, nullptr, "%.2f");
             }
-            if (ImGui::Combo("合成解像度", &selected, kResolutionLabels,
-                             IM_ARRAYSIZE(kResolutionLabels))) {
-                m_renderer.RequestMaterialResolution(kResolutionValues[selected]);
-            }
-        } else {
-            // 合成を使わないときの単色マテリアル。
-            renderer::MaterialSettings& material = m_renderer.Material();
-            ImGui::ColorEdit3("ベースカラー", &material.baseColor.x);
-            ImGui::SliderFloat("ラフネス", &material.roughness, 0.0f, 1.0f);
-            ImGui::SliderFloat("メタルネス", &material.metallic, 0.0f, 1.0f);
+            ui::EndPropertyTable();
         }
 
-        ImGui::Separator();
-        if (ImGui::Button("カメラをリセット")) {
-            m_renderer.GetCamera().Reset();
+        ui::SectionHeader("カメラ");
+        if (ui::BeginPropertyTable("cameraRows")) {
+            ui::PropertyFloat("画角", &m_renderer.GetCamera().FovY(), 0.2f, 1.5f, 0.7853981634f,
+                              "垂直方向の画角（ラジアン）。0.785 = 45 度", "%.2f");
+            ui::PropertyLabelEmpty("cameraReset");
+            if (ui::Button("視点をリセット", ui::kWideButtonWidth)) {
+                m_renderer.GetCamera().Reset();
+            }
+            ui::PropertyEnd();
+            ui::EndPropertyTable();
         }
-        ImGui::SliderFloat("画角 (rad)", &m_renderer.GetCamera().FovY(), 0.2f, 1.5f);
     }
     ImGui::End();
 }
 
 void Application::DrawLightingPanel(bool applyLayout) {
-    SetDefaultWindowRect(applyLayout, 0.72f, 0.32f, 0.275f, 0.45f);
+    SetDefaultWindowRect(applyLayout, 0.72f, 0.27f, 0.275f, 0.46f);
     if (ImGui::Begin("ライティングと露出")) {
         renderer::LightSettings& light = m_renderer.Light();
 
-        ImGui::SeparatorText("ライト");
-        float azimuthDeg = RadiansToDegrees(light.azimuth);
-        if (ImGui::SliderFloat("方位角", &azimuthDeg, -180.0f, 180.0f, "%.0f 度")) {
-            light.azimuth = DegreesToRadians(azimuthDeg);
-        }
-        float elevationDeg = RadiansToDegrees(light.elevation);
-        if (ImGui::SliderFloat("仰角", &elevationDeg, -5.0f, 89.0f, "%.0f 度")) {
-            light.elevation = DegreesToRadians(elevationDeg);
-        }
-        ImGui::DragFloat("照度 (lux)", &light.illuminance, 500.0f, 0.0f, 200000.0f, "%.0f");
-        ImGui::ColorEdit3("光の色", &light.color.x);
-        ImGui::TextDisabled("晴天の直射日光 = 約 100000 lux");
-
-        ImGui::SeparatorText("露出");
-        renderer::ExposureSettings& exposure = m_renderer.Exposure();
-        ImGui::Checkbox("EV を直接指定", &exposure.useManualEv);
-        if (exposure.useManualEv) {
-            ImGui::SliderFloat("EV100", &exposure.manualEv100, -6.0f, 20.0f, "%.2f");
-        } else {
-            ImGui::SliderFloat("絞り (F)", &exposure.aperture, 1.0f, 32.0f, "F%.1f");
-
-            float shutterDenominator = 1.0f / exposure.shutterSpeed;
-            if (ImGui::SliderFloat("シャッター", &shutterDenominator, 1.0f, 4000.0f, "1/%.0f 秒",
-                                   ImGuiSliderFlags_Logarithmic)) {
-                exposure.shutterSpeed = 1.0f / shutterDenominator;
+        ui::SectionHeader("ライト");
+        if (ui::BeginPropertyTable("lightRows")) {
+            float azimuthDeg = RadiansToDegrees(light.azimuth);
+            if (ui::PropertyFloat("方位角", &azimuthDeg, -180.0f, 180.0f,
+                                  RadiansToDegrees(kDefaultLight.azimuth),
+                                  "太陽の向き（水平方向）", "%.0f 度")) {
+                light.azimuth = DegreesToRadians(azimuthDeg);
             }
-            ImGui::SliderFloat("ISO", &exposure.iso, 50.0f, 6400.0f, "%.0f",
-                               ImGuiSliderFlags_Logarithmic);
+            float elevationDeg = RadiansToDegrees(light.elevation);
+            if (ui::PropertyFloat("仰角", &elevationDeg, -5.0f, 89.0f,
+                                  RadiansToDegrees(kDefaultLight.elevation),
+                                  "太陽の高さ。低いほど影が伸びる", "%.0f 度")) {
+                light.elevation = DegreesToRadians(elevationDeg);
+            }
+            ui::PropertyFloat("照度", &light.illuminance, 0.0f, 200000.0f,
+                              kDefaultLight.illuminance,
+                              "lux。晴天の直射日光がおよそ 100000 lux", "%.0f");
+            ui::PropertyColor("光の色", &light.color.x, &kDefaultLight.color.x);
+            ui::EndPropertyTable();
         }
-        ImGui::Text("EV100 = %.2f  /  exposure = %.3e", exposure.Ev100(), exposure.Exposure());
 
-        ImGui::SeparatorText("環境 (IBL)");
-        ImGui::Text("環境: %s", m_renderer.GetEnvironment().SourceName().c_str());
-        ImGui::Text("equirect: %u x %u", m_renderer.GetEnvironment().EquirectWidth(),
-                    m_renderer.GetEnvironment().EquirectHeight());
-        ImGui::SliderFloat("環境光の強さ", &m_renderer.IblIntensity(), 0.0f, 4.0f);
-        ImGui::Checkbox("背景を表示", &m_renderer.ShowSkybox());
+        ui::SectionHeader("露出");
+        renderer::ExposureSettings& exposure = m_renderer.Exposure();
+        if (ui::BeginPropertyTable("exposureRows")) {
+            ui::PropertyBool("EV を直接指定", &exposure.useManualEv, kDefaultExposure.useManualEv,
+                             "オフにすると絞り / シャッター / ISO から EV100 を求める");
+            if (exposure.useManualEv) {
+                ui::PropertyFloat("EV100", &exposure.manualEv100, -6.0f, 20.0f,
+                                  kDefaultExposure.manualEv100, nullptr, "%.2f");
+            } else {
+                ui::PropertyFloat("絞り", &exposure.aperture, 1.0f, 32.0f,
+                                  kDefaultExposure.aperture, "F 値。大きいほど暗くなる", "F%.1f");
 
+                float shutterDenominator = 1.0f / exposure.shutterSpeed;
+                if (ui::PropertyFloat("シャッター", &shutterDenominator, 1.0f, 4000.0f,
+                                      1.0f / kDefaultExposure.shutterSpeed,
+                                      "秒の逆数。大きいほど暗くなる", "1/%.0f 秒",
+                                      ImGuiSliderFlags_Logarithmic)) {
+                    exposure.shutterSpeed = 1.0f / shutterDenominator;
+                }
+                ui::PropertyFloat("ISO", &exposure.iso, 50.0f, 6400.0f, kDefaultExposure.iso,
+                                  "感度。大きいほど明るくなる", "%.0f",
+                                  ImGuiSliderFlags_Logarithmic);
+            }
+            ui::PropertyValue("EV100", "%.2f  (exposure %.3e)", exposure.Ev100(),
+                              exposure.Exposure());
+            ui::EndPropertyTable();
+        }
+
+        ui::SectionHeader("環境 (IBL)");
+        if (ui::BeginPropertyTable("iblRows")) {
+            ui::PropertyValue("環境", "%s", m_renderer.GetEnvironment().SourceName().c_str());
+            ui::PropertyValue("equirect", "%u x %u", m_renderer.GetEnvironment().EquirectWidth(),
+                              m_renderer.GetEnvironment().EquirectHeight());
+            ui::PropertyFloat("環境光の強さ", &m_renderer.IblIntensity(), 0.0f, 4.0f, 1.0f,
+                              nullptr, "%.2f");
+            ui::PropertyBool("背景を表示", &m_renderer.ShowSkybox(), true,
+                             "オフにすると背景色だけになる。IBL の寄与は残る");
+
+            ui::PropertyTextInput("HDRI", m_hdrPathBuffer, IM_ARRAYSIZE(m_hdrPathBuffer),
+                                  "Radiance HDR (.hdr) のパス");
+            ui::PropertyLabelEmpty("hdrLoad");
+            if (ui::Button("読み込む") && m_hdrPathBuffer[0] != 0) {
+                m_renderer.RequestHdrLoad(std::filesystem::path(m_hdrPathBuffer));
+            }
+            ui::PropertyEnd();
+            ui::EndPropertyTable();
+        }
+
+        ui::SectionHeader("手続き的な空");
         renderer::SkySettings& sky = m_renderer.Sky();
-        bool skyChanged = false;
-        skyChanged |= ImGui::ColorEdit3("天頂色", &sky.zenithColor.x);
-        skyChanged |= ImGui::ColorEdit3("地平色", &sky.horizonColor.x);
-        skyChanged |= ImGui::ColorEdit3("地面色", &sky.groundColor.x);
-        skyChanged |= ImGui::DragFloat("空の輝度 (cd/m2)", &sky.intensity, 50.0f, 0.0f, 100000.0f,
-                                       "%.0f");
-        if (skyChanged || ImGui::Button("手続き的な空に戻す")) {
-            m_renderer.RequestSkyRebuild();
+        if (ui::BeginPropertyTable("skyRows")) {
+            bool skyChanged = false;
+            skyChanged |= ui::PropertyColor("天頂色", &sky.zenithColor.x,
+                                            &kDefaultSky.zenithColor.x);
+            skyChanged |= ui::PropertyColor("地平色", &sky.horizonColor.x,
+                                            &kDefaultSky.horizonColor.x);
+            skyChanged |= ui::PropertyColor("地面色", &sky.groundColor.x,
+                                            &kDefaultSky.groundColor.x);
+            skyChanged |= ui::PropertyFloat("輝度", &sky.intensity, 0.0f, 100000.0f,
+                                            kDefaultSky.intensity,
+                                            "cd/m2。晴天の空はおよそ 4000〜15000", "%.0f");
+
+            ui::PropertyLabelEmpty("skyRebuild");
+            const bool rebuild = ui::Button("空に戻す", ui::kWideButtonWidth);
+            ui::PropertyEnd();
+
+            if (skyChanged || rebuild) {
+                m_renderer.RequestSkyRebuild();
+            }
+            ui::EndPropertyTable();
         }
 
-        ImGui::Spacing();
-        ImGui::SetNextItemWidth(-120.0f);
-        ImGui::InputText("HDRI のパス", m_hdrPathBuffer, IM_ARRAYSIZE(m_hdrPathBuffer));
-        if (ImGui::Button("HDRI を読み込む") && m_hdrPathBuffer[0] != 0) {
-            m_renderer.RequestHdrLoad(std::filesystem::path(m_hdrPathBuffer));
-        }
-        ImGui::TextDisabled("Radiance HDR (.hdr) に対応");
-
-        ImGui::SeparatorText("トーンマップ");
-        static const char* const kTonemapLabels[] = {"なし", "Reinhard", "ACES"};
-        int tonemap = static_cast<int>(m_renderer.Tonemap());
-        if (ImGui::Combo("方式", &tonemap, kTonemapLabels, IM_ARRAYSIZE(kTonemapLabels))) {
-            m_renderer.Tonemap() = static_cast<renderer::TonemapMode>(tonemap);
+        ui::SectionHeader("トーンマップ");
+        if (ui::BeginPropertyTable("tonemapRows")) {
+            static const char* const kTonemapLabels[] = {"なし", "Reinhard", "ACES"};
+            int tonemap = static_cast<int>(m_renderer.Tonemap());
+            if (ui::PropertyCombo("方式", &tonemap, kTonemapLabels, IM_ARRAYSIZE(kTonemapLabels),
+                                  static_cast<int>(renderer::TonemapMode::Aces))) {
+                m_renderer.Tonemap() = static_cast<renderer::TonemapMode>(tonemap);
+            }
+            ui::EndPropertyTable();
         }
     }
     ImGui::End();
+}
+
+// レイヤー一覧。一番上が最前面。ドラッグで並べ替える。
+void Application::DrawLayerList() {
+    std::vector<compositor::MaterialLayer>& layers = m_materialStack.Layers();
+    const auto layerCount = static_cast<int>(layers.size());
+
+    // ドラッグの結果はループの外で反映する。走査中に並びを変えない。
+    int dropFrom = -1;
+    int dropTo = -1;
+
+    if (ImGui::BeginChild("layerList", ImVec2(0.0f, ui::Scaled(150.0f)),
+                          ImGuiChildFlags_Borders)) {
+        for (int i = layerCount - 1; i >= 0; --i) {
+            compositor::MaterialLayer& layer = layers[static_cast<size_t>(i)];
+            ImGui::PushID(i);
+
+            if (ImGui::Checkbox("##enabled", &layer.enabled)) {
+                m_materialStack.MarkDirty();
+            }
+            ImGui::SameLine();
+            if (ImGui::Selectable(layer.name.c_str(), m_selectedLayer == i)) {
+                m_selectedLayer = i;
+            }
+
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoHoldToOpenOthers)) {
+                ImGui::SetDragDropPayload(kLayerDragDropType, &i, sizeof(int));
+                ImGui::TextUnformatted(layer.name.c_str());
+                ImGui::EndDragDropSource();
+            }
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload =
+                        ImGui::AcceptDragDropPayload(kLayerDragDropType);
+                    payload != nullptr) {
+                    dropFrom = *static_cast<const int*>(payload->Data);
+                    dropTo = i;
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+
+    if (dropFrom >= 0 && dropTo >= 0 && dropFrom != dropTo) {
+        m_materialStack.MoveTo(static_cast<size_t>(dropFrom), static_cast<size_t>(dropTo));
+        m_selectedLayer = dropTo;
+    }
 }
 
 void Application::DrawLayerPanel(bool applyLayout) {
@@ -477,55 +740,37 @@ void Application::DrawLayerPanel(bool applyLayout) {
     const auto layerCount = static_cast<int>(layers.size());
     m_selectedLayer = std::clamp(m_selectedLayer, 0, (layerCount > 0) ? layerCount - 1 : 0);
 
-    if (ImGui::Button("追加")) {
+    if (ui::Button("追加")) {
         compositor::MaterialLayer layer;
         layer.name = "レイヤー " + std::to_string(layers.size() + 1);
         m_materialStack.Add(layer);
         m_selectedLayer = static_cast<int>(layers.size()) - 1;
     }
     ImGui::SameLine();
-    if (ImGui::Button("複製") && layerCount > 0) {
+    if (ui::Button("複製") && layerCount > 0) {
         compositor::MaterialLayer copy = layers[static_cast<size_t>(m_selectedLayer)];
         copy.name += " のコピー";
+        // ペイントマスクは ID をそのまま持ち越すと 2 枚のレイヤーで同じテクスチャを
+        // 共有してしまう。中身ごと別のマスクへ写す。
+        if (copy.mask.paint != compositor::kNoPaintMask) {
+            copy.mask.paint = m_paintMasks.Duplicate(m_device, copy.mask.paint);
+        }
         m_materialStack.Add(copy);
         m_selectedLayer = static_cast<int>(layers.size()) - 1;
     }
     ImGui::SameLine();
-    if (ImGui::Button("削除") && layerCount > 1) {
+    if (ui::Button("削除") && layerCount > 1) {
+        const compositor::PaintMaskId paint =
+            layers[static_cast<size_t>(m_selectedLayer)].mask.paint;
+        if (paint != compositor::kNoPaintMask) {
+            m_paintMasks.Remove(m_device, paint);
+        }
         m_materialStack.Remove(static_cast<size_t>(m_selectedLayer));
         m_selectedLayer = std::max(0, m_selectedLayer - 1);
     }
 
-    if (ImGui::Button("上へ")) {
-        // 一覧は上が最前面なので、表示上の「上へ」はスタックでは後ろへ動かす。
-        m_materialStack.Move(static_cast<size_t>(m_selectedLayer), 1);
-        m_selectedLayer = std::min(m_selectedLayer + 1, layerCount - 1);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("下へ")) {
-        m_materialStack.Move(static_cast<size_t>(m_selectedLayer), -1);
-        m_selectedLayer = std::max(m_selectedLayer - 1, 0);
-    }
-
-    ImGui::Separator();
-
-    // 一覧は上が最前面になるよう逆順に並べる。
-    if (ImGui::BeginChild("layerList", ImVec2(0.0f, 160.0f * m_imgui.DpiScale()),
-                          ImGuiChildFlags_Borders)) {
-        for (int i = layerCount - 1; i >= 0; --i) {
-            compositor::MaterialLayer& layer = layers[static_cast<size_t>(i)];
-            ImGui::PushID(i);
-            if (ImGui::Checkbox("##enabled", &layer.enabled)) {
-                m_materialStack.MarkDirty();
-            }
-            ImGui::SameLine();
-            if (ImGui::Selectable(layer.name.c_str(), m_selectedLayer == i)) {
-                m_selectedLayer = i;
-            }
-            ImGui::PopID();
-        }
-    }
-    ImGui::EndChild();
+    DrawLayerList();
+    ui::HintText("上が最前面。ドラッグで並べ替え");
 
     if (layerCount == 0) {
         ImGui::End();
@@ -535,118 +780,152 @@ void Application::DrawLayerPanel(bool applyLayout) {
     compositor::MaterialLayer& layer = layers[static_cast<size_t>(m_selectedLayer)];
     bool changed = false;
 
-    ImGui::SeparatorText("基本");
-    char nameBuffer[128] = {};
-    std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", layer.name.c_str());
-    if (ImGui::InputText("名前", nameBuffer, sizeof(nameBuffer))) {
-        layer.name = nameBuffer;
-    }
-    changed |= ImGui::ColorEdit3("ベースカラー", &layer.baseColor.x);
-    changed |= ImGui::SliderFloat("ラフネス", &layer.roughness, 0.0f, 1.0f);
-    changed |= ImGui::SliderFloat("メタルネス", &layer.metallic, 0.0f, 1.0f);
-    changed |= ImGui::SliderFloat("AO", &layer.ambientOcclusion, 0.0f, 1.0f);
-    changed |= ImGui::SliderFloat("UV スケール", &layer.uvScale, 0.25f, 16.0f);
-
-    ImGui::SeparatorText("ハイト");
-    static const char* const kSourceLabels[] = {"定数", "ノイズ", "テクスチャ"};
-    int heightSource = static_cast<int>(layer.heightSource);
-    if (ImGui::Combo("ハイトの出どころ", &heightSource, kSourceLabels,
-                     IM_ARRAYSIZE(kSourceLabels))) {
-        layer.heightSource = static_cast<compositor::ValueSource>(heightSource);
-        changed = true;
-    }
-    changed |= ImGui::SliderFloat("基準の高さ", &layer.heightBase, -2.0f, 2.0f);
-    if (layer.heightSource == compositor::ValueSource::Noise) {
-        changed |= DrawNoiseTypeCombo("ノイズの種類##h", layer.heightNoise.type);
-        changed |= ImGui::SliderFloat("周波数##h", &layer.heightNoise.scale, 0.5f, 64.0f);
-        changed |= ImGui::SliderFloat("量##h", &layer.heightNoise.amount, 0.0f, 3.0f);
-        changed |= ImGui::SliderInt("オクターブ##h", &layer.heightNoise.octaves, 1, 8);
-        changed |= ImGui::SliderFloat("オフセット##h", &layer.heightNoise.offset, 0.0f, 64.0f);
-    }
-    changed |= ImGui::SliderFloat("法線の強さ", &layer.normalStrength, 0.0f, 4.0f);
-
-    ImGui::SeparatorText("マスク");
-    static const char* const kMaskSourceLabels[] = {
-        "定数", "ノイズ", "テクスチャ", "下地の高さ", "下地の傾斜", "下地の曲率", "下地の窪み",
-    };
-    int maskSource = static_cast<int>(layer.mask.source);
-    if (ImGui::Combo("マスクの出どころ", &maskSource, kMaskSourceLabels,
-                     IM_ARRAYSIZE(kMaskSourceLabels))) {
-        layer.mask.source = static_cast<compositor::MaskSource>(maskSource);
-        changed = true;
-    }
-    if (m_selectedLayer == 0) {
-        ImGui::TextDisabled("一番下のレイヤーは下地なのでマスクは効かない");
-    }
-
-    changed |= ImGui::SliderFloat("定数##m", &layer.mask.constant, 0.0f, 1.0f);
-
-    if (layer.mask.source == compositor::MaskSource::Noise) {
-        changed |= DrawNoiseTypeCombo("ノイズの種類##m", layer.mask.noise.type);
-        changed |= ImGui::SliderFloat("周波数##m", &layer.mask.noise.scale, 0.5f, 64.0f);
-        changed |= ImGui::SliderFloat("量##m", &layer.mask.noise.amount, 0.0f, 2.0f);
-        changed |= ImGui::SliderInt("オクターブ##m", &layer.mask.noise.octaves, 1, 8);
-        changed |= ImGui::SliderFloat("オフセット##m", &layer.mask.noise.offset, 0.0f, 64.0f);
-    }
-    if (compositor::IsDerivedMaskSource(layer.mask.source)) {
-        changed |= ImGui::SliderFloat("強調##m", &layer.mask.derivedScale, 0.0f, 8.0f);
-        switch (layer.mask.source) {
-            case compositor::MaskSource::Slope:
-                ImGui::TextDisabled("急な面ほど 1 に近づく");
-                break;
-            case compositor::MaskSource::Curvature:
-                ImGui::TextDisabled("0.5 が平坦。凸で大、凹で小");
-                break;
-            case compositor::MaskSource::Cavity:
-                ImGui::TextDisabled("窪んでいるほど 1 に近づく");
-                break;
-            default:
-                ImGui::TextDisabled("下地が高いほど 1 に近づく");
-                break;
+    ui::SectionHeader("基本");
+    if (ui::BeginPropertyTable("layerBasicRows")) {
+        char nameBuffer[128] = {};
+        std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", layer.name.c_str());
+        if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer))) {
+            layer.name = nameBuffer;
         }
+        changed |= ui::PropertyColor("ベースカラー", &layer.baseColor.x,
+                                     &kDefaultLayer.baseColor.x);
+        changed |= ui::PropertyFloat("ラフネス", &layer.roughness, 0.0f, 1.0f,
+                                     kDefaultLayer.roughness, nullptr, "%.2f");
+        changed |= ui::PropertyFloat("メタルネス", &layer.metallic, 0.0f, 1.0f,
+                                     kDefaultLayer.metallic, nullptr, "%.2f");
+        changed |= ui::PropertyFloat("AO", &layer.ambientOcclusion, 0.0f, 1.0f,
+                                     kDefaultLayer.ambientOcclusion, nullptr, "%.2f");
+        changed |= ui::PropertyFloat("UV スケール", &layer.uvScale, 0.25f, 16.0f,
+                                     kDefaultLayer.uvScale,
+                                     "このレイヤーの模様を何回並べるか", "%.2f");
+        ui::EndPropertyTable();
     }
 
-    changed |= ImGui::SliderFloat("カーブ", &layer.mask.contrast, 0.0f, 4.0f);
-    changed |= ImGui::SliderFloat("レベル下限", &layer.mask.levelsLow, 0.0f, 1.0f);
-    changed |= ImGui::SliderFloat("レベル上限", &layer.mask.levelsHigh, 0.0f, 1.0f);
-    changed |= ImGui::Checkbox("反転", &layer.mask.invert);
-
-    ImGui::SeparatorText("テクスチャ");
-    ImGui::SetNextItemWidth(-90.0f);
-    ImGui::InputText("パス", m_texturePathBuffer, IM_ARRAYSIZE(m_texturePathBuffer));
-    if (ImGui::Button("読み込む") && m_texturePathBuffer[0] != 0) {
-        m_pendingTexturePath = std::filesystem::path(m_texturePathBuffer);
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(%zu 枚)", m_textureLibrary.Entries().size());
-
-    changed |= DrawTextureSlot("ベースカラー##t", layer.textures.baseColor, m_textureLibrary);
-    changed |= DrawTextureSlot("法線##t", layer.textures.normal, m_textureLibrary);
-    changed |= DrawTextureSlot("ラフネス##t", layer.textures.roughness, m_textureLibrary);
-    changed |= DrawTextureSlot("メタルネス##t", layer.textures.metallic, m_textureLibrary);
-    changed |= DrawTextureSlot("AO##t", layer.textures.ambientOcclusion, m_textureLibrary);
-    changed |= DrawTextureSlot("ハイト##t", layer.textures.height, m_textureLibrary);
-    changed |= DrawTextureSlot("マスク##t", layer.textures.mask, m_textureLibrary);
-    ImGui::TextDisabled("ハイト / マスクは出どころを「テクスチャ」にすると有効");
-
-    ImGui::SeparatorText("合成");
-    changed |= ImGui::SliderFloat("境界の柔らかさ", &layer.blendRange, 0.0f, 1.0f);
-    ImGui::TextDisabled("0 に近いほど硬い置き換えになる");
-
-    ImGui::Text("書き込むチャンネル");
-    static const char* const kChannelLabels[] = {"BaseColor", "Normal", "Surface", "Height"};
-    for (uint32_t i = 0; i < 4; ++i) {
-        bool enabled = (layer.channelMask & (1u << i)) != 0u;
-        ImGui::PushID(static_cast<int>(i));
-        if (ImGui::Checkbox(kChannelLabels[i], &enabled)) {
-            layer.channelMask = enabled ? (layer.channelMask | (1u << i))
-                                        : (layer.channelMask & ~(1u << i));
+    ui::SectionHeader("ハイト");
+    if (ui::BeginPropertyTable("layerHeightRows")) {
+        int heightSource = static_cast<int>(layer.heightSource);
+        if (ui::PropertyCombo("出どころ", &heightSource, kValueSourceLabels,
+                              IM_ARRAYSIZE(kValueSourceLabels),
+                              static_cast<int>(kDefaultLayer.heightSource))) {
+            layer.heightSource = static_cast<compositor::ValueSource>(heightSource);
             changed = true;
         }
-        ImGui::PopID();
-        if (i != 3) {
-            ImGui::SameLine();
+        changed |= ui::PropertyFloat("基準の高さ", &layer.heightBase, -2.0f, 2.0f,
+                                     kDefaultLayer.heightBase,
+                                     "このレイヤーが「溜まる水位」。下地の高さと比べて勝敗が決まる",
+                                     "%.2f");
+        if (layer.heightSource == compositor::ValueSource::Noise) {
+            changed |= DrawNoiseRows(layer.heightNoise, kDefaultLayer.heightNoise);
         }
+        changed |= ui::PropertyFloat("法線の強さ", &layer.normalStrength, 0.0f, 4.0f,
+                                     kDefaultLayer.normalStrength,
+                                     "ハイトの勾配から作る法線の強さ。0 で平坦", "%.2f");
+        ui::EndPropertyTable();
+    }
+
+    ui::SectionHeader("マスク");
+    if (ui::BeginPropertyTable("layerMaskRows")) {
+        int maskSource = static_cast<int>(layer.mask.source);
+        if (ui::PropertyCombo("出どころ", &maskSource, kMaskSourceLabels,
+                              IM_ARRAYSIZE(kMaskSourceLabels),
+                              static_cast<int>(kDefaultLayer.mask.source),
+                              "マスクは不透明度として高さと同じ土俵で競合する。"
+                              "1.0 にすると高さに関係なく全面を覆う")) {
+            layer.mask.source = static_cast<compositor::MaskSource>(maskSource);
+            changed = true;
+        }
+        changed |= ui::PropertyFloat("定数", &layer.mask.constant, 0.0f, 1.0f,
+                                     kDefaultLayer.mask.constant,
+                                     "出どころの値に掛ける係数", "%.2f");
+
+        if (layer.mask.source == compositor::MaskSource::Noise) {
+            changed |= DrawNoiseRows(layer.mask.noise, kDefaultLayer.mask.noise);
+        }
+        if (compositor::IsDerivedMaskSource(layer.mask.source)) {
+            changed |= ui::PropertyFloat("強調", &layer.mask.derivedScale, 0.0f, 8.0f,
+                                         kDefaultLayer.mask.derivedScale,
+                                         "下地から作った値の効き方", "%.2f");
+        }
+
+        changed |= ui::PropertyFloat("カーブ", &layer.mask.contrast, 0.0f, 4.0f,
+                                     kDefaultLayer.mask.contrast,
+                                     "1 で線形。大きいほど境界がはっきりする", "%.2f");
+        changed |= ui::PropertyFloat("レベル下限", &layer.mask.levelsLow, 0.0f, 1.0f,
+                                     kDefaultLayer.mask.levelsLow, nullptr, "%.2f");
+        changed |= ui::PropertyFloat("レベル上限", &layer.mask.levelsHigh, 0.0f, 1.0f,
+                                     kDefaultLayer.mask.levelsHigh, nullptr, "%.2f");
+        changed |= ui::PropertyBool("反転", &layer.mask.invert, kDefaultLayer.mask.invert);
+        ui::EndPropertyTable();
+    }
+
+    if (m_selectedLayer == 0) {
+        ui::HintText("一番下のレイヤーは下地なのでマスクは効かない");
+    }
+    switch (layer.mask.source) {
+        case compositor::MaskSource::Slope:
+            ui::HintText("急な面ほど 1 に近づく");
+            break;
+        case compositor::MaskSource::Curvature:
+            ui::HintText("0.5 が平坦。凸で大、凹で小");
+            break;
+        case compositor::MaskSource::Cavity:
+            ui::HintText("窪んでいるほど 1 に近づく");
+            break;
+        case compositor::MaskSource::Height:
+            ui::HintText("下地が高いほど 1 に近づく");
+            break;
+        default:
+            break;
+    }
+
+    if (layer.mask.source == compositor::MaskSource::Paint) {
+        ui::SectionHeader("ペイント");
+        changed |= DrawPaintSection(layer);
+    }
+
+    ui::SectionHeader("テクスチャ");
+    if (ui::BeginPropertyTable("layerTextureRows")) {
+        ui::PropertyTextInput("パス", m_texturePathBuffer, IM_ARRAYSIZE(m_texturePathBuffer),
+                              "PNG / TGA / JPG");
+        ui::PropertyLabelEmpty("textureLoad");
+        if (ui::Button("読み込む") && m_texturePathBuffer[0] != 0) {
+            m_pendingTexturePath = std::filesystem::path(m_texturePathBuffer);
+        }
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("(%zu 枚)", m_textureLibrary.Entries().size());
+        ui::PropertyEnd();
+
+        changed |= DrawTextureSlotRow("ベースカラー", layer.textures.baseColor, m_textureLibrary);
+        changed |= DrawTextureSlotRow("法線", layer.textures.normal, m_textureLibrary);
+        changed |= DrawTextureSlotRow("ラフネス", layer.textures.roughness, m_textureLibrary);
+        changed |= DrawTextureSlotRow("メタルネス", layer.textures.metallic, m_textureLibrary);
+        changed |= DrawTextureSlotRow("AO", layer.textures.ambientOcclusion, m_textureLibrary);
+        changed |= DrawTextureSlotRow("ハイト", layer.textures.height, m_textureLibrary);
+        changed |= DrawTextureSlotRow("マスク", layer.textures.mask, m_textureLibrary);
+        ui::EndPropertyTable();
+    }
+    ui::HintText("ハイト / マスクは出どころを「テクスチャ」にすると有効");
+
+    ui::SectionHeader("合成");
+    if (ui::BeginPropertyTable("layerBlendRows")) {
+        changed |= ui::PropertyFloat("境界の柔らかさ", &layer.blendRange, 0.0f, 1.0f,
+                                     kDefaultLayer.blendRange,
+                                     "0 に近いほど硬い置き換えになる", "%.2f");
+
+        ui::PropertyLabel("書き込み", "このレイヤーが書き込むチャンネル");
+        for (uint32_t i = 0; i < IM_ARRAYSIZE(kChannelLabels); ++i) {
+            bool enabled = (layer.channelMask & (1u << i)) != 0u;
+            ImGui::PushID(static_cast<int>(i));
+            if (ImGui::Checkbox(kChannelLabels[i], &enabled)) {
+                layer.channelMask = enabled ? (layer.channelMask | (1u << i))
+                                            : (layer.channelMask & ~(1u << i));
+                changed = true;
+            }
+            ImGui::PopID();
+        }
+        ui::PropertyEnd();
+        ui::EndPropertyTable();
     }
 
     if (changed) {
@@ -656,30 +935,120 @@ void Application::DrawLayerPanel(bool applyLayout) {
     ImGui::End();
 }
 
+bool Application::DrawPaintSection(compositor::MaterialLayer& layer) {
+    bool changed = false;
+
+    if (layer.mask.paint == compositor::kNoPaintMask) {
+        ui::HintText("このレイヤーにはまだペイントマスクがない");
+        if (ui::Button("マスクを作成", ui::kWideButtonWidth)) {
+            layer.mask.paint = m_paintMasks.Add(m_device, 0.0f);
+            m_paintMode = (layer.mask.paint != compositor::kNoPaintMask);
+            changed = true;
+        }
+        return changed;
+    }
+
+    if (ui::BeginPropertyTable("layerPaintRows")) {
+        ui::PropertyBool("ペイントモード", &m_paintMode, false,
+                         "オンの間、ビューポートのドラッグがブラシになる");
+        ui::PropertyFloat("ブラシ半径", &m_brush.radiusPixels, 4.0f, 256.0f,
+                          kDefaultBrush.radiusPixels,
+                          "画面上の半径。視点や UV スケールを変えても見た目の大きさは変わらない",
+                          "%.0f px");
+        ui::PropertyFloat("強さ", &m_brush.strength, 0.01f, 1.0f, kDefaultBrush.strength,
+                          "1 回の適用で足す量", "%.2f");
+        ui::PropertyFloat("減衰", &m_brush.falloff, 0.2f, 8.0f, kDefaultBrush.falloff,
+                          "1 で線形。大きいほど中心に集中する", "%.2f");
+        ui::PropertyBool("消しゴム", &m_brush.erase, kDefaultBrush.erase,
+                         "左右のドラッグの意味を入れ替える");
+
+        ui::PropertyLabelEmpty("paintFill");
+        if (ui::Button("全消去")) {
+            m_paintMasks.QueueSnapshot(m_device, layer.mask.paint);
+            m_paintMasks.QueueFill(layer.mask.paint, 0.0f);
+        }
+        ImGui::SameLine();
+        if (ui::Button("全塗り")) {
+            m_paintMasks.QueueSnapshot(m_device, layer.mask.paint);
+            m_paintMasks.QueueFill(layer.mask.paint, 1.0f);
+        }
+        ui::PropertyEnd();
+
+        ui::PropertyLabelEmpty("paintHistory");
+        ImGui::BeginDisabled(!m_paintMasks.CanUndo());
+        if (ui::Button("アンドゥ")) {
+            m_paintMasks.QueueUndo(m_device);
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!m_paintMasks.CanRedo());
+        if (ui::Button("リドゥ")) {
+            m_paintMasks.QueueRedo(m_device);
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("(%zu 段)", m_paintMasks.UndoCount());
+        ui::PropertyEnd();
+
+        // 解像度はすべてのペイントマスクで共通。
+        int resolution = ResolutionIndex(m_paintMasks.RequestedResolution());
+        if (ui::PropertyCombo("解像度", &resolution, kResolutionLabels,
+                              IM_ARRAYSIZE(kResolutionLabels), 1,
+                              "全ペイントマスクを拡大縮小する。履歴は破棄される")) {
+            m_paintMasks.RequestResolution(kResolutionValues[resolution]);
+        }
+
+        ui::PropertyLabelEmpty("paintDiscard");
+        if (ui::Button("マスクを破棄", ui::kWideButtonWidth)) {
+            m_paintMasks.Remove(m_device, layer.mask.paint);
+            layer.mask.paint = compositor::kNoPaintMask;
+            m_paintMode = false;
+            changed = true;
+        }
+        ui::PropertyEnd();
+        ui::EndPropertyTable();
+    }
+
+    ui::HintText("左ドラッグで塗る / 右ドラッグで消す / Alt + 左ドラッグで視点を回す");
+    return changed;
+}
+
 void Application::DrawInfoPanel(bool applyLayout) {
-    SetDefaultWindowRect(applyLayout, 0.72f, 0.78f, 0.275f, 0.20f);
+    SetDefaultWindowRect(applyLayout, 0.72f, 0.74f, 0.275f, 0.24f);
     if (ImGui::Begin("情報")) {
         const ImGuiIO& io = ImGui::GetIO();
-        ImGui::Text("heightmap-mixer %s", HM_APP_VERSION);
-        ImGui::Separator();
-        ImGui::Text("%.1f FPS (%.3f ms/frame)", io.Framerate, 1000.0f / io.Framerate);
-        ImGui::Text("バックバッファ: %u x %u", m_device.Width(), m_device.Height());
-        ImGui::Text("ビューポート: %u x %u", m_renderer.Width(), m_renderer.Height());
-        ImGui::Text("フレームスロット: %u / %u", m_device.FrameIndex(), rhi::kFrameCount);
-        ImGui::Separator();
-        ImGui::Text("合成: %u x %u / %u レイヤー / %u タイル",
-                    m_renderer.MaterialResolution(), m_renderer.MaterialResolution(),
-                    m_renderer.Evaluator().EvaluatedLayerCount(),
-                    m_renderer.Evaluator().EvaluatedTileCount());
-        ImGui::Text("PSO キャッシュ: %zu 件", m_pipelineCache.PipelineCount());
-        ImGui::Text("解放待ち: %zu 件", m_device.PendingDeletionCount());
-        ImGui::Text("アップロード最大使用量: %llu KB / %llu KB",
-                    static_cast<unsigned long long>(m_device.Upload().PeakBytes() / 1024),
-                    static_cast<unsigned long long>(m_device.Upload().BytesPerFrame() / 1024));
-        ImGui::Separator();
-        ImGui::Checkbox("垂直同期", &m_vsync);
-        ImGui::Checkbox("シェーダのホットリロード", &m_hotReloadEnabled);
-        ImGui::ColorEdit3("背景色", m_clearColor);
+
+        if (ui::BeginPropertyTable("infoRows")) {
+            ui::PropertyValue("バージョン", "%s", HM_APP_VERSION);
+            ui::PropertyValue("フレーム", "%.1f FPS (%.3f ms)", io.Framerate,
+                              1000.0f / io.Framerate);
+            ui::PropertyValue("バックバッファ", "%u x %u", m_device.Width(), m_device.Height());
+            ui::PropertyValue("ビューポート", "%u x %u", m_renderer.Width(),
+                              m_renderer.Height());
+            ui::PropertyValue("合成", "%u^2 / %u レイヤー / %u タイル",
+                              m_renderer.MaterialResolution(),
+                              m_renderer.Evaluator().EvaluatedLayerCount(),
+                              m_renderer.Evaluator().EvaluatedTileCount());
+            ui::PropertyValue("ペイント", "%zu 枚 / %u^2 / 履歴 %zu 段", m_paintMasks.Count(),
+                              m_paintMasks.Resolution(), m_paintMasks.UndoCount());
+            ui::PropertyValue("PSO", "%zu 件", m_pipelineCache.PipelineCount());
+            ui::PropertyValue("解放待ち", "%zu 件", m_device.PendingDeletionCount());
+            ui::PropertyValue("アップロード", "%llu / %llu KB",
+                              static_cast<unsigned long long>(m_device.Upload().PeakBytes() / 1024),
+                              static_cast<unsigned long long>(m_device.Upload().BytesPerFrame() /
+                                                              1024));
+            ui::EndPropertyTable();
+        }
+
+        ui::SectionHeader("表示");
+        if (ui::BeginPropertyTable("displayRows")) {
+            ui::PropertyBool("垂直同期", &m_vsync, true);
+            ui::PropertyBool("ホットリロード", &m_hotReloadEnabled, true,
+                             "shaders/ の更新を検出して PSO を作り直す");
+            ui::PropertyColor("背景色", m_clearColor, kDefaultClearColor);
+            ui::EndPropertyTable();
+        }
     }
     ImGui::End();
 }

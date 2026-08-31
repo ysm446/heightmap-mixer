@@ -19,7 +19,8 @@ namespace {
 
 // 使い方:
 //   heightmap_mixer.exe [--hdri <path>] [--texture <path>]...
-//                       [--screenshot <path>] [--screenshot-frame <n>]
+//                       [--screenshot <path>] [--screenshot-ui <path>]
+//                       [--screenshot-frame <n>]
 hm::StartupOptions ParseCommandLine() {
     hm::StartupOptions options;
 
@@ -39,6 +40,9 @@ hm::StartupOptions ParseCommandLine() {
             ++i;
         } else if (argument == L"--screenshot" && (i + 1) < argc) {
             options.screenshotPath = argv[i + 1];
+            ++i;
+        } else if (argument == L"--screenshot-ui" && (i + 1) < argc) {
+            options.uiScreenshotPath = argv[i + 1];
             ++i;
         } else if (argument == L"--screenshot-frame" && (i + 1) < argc) {
             options.screenshotFrame = static_cast<uint32_t>(::_wtoi(argv[i + 1]));

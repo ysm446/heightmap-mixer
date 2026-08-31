@@ -41,6 +41,7 @@ struct LayerConstants {
     uint32_t textureIndices1[4];
     float maskCurve[4];
     uint32_t noiseTypes[4];
+    uint32_t paintParams[4];
 };
 
 // GPU 側の MaskConstants と一致させること。
@@ -141,6 +142,7 @@ bool MaterialEvaluator::Resize(rhi::Device& device, uint32_t resolution) {
 void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                  ID3D12GraphicsCommandList* commandList,
                                  const MaterialStack& stack, const TextureLibrary& textures,
+                                 const PaintMaskStore& paintMasks,
                                  const std::vector<TileRect>& tiles) {
     if (!m_textures.IsValid() || tiles.empty()) {
         return;
@@ -301,6 +303,10 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             constants.noiseTypes[0] = static_cast<uint32_t>(layer.heightNoise.type);
             constants.noiseTypes[1] = static_cast<uint32_t>(layer.mask.noise.type);
 
+            constants.paintParams[0] = (layer.mask.source == MaskSource::Paint)
+                                           ? paintMasks.SrvIndex(layer.mask.paint)
+                                           : kInvalidTextureIndex;
+
             const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(LayerConstants), 256);
             if (!cb.IsValid()) {
                 break;
@@ -337,7 +343,8 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
 void MaterialEvaluator::EvaluateIfDirty(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                         ID3D12GraphicsCommandList* commandList,
                                         const MaterialStack& stack,
-                                        const TextureLibrary& textures) {
+                                        const TextureLibrary& textures,
+                                        const PaintMaskStore& paintMasks) {
     if (m_evaluatedRevision == stack.Revision()) {
         return;
     }
@@ -354,7 +361,7 @@ void MaterialEvaluator::EvaluateIfDirty(rhi::Device& device, rhi::PipelineCache&
         }
     }
 
-    Evaluate(device, pipelineCache, commandList, stack, textures, tiles);
+    Evaluate(device, pipelineCache, commandList, stack, textures, paintMasks, tiles);
     m_evaluatedRevision = stack.Revision();
 }
 

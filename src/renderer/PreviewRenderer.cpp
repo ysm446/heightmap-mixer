@@ -16,6 +16,9 @@ namespace {
 constexpr DXGI_FORMAT kSceneColorFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 constexpr DXGI_FORMAT kDepthFormat = DXGI_FORMAT_D32_FLOAT;
 constexpr DXGI_FORMAT kOutputFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+// マテリアル UV バッファ。UV はタイル 1 枚ぶんに畳んであるため半精度で足りる
+// （1.0 付近でも刻みは 2^-11 で、2K のペイントマスクの 1 テクセルに収まる）。
+constexpr DXGI_FORMAT kMaterialUvFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 
 // GPU 側の MeshConstants と一致させること。
 struct MeshConstants {
@@ -174,7 +177,7 @@ const Mesh& PreviewRenderer::CurrentMesh() const {
 }
 
 void PreviewRenderer::ReleaseTargets(rhi::Device& device) {
-    rhi::GpuTexture* targets[] = {&m_sceneColor, &m_depth, &m_output};
+    rhi::GpuTexture* targets[] = {&m_sceneColor, &m_materialUv, &m_depth, &m_output};
     for (rhi::GpuTexture* target : targets) {
         if (!target->IsValid()) {
             continue;
@@ -262,6 +265,20 @@ bool PreviewRenderer::Resize(rhi::Device& device, uint32_t width, uint32_t heigh
         return false;
     }
 
+    rhi::TextureDesc materialUvDesc;
+    materialUvDesc.width = width;
+    materialUvDesc.height = height;
+    materialUvDesc.format = kMaterialUvFormat;
+    materialUvDesc.allowRenderTarget = true;
+    materialUvDesc.createSrv = true;
+    // クリア値は実際のクリアと揃える。ずれるとデバッグレイヤーが警告する。
+    materialUvDesc.clearColor[3] = 0.0f;
+    materialUvDesc.initialState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    materialUvDesc.debugName = L"MaterialUv";
+    if (!device.Allocator().CreateTexture2D(materialUvDesc, m_materialUv)) {
+        return false;
+    }
+
     rhi::TextureDesc depthDesc;
     depthDesc.width = width;
     depthDesc.height = height;
@@ -293,22 +310,43 @@ bool PreviewRenderer::Resize(rhi::Device& device, uint32_t width, uint32_t heigh
     return true;
 }
 
+compositor::PaintContext PreviewRenderer::PrepareUvBufferForRead(
+    ID3D12GraphicsCommandList* commandList) {
+    compositor::PaintContext context;
+    if (!m_materialUv.IsValid()) {
+        return context;
+    }
+
+    // 読むのは前フレームの内容。ブラシは 1 フレーム前のカーソル位置に対応する
+    // UV を見ることになるが、描き味に影響が出るほどの差にはならない。
+    TransitionIfNeeded(commandList, m_materialUv,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    context.uvBufferSrvIndex = m_materialUv.SrvIndex();
+    context.viewportWidth = m_width;
+    context.viewportHeight = m_height;
+    return context;
+}
+
 void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                              ID3D12GraphicsCommandList* commandList,
                              const compositor::MaterialStack& stack,
-                             const compositor::TextureLibrary& textures) {
+                             const compositor::TextureLibrary& textures,
+                             const compositor::PaintMaskStore& paintMasks) {
     if (!m_sceneColor.IsValid() || !m_output.IsValid()) {
         return;
     }
 
     // レイヤースタックに変更があれば、メッシュを描く前に評価し直す。
-    m_evaluator.EvaluateIfDirty(device, pipelineCache, commandList, stack, textures);
+    m_evaluator.EvaluateIfDirty(device, pipelineCache, commandList, stack, textures, paintMasks);
 
     rhi::GraphicsPipelineDesc meshPipelineDesc;
     meshPipelineDesc.shaderPath = L"MeshPbr.hlsl";
     meshPipelineDesc.vertexEntry = L"VsMain";
     meshPipelineDesc.pixelEntry = L"PsMain";
     meshPipelineDesc.rtvFormat = kSceneColorFormat;
+    // 2 枚目にマテリアル UV を書く。ペイントのカーソル位置解決に使う。
+    meshPipelineDesc.rtvFormat1 = kMaterialUvFormat;
     meshPipelineDesc.dsvFormat = kDepthFormat;
     meshPipelineDesc.layout = rhi::VertexLayout::MeshStandard;
     meshPipelineDesc.cullMode = D3D12_CULL_MODE_BACK;
@@ -328,14 +366,19 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     PIXBeginEvent(commandList, PIX_COLOR(80, 200, 120), "PreviewScene");
 
     TransitionIfNeeded(commandList, m_sceneColor, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    TransitionIfNeeded(commandList, m_materialUv, D3D12_RESOURCE_STATE_RENDER_TARGET);
     TransitionIfNeeded(commandList, m_depth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
 
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_sceneColor.rtv.cpu;
     const D3D12_CPU_DESCRIPTOR_HANDLE dsv = m_depth.dsv.cpu;
-    commandList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+    const D3D12_CPU_DESCRIPTOR_HANDLE meshRtvs[] = {rtv, m_materialUv.rtv.cpu};
+    commandList->OMSetRenderTargets(_countof(meshRtvs), meshRtvs, FALSE, &dsv);
 
     const float clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    // UV バッファの被覆は z に入る。0 クリアで「メッシュに当たっていない」を表す。
+    const float clearUv[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     commandList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
+    commandList->ClearRenderTargetView(m_materialUv.rtv.cpu, clearUv, 0, nullptr);
     commandList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
     const auto viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, static_cast<float>(m_width),
@@ -397,6 +440,9 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
 
     // --- スカイボックス ----------------------------------------------------
     // メッシュのあとに描く。深度は書かず、まだ何も描かれていない画素だけを埋める。
+    // UV バッファには書かないので、シーンカラーだけを束ね直す。
+    commandList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+
     if (m_showSkybox && m_environment.IsReady()) {
         rhi::GraphicsPipelineDesc skyboxPipelineDesc;
         skyboxPipelineDesc.shaderPath = L"Skybox.hlsl";

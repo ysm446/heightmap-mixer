@@ -62,6 +62,15 @@ Quixel Mixer 相当のマテリアルオーサリングツール。ハイトマ�
 - デバッグビルドではデバッグレイヤーを有効にし、警告を残したまま次の作業に進まない。
 - 描画パスとコンピュートパスには PIX マーカーを入れる。
 
+### UI
+
+- **UI(見た目・レイアウト・配色・部品)を変更するときは
+  [docs/design/design-guide.md](docs/design/design-guide.md) に必ず従う。**
+- 設定値は `src/ui/UiStyle.h` の `Property*` ヘルパーで「パラメータ名：値」の行として描く。
+  ImGui のウィジェットを直接呼ばない。
+- 色を直書きしない。配色は `ApplyTheme()` に集約する。
+- UI を変えたら `--screenshot-ui` で 1 枚撮って目視する。
+
 ### HLSL
 
 - シェーダは `shaders/` 配下に置く。

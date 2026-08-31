@@ -1,5 +1,9 @@
 // マテリアルプレビューのメッシュ描画。
 // 出力はトーンマップ前の線形放射輝度で、露出は後段の TonemapPass で掛ける。
+//
+// 2 枚目のレンダーターゲットへマテリアル UV を書き出す。ペイントのブラシパスが
+// 「画面のこの画素はマテリアルのどこか」を引くために使う。CPU へ読み戻さずに
+// 済ませるため、ID バッファではなく UV をそのまま持たせている。
 
 #include "Brdf.hlsli"
 #include "CompositeCommon.hlsli"
@@ -78,7 +82,14 @@ VsOutput VsMain(VsInput input)
     return output;
 }
 
-float4 PsMain(VsOutput input) : SV_Target
+struct PsOutput
+{
+    float4 color : SV_Target0;
+    // xy: マテリアル UV（タイル 1 枚ぶんに畳んだもの）、z: メッシュに当たったか
+    float4 materialUv : SV_Target1;
+};
+
+PsOutput PsMain(VsOutput input)
 {
     const float3 geometricNormal = normalize(input.worldNormal);
     const float3 viewDirection = normalize(g_mesh.cameraPosition - input.worldPosition);
@@ -149,5 +160,9 @@ float4 PsMain(VsOutput input) : SV_Target
 
     radiance += (diffuseIbl + specularIbl) * g_mesh.iblIntensity * ambientOcclusion;
 
-    return float4(radiance, 1.0f);
+    PsOutput output;
+    output.color = float4(radiance, 1.0f);
+    // ペイントマスクはタイル 1 枚ぶんのテクスチャなので、UV も畳んで書き出す。
+    output.materialUv = float4(frac(input.uv * g_mesh.materialUvScale), 1.0f, 0.0f);
+    return output;
 }

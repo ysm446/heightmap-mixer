@@ -86,6 +86,8 @@ set(hm_sources
     src/compositor/MaterialLayer.h
     src/compositor/MaterialStack.cpp
     src/compositor/MaterialStack.h
+    src/compositor/PaintMask.cpp
+    src/compositor/PaintMask.h
     src/compositor/TextureLibrary.cpp
     src/compositor/TextureLibrary.h
     src/core/ImageIo.cpp
@@ -118,6 +120,8 @@ set(hm_sources
     src/renderer/PreviewRenderer.h
     src/ui/ImGuiLayer.cpp
     src/ui/ImGuiLayer.h
+    src/ui/UiStyle.cpp
+    src/ui/UiStyle.h
 )
 
 # シェーダはビルド対象ではないが、VS のソリューションから編集できるようにしておく。

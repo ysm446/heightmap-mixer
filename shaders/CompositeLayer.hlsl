@@ -10,8 +10,10 @@
 #define HM_SOURCE_CONSTANT 0
 #define HM_SOURCE_NOISE    1
 #define HM_SOURCE_TEXTURE  2
-// 3 以上は合成の中間結果に由来するマスク。CompositeMask パスが事前に計算する。
+// 3..6 は合成の中間結果に由来するマスク。CompositeMask パスが事前に計算する。
 #define HM_SOURCE_DERIVED  3
+// ブラシで描いたマスク。PaintMaskStore が持つテクスチャをそのまま読む。
+#define HM_SOURCE_PAINT    7
 
 static const uint kInvalidTextureIndex = 0xFFFFFFFFu;
 
@@ -37,8 +39,9 @@ struct LayerConstants
     uint4 textureIndices0;  // baseColor, normal, roughness, metallic
     uint4 textureIndices1;  // ao, height, mask, 中間結果由来マスクの SRV
 
-    float4 maskCurve;  // contrast, derivedScale, 未使用, 未使用
-    uint4 noiseTypes;  // height, mask, 未使用, 未使用
+    float4 maskCurve;   // contrast, derivedScale, 未使用, 未使用
+    uint4 noiseTypes;   // height, mask, 未使用, 未使用
+    uint4 paintParams;  // ペイントマスクの SRV, 未使用 x3
 };
 
 ConstantBuffer<LayerConstants> g_layer : register(b1);
@@ -83,9 +86,22 @@ float SampleLayerHeight(float2 uv, float uvPerOutputTexel)
     return height;
 }
 
-float SampleMaskSourceValue(float2 uv, uint2 texel, float uvPerOutputTexel)
+float SampleMaskSourceValue(float2 uv, float2 paintUv, uint2 texel, float uvPerOutputTexel)
 {
     const uint source = uint(g_layer.maskParams.w);
+
+    if (source == HM_SOURCE_PAINT)
+    {
+        if (g_layer.paintParams.x == kInvalidTextureIndex)
+        {
+            return g_layer.maskParams.x;
+        }
+        // ペイントマスクはレイヤーの UV スケールを掛けない出力そのものの座標で引く。
+        // ブラシはメッシュ上で見えている位置に描くため、合成結果と 1 対 1 で対応する。
+        Texture2D<float> paint = ResourceDescriptorHeap[g_layer.paintParams.x];
+        return g_layer.maskParams.x *
+               paint.SampleLevel(g_samplerLinearWrap, paintUv, 0.0f);
+    }
 
     if (source == HM_SOURCE_NOISE)
     {
@@ -118,9 +134,9 @@ float SampleMaskSourceValue(float2 uv, uint2 texel, float uvPerOutputTexel)
     return g_layer.maskParams.x;
 }
 
-float SampleLayerMask(float2 uv, uint2 texel, float uvPerOutputTexel)
+float SampleLayerMask(float2 uv, float2 paintUv, uint2 texel, float uvPerOutputTexel)
 {
-    float mask = saturate(SampleMaskSourceValue(uv, texel, uvPerOutputTexel));
+    float mask = saturate(SampleMaskSourceValue(uv, paintUv, texel, uvPerOutputTexel));
     mask = ApplyMaskCurve(mask, g_layer.maskCurve.x);
 
     const bool invert = (g_layer.flags & HM_FLAG_MASK_INVERT) != 0u;
@@ -181,7 +197,9 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     RWTexture2D<float>  heightTarget    = ResourceDescriptorHeap[g_layer.outputIndices.w];
 
     const float2 texelSize = 1.0f / float2(g_layer.resolution);
-    const float2 uv = (float2(texel) + 0.5f) * texelSize * g_layer.blendParams.z;
+    // ペイントマスクは出力そのものの座標で引くため、UV スケールを掛ける前を残しておく。
+    const float2 outputUv = (float2(texel) + 0.5f) * texelSize;
+    const float2 uv = outputUv * g_layer.blendParams.z;
     const float2 noiseTexelSize = texelSize * g_layer.blendParams.z;
 
     // 出力テクセル 1 つが張る UV 幅。テクスチャのミップ選択に使う。
@@ -218,7 +236,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     float weight = 1.0f;
     if (!isBaseLayer)
     {
-        const float mask = SampleLayerMask(uv, texel, uvPerOutputTexel);
+        const float mask = SampleLayerMask(uv, outputUv, texel, uvPerOutputTexel);
         const float destinationHeight = heightTarget[texel];
         weight = HeightBlendWeight(destinationHeight, layerHeight, mask, g_layer.blendParams.x);
     }

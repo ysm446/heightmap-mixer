@@ -1,5 +1,7 @@
 #include "compositor/MaterialStack.h"
 
+#include <utility>
+
 namespace hm::compositor {
 
 MaterialStack::MaterialStack() {
@@ -80,6 +82,17 @@ void MaterialStack::Move(size_t index, int delta) {
         return;
     }
     std::swap(m_layers[index], m_layers[static_cast<size_t>(target)]);
+    MarkDirty();
+}
+
+void MaterialStack::MoveTo(size_t from, size_t to) {
+    if (from >= m_layers.size() || to >= m_layers.size() || from == to) {
+        return;
+    }
+    // 入れ替えではなく「抜いて差し込む」。間のレイヤーの順序を保つ。
+    MaterialLayer moved = std::move(m_layers[from]);
+    m_layers.erase(m_layers.begin() + static_cast<ptrdiff_t>(from));
+    m_layers.insert(m_layers.begin() + static_cast<ptrdiff_t>(to), std::move(moved));
     MarkDirty();
 }
 

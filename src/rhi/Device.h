@@ -6,6 +6,7 @@
 #include "rhi/GpuResource.h"
 #include "rhi/UploadRing.h"
 
+#include <filesystem>
 #include <functional>
 
 namespace hm::rhi {
@@ -41,6 +42,10 @@ public:
     // GPU の完了を待つ。リソース破棄やリサイズの前に必ず呼ぶ。
     void WaitForGpu();
 
+    // 次の EndFrame でバックバッファを PNG に書き出す。UI 込みの見た目を確認する開発用。
+    // 画面キャプチャは他ウィンドウを掴むことがあるため、アプリ側から書き出す。
+    void RequestBackBufferCapture(const std::filesystem::path& path) { m_capturePath = path; }
+
     ID3D12Device* GetDevice() const { return m_device.Get(); }
     ID3D12CommandQueue* GetCommandQueue() const { return m_commandQueue.Get(); }
     DescriptorHeap& SrvHeap() { return m_srvHeap; }
@@ -64,6 +69,8 @@ private:
     bool CreateCommandObjects();
     bool CreateSwapChain(HWND hwnd, uint32_t width, uint32_t height);
     bool CreateBackBufferViews();
+    // EndFrame から呼ぶ。コピーを記録し、そのフレームの完了を待ってから保存する。
+    void CaptureBackBuffer();
     void ReleaseBackBuffers();
     void MoveToNextFrame();
 
@@ -94,6 +101,10 @@ private:
     uint64_t m_nextFenceValue = 1;
     // 各フレームスロットが最後に投入した Signal 値。0 なら未使用。
     uint64_t m_fenceValues[kFrameCount] = {};
+
+    std::filesystem::path m_capturePath;
+    GpuBuffer m_pendingCapture;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT m_pendingCaptureFootprint = {};
 
     uint32_t m_frameIndex = 0;
     uint32_t m_width = 0;
