@@ -76,6 +76,7 @@ const compositor::BrushSettings kDefaultBrush;
 const renderer::LightSettings kDefaultLight;
 const renderer::ExposureSettings kDefaultExposure;
 const renderer::MaterialSettings kDefaultMaterial;
+const renderer::CameraState kDefaultCamera;
 const renderer::SkySettings kDefaultSky;
 
 const char* const kNoiseTypeLabels[] = {"fBm", "尾根状", "セル状"};
@@ -393,6 +394,8 @@ bool Application::Initialize(const StartupOptions& options) {
     }
     UpdateWindowTitle();
 
+    m_recentProjects.Load();
+
     // ログをステータスバーへ流す。以降の警告やエラーは画面上でも見える。
     SetLogSink([this](LogLevel level, const char* text) { PushStatus(level, text); });
 
@@ -548,6 +551,9 @@ int Application::Run() {
 }
 
 void Application::DrawUi() {
+    // ショートカットはメニューを開いていなくても効かせたいので、先に見る。
+    HandleShortcuts();
+
     // メニューバーを先に作ることで、メインビューポートの作業領域が
     // メニューバー分を差し引いた状態になる。既定のパネル配置がこれに依存する。
     if (ImGui::BeginMainMenuBar()) {
@@ -830,8 +836,17 @@ void Application::DrawMaterialPanel() {
 
         ui::SectionHeader("カメラ");
         if (ui::BeginPropertyTable("cameraRows")) {
-            ui::PropertyFloat("画角", &m_renderer.GetCamera().FovY(), 0.2f, 1.5f, 0.7853981634f,
-                              "垂直方向の画角（ラジアン）。0.785 = 45 度", "%.2f");
+            // 露出を絞り / シャッター / ISO で決めているので、レンズも同じ言葉で扱う。
+            // ラジアンのままだと何 mm 相当なのか分からない。
+            renderer::Camera& camera = m_renderer.GetCamera();
+            float focalLength = renderer::FocalLengthFromFovY(camera.FovY());
+            if (ui::PropertyFloat("焦点距離", &focalLength, 12.0f, 200.0f,
+                                  renderer::FocalLengthFromFovY(kDefaultCamera.fovY),
+                                  "35mm フルサイズ換算。小さいほど広角で、遠近が強く出る",
+                                  "%.0f mm", ImGuiSliderFlags_Logarithmic)) {
+                camera.FovY() = renderer::FovYFromFocalLength(focalLength);
+            }
+            ui::PropertyValue("画角", "%.1f 度（垂直）", RadiansToDegrees(camera.FovY()));
             ui::PropertyLabelEmpty("cameraReset");
             if (ui::Button("視点をリセット", ui::kWideButtonWidth)) {
                 m_renderer.GetCamera().Reset();
@@ -1466,39 +1481,95 @@ void Application::DrawMaterialLibraryPanel() {
 
 // ファイルメニュー。ここでは要求を積むだけで、実際の読み書きは
 // ProcessPendingFileWork がフレームの外で行う（GPU 待機を伴うため）。
+void Application::RequestOpenProject() {
+    const std::filesystem::path path =
+        ShowOpenFileDialog(L"プロジェクトを開く", ProjectFileFilters());
+    if (!path.empty()) {
+        m_pendingProjectOpen = path;
+    }
+}
+
+// saveAs が偽でも、まだ一度も保存していなければ保存先を聞く。
+void Application::RequestSaveProject(bool saveAs) {
+    if (!saveAs && !m_projectPath.empty()) {
+        m_pendingProjectSave = m_projectPath;
+        return;
+    }
+    const std::filesystem::path path = ShowSaveFileDialog(
+        L"プロジェクトを保存", ProjectFileFilters(), L"mmproj", m_projectPath);
+    if (!path.empty()) {
+        m_pendingProjectSave = path;
+    }
+}
+
+// キーボードショートカット。メニューと同じ入口（Request*）を通す。
+//
+// テキスト入力中でも効かせる（Ctrl + S は入力欄が食う操作ではない）。
+// 実際の読み書きはどれも保留されるので、押された時点では要求が積まれるだけ。
+void Application::HandleShortcuts() {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (!io.KeyCtrl || io.KeyAlt) {
+        return;
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+        m_pendingProjectNew = true;
+    } else if (ImGui::IsKeyPressed(ImGuiKey_O, false)) {
+        RequestOpenProject();
+    } else if (ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        // Ctrl + Shift + S は「名前を付けて保存」。
+        RequestSaveProject(io.KeyShift);
+    }
+}
+
+// 最近使ったプロジェクト。名前を項目に、置き場所を右の列に出す。
+// 同じ名前のプロジェクトが別の場所にあっても見分けられるようにするため。
+void Application::DrawRecentMenu() {
+    const std::vector<std::filesystem::path>& entries = m_recentProjects.Entries();
+    if (!ImGui::BeginMenu("最近使ったプロジェクト", !entries.empty())) {
+        return;
+    }
+
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const std::filesystem::path& path = entries[i];
+        ImGui::PushID(static_cast<int>(i));
+
+        const std::string name = ToUtf8(path.filename());
+        const std::string directory = ToUtf8(path.parent_path());
+        if (ImGui::MenuItem(name.c_str(), directory.c_str())) {
+            m_pendingProjectOpen = path;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", ToUtf8(path).c_str());
+        }
+
+        ImGui::PopID();
+    }
+
+    ImGui::Separator();
+    if (ImGui::MenuItem("履歴を消す")) {
+        m_recentProjects.Clear();
+    }
+    ImGui::EndMenu();
+}
+
 void Application::DrawFileMenu() {
     if (!ImGui::BeginMenu("ファイル")) {
         return;
     }
 
-    if (ImGui::MenuItem("新規")) {
+    if (ImGui::MenuItem("新規", "Ctrl+N")) {
         m_pendingProjectNew = true;
     }
-    if (ImGui::MenuItem("開く…")) {
-        const std::filesystem::path path =
-            ShowOpenFileDialog(L"プロジェクトを開く", ProjectFileFilters());
-        if (!path.empty()) {
-            m_pendingProjectOpen = path;
-        }
+    if (ImGui::MenuItem("開く…", "Ctrl+O")) {
+        RequestOpenProject();
     }
-    if (ImGui::MenuItem("保存")) {
-        if (m_projectPath.empty()) {
-            // 一度も保存していないので、保存先を聞く。
-            const std::filesystem::path path = ShowSaveFileDialog(
-                L"プロジェクトを保存", ProjectFileFilters(), L"mmproj", m_projectPath);
-            if (!path.empty()) {
-                m_pendingProjectSave = path;
-            }
-        } else {
-            m_pendingProjectSave = m_projectPath;
-        }
+    DrawRecentMenu();
+    if (ImGui::MenuItem("保存", "Ctrl+S")) {
+        RequestSaveProject(false);
     }
-    if (ImGui::MenuItem("名前を付けて保存…")) {
-        const std::filesystem::path path = ShowSaveFileDialog(
-            L"プロジェクトを保存", ProjectFileFilters(), L"mmproj", m_projectPath);
-        if (!path.empty()) {
-            m_pendingProjectSave = path;
-        }
+    if (ImGui::MenuItem("名前を付けて保存…", "Ctrl+Shift+S")) {
+        RequestSaveProject(true);
     }
 
     ImGui::Separator();
@@ -1800,6 +1871,7 @@ void Application::ProcessPendingFileWork() {
         io::ProjectRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary, m_paintMasks,
                              m_renderer};
         if (io::LoadProject(path, m_device, m_pipelineCache, refs)) {
+            m_recentProjects.Add(path);
             m_projectPath = path;
             m_selectedLayer = 0;
             m_selectedMaterial = 0;
@@ -1808,6 +1880,9 @@ void Application::ProcessPendingFileWork() {
             m_paintMode = false;
             m_strokeActive = false;
             UpdateWindowTitle();
+        } else {
+            // 消えた / 壊れたプロジェクトを履歴に残しても、選べるだけで意味がない。
+            m_recentProjects.Remove(path);
         }
     }
 
@@ -1818,6 +1893,7 @@ void Application::ProcessPendingFileWork() {
         io::ProjectRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary, m_paintMasks,
                              m_renderer};
         if (io::SaveProject(path, m_device, refs)) {
+            m_recentProjects.Add(path);
             m_projectPath = path;
             UpdateWindowTitle();
         }

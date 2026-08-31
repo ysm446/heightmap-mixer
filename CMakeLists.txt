@@ -102,6 +102,8 @@ set(mm_sources
     src/core/Window.h
     src/io/ProjectIo.cpp
     src/io/ProjectIo.h
+    src/io/RecentFiles.cpp
+    src/io/RecentFiles.h
     src/rhi/Common.cpp
     src/rhi/Common.h
     src/rhi/DeletionQueue.cpp

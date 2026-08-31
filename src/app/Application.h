@@ -6,6 +6,7 @@
 #include "compositor/TextureLibrary.h"
 #include "core/Log.h"
 #include "core/Window.h"
+#include "io/RecentFiles.h"
 #include "renderer/PreviewRenderer.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
@@ -62,6 +63,13 @@ private:
     void DrawTextureLibraryPanel();
     // ファイルメニュー。要求を積むだけで、読み書きはフレームの外で行う。
     void DrawFileMenu();
+    // キーボードショートカット（Ctrl+N / O / S / Shift+S）。メニューと同じ入口を通す。
+    void HandleShortcuts();
+    void RequestOpenProject();
+    // 「最近使ったプロジェクト」。開く要求を積むだけ。
+    void DrawRecentMenu();
+    // saveAs が偽でも、まだ保存先が決まっていなければダイアログを出す。
+    void RequestSaveProject(bool saveAs);
     // 画面下端のステータスバー。直近の通知と、いま何を持っているかを出す。
     // ドックスペースより前に呼ぶこと（作業領域をバーのぶん狭める）。
     void DrawStatusBar();
@@ -130,6 +138,7 @@ private:
     // ダイアログはフレームの中で出すが、読み書きは GPU 待機を伴うので、
     // 選ばれたパスをここへ積んでおき、次のフレームの頭で処理する。
     std::filesystem::path m_projectPath;  // 現在のプロジェクト。未保存なら空
+    io::RecentFiles m_recentProjects;
     std::filesystem::path m_pendingProjectSave;
     std::filesystem::path m_pendingProjectOpen;
     std::filesystem::path m_pendingMaterialExport;

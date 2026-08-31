@@ -2,6 +2,7 @@
 
 #include <DirectXMath.h>
 
+#include <cmath>
 #include <cstdint>
 
 namespace mm::renderer {
@@ -13,6 +14,20 @@ struct CameraBasis {
     DirectX::XMFLOAT3 up;       // 画面の上
     DirectX::XMFLOAT3 forward;  // 画面の奥
 };
+
+// 画角は内部ではラジアンで持つが、UI では焦点距離 (mm) で扱う。
+// 露出を絞り / シャッター / ISO で決めているので、レンズも同じ言葉に揃える。
+//
+// 換算の基準は 35mm フルサイズ（36 x 24 mm）。縦画角なのでセンサーの高さを使う。
+inline constexpr float kSensorHeightMm = 24.0f;
+
+inline float FocalLengthFromFovY(float fovY) {
+    return (kSensorHeightMm * 0.5f) / std::tan(fovY * 0.5f);
+}
+
+inline float FovYFromFocalLength(float focalLengthMm) {
+    return 2.0f * std::atan((kSensorHeightMm * 0.5f) / focalLengthMm);
+}
 
 // カメラの状態。プロジェクトの保存と読み込みで丸ごと出し入れする。
 struct CameraState {
