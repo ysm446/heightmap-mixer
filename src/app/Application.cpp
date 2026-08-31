@@ -148,12 +148,16 @@ bool DrawNoiseTypeRow(const char* label, compositor::NoiseType& type,
 }
 
 // ノイズのパラメータをまとめて並べる。ハイトとマスクで共通。
-bool DrawNoiseRows(compositor::NoiseParams& noise, const compositor::NoiseParams& defaults) {
+// ハイトでは寄与の量を heightGain が担うので、showAmount を false にして「量」を出さない。
+bool DrawNoiseRows(compositor::NoiseParams& noise, const compositor::NoiseParams& defaults,
+                   bool showAmount = true) {
     bool changed = DrawNoiseTypeRow("種類", noise.type, defaults.type);
     changed |= ui::PropertyFloat("周波数", &noise.scale, 0.5f, 64.0f, defaults.scale,
                                  "大きいほど細かい模様になる", "%.1f", 0, 0.5f);
-    changed |= ui::PropertyFloat("量", &noise.amount, 0.0f, 3.0f, defaults.amount,
-                                 "ノイズの寄与。0 で効かなくなる", "%.2f");
+    if (showAmount) {
+        changed |= ui::PropertyFloat("量", &noise.amount, 0.0f, 3.0f, defaults.amount,
+                                     "ノイズの寄与。0 で効かなくなる", "%.2f");
+    }
     changed |= ui::PropertyInt("オクターブ", &noise.octaves, 1, 8, defaults.octaves,
                                "重ねる段数。多いほど細部が増え、計算も増える");
     changed |= ui::PropertyFloat("オフセット", &noise.offset, 0.0f, 64.0f, defaults.offset,
@@ -1401,10 +1405,17 @@ void Application::DrawLayerPanel() {
         }
         changed |= ui::PropertyFloat("基準の高さ", &layer.heightBase, -2.0f, 2.0f,
                                      kDefaultLayer.heightBase,
-                                     "このレイヤーが「溜まる水位」。下地の高さと比べて勝敗が決まる",
+                                     "このレイヤーが「溜まる水位」。下地の高さと比べて勝敗が決まる。"
+                                     "起伏の強さを変えてもここは動かない",
                                      "%.2f");
+        if (layer.heightSource != compositor::ValueSource::Constant) {
+            changed |= ui::PropertyFloat("起伏の強さ", &layer.heightGain, 0.0f, 3.0f,
+                                         kDefaultLayer.heightGain,
+                                         "基準の高さを中心とした凹凸の振れ幅。0 で平らになる",
+                                         "%.2f");
+        }
         if (layer.heightSource == compositor::ValueSource::Noise) {
-            changed |= DrawNoiseRows(layer.heightNoise, kDefaultLayer.heightNoise);
+            changed |= DrawNoiseRows(layer.heightNoise, kDefaultLayer.heightNoise, false);
         }
         changed |= ui::PropertyFloat("法線の強さ", &layer.normalStrength, 0.0f, 4.0f,
                                      kDefaultLayer.normalStrength,

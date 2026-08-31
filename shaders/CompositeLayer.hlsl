@@ -32,7 +32,8 @@ struct LayerConstants
     float4 surfaceParams;  // roughness, metallic, ao, heightBase
     float4 blendParams;    // blendRange, normalStrength, uvScale, heightSource
     float4 maskParams;     // constant, levelsLow, levelsHigh, maskSource
-    float4 heightNoise;    // scale, amount, octaves, offset
+    // ハイトはノイズの amount を使わず、y に heightGain を入れる。
+    float4 heightNoise;    // scale, heightGain, octaves, offset
     float4 maskNoise;      // scale, amount, octaves, offset
 
     // 参照するテクスチャの SRV インデックス。kInvalidTextureIndex なら定数を使う。
@@ -74,25 +75,34 @@ float SampleLayerScalar(uint index, uint channelSlot, float2 uv, float uvPerOutp
     return SelectChannel(sampled, UnpackChannel(g_layer.mapChannels.x, channelSlot));
 }
 
+// ハイトの基準面。ソースの値がこの値のとき、そのテクセルは基準の高さちょうどになる。
+// ディスプレイスメントマップの「中間グレーが変位ゼロ」という慣習に合わせている。
+// compositor::kHeightPivot と一致させること。
+static const float kHeightPivot = 0.5f;
+
+// h = 基準の高さ + (ソースの値 - 基準面) * 起伏の強さ。
+// 基準面を挟むことで、起伏の強さを変えても平均の高さが動かない。
 float SampleLayerHeight(float2 uv, float uvPerOutputTexel)
 {
-    float height = g_layer.surfaceParams.w;
+    const float base = g_layer.surfaceParams.w;
+    const float gain = g_layer.heightNoise.y;
 
     const uint source = uint(g_layer.blendParams.w);
     if (source == MM_SOURCE_NOISE)
     {
         const float2 p = uv * g_layer.heightNoise.x + g_layer.heightNoise.w;
-        height += SampleNoise(g_layer.noiseTypes.x, p, int(g_layer.heightNoise.z)) *
-                  g_layer.heightNoise.y;
+        const float noise = SampleNoise(g_layer.noiseTypes.x, p, int(g_layer.heightNoise.z));
+        return base + (noise - kHeightPivot) * gain;
     }
-    else if (source == MM_SOURCE_TEXTURE && g_layer.textureIndices1.y != kInvalidTextureIndex)
+    if (source == MM_SOURCE_TEXTURE && g_layer.textureIndices1.y != kInvalidTextureIndex)
     {
         const float sampled = SampleLayerScalar(g_layer.textureIndices1.y,
                                                 MM_CHANNEL_SLOT_HEIGHT, uv, uvPerOutputTexel);
-        height += sampled * g_layer.heightNoise.y;
+        return base + (sampled - kHeightPivot) * gain;
     }
 
-    return height;
+    // 定数。ソースの値がないので基準の高さそのもの。
+    return base;
 }
 
 float SampleMaskSourceValue(float2 uv, float2 paintUv, uint2 texel, float uvPerOutputTexel)

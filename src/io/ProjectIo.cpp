@@ -23,7 +23,11 @@ using nlohmann::json;
 constexpr const char* kProjectFormat = "material-mixer.project";
 constexpr const char* kMaterialFormat = "material-mixer.material";
 // 形式を変えたら上げる。読み込み側は「これ以下なら読める」として扱う。
-constexpr int kFormatVersion = 1;
+//
+// 2: ハイトに gain を追加し、base の意味を変えた（h = base + (src - 0.5) * gain）。
+//    キーが増えただけに見えるが base の解釈が変わっているので、古いビルドに
+//    読ませると黙って違う絵が出る。それを断れるように版を上げている。
+constexpr int kFormatVersion = 2;
 
 // --- 文字列とパス ---------------------------------------------------------
 //
@@ -352,6 +356,7 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     json height;
     height["source"] = EnumName(kValueSourceNames, static_cast<uint32_t>(layer.heightSource));
     height["base"] = layer.heightBase;
+    height["gain"] = layer.heightGain;
     height["noise"] = WriteNoise(layer.heightNoise);
     node["height"] = std::move(height);
 
@@ -386,6 +391,22 @@ compositor::MaterialLayer ReadLayer(
             kValueSourceNames, *height, "source", static_cast<uint32_t>(defaults.heightSource)));
         layer.heightBase = ReadFloat(*height, "base", defaults.heightBase);
         layer.heightNoise = ReadNoise(*height, "noise", defaults.heightNoise);
+
+        if (FindMember(*height, "gain") != nullptr) {
+            layer.heightGain = ReadFloat(*height, "gain", defaults.heightGain);
+        } else {
+            // gain を分離する前の形式。起伏の強さはノイズの amount が兼ねていて、
+            // 式は h = base + src * amount だった。基準面を挟む式へ寄せる。
+            //
+            //   base + src * gain == base' + (src - kHeightPivot) * gain
+            //   ただし base' = base + kHeightPivot * gain
+            //
+            // これは近似ではなく厳密に同じ値になる。定数は src の項がないので触らない。
+            layer.heightGain = layer.heightNoise.amount;
+            if (layer.heightSource != compositor::ValueSource::Constant) {
+                layer.heightBase += compositor::kHeightPivot * layer.heightGain;
+            }
+        }
     }
 
     layer.normalStrength = ReadFloat(node, "normalStrength", defaults.normalStrength);

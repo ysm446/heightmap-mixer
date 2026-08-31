@@ -29,6 +29,13 @@ enum class ValueSource : uint32_t {
     Texture = 2,
 };
 
+// ハイトの基準面。ソースの値がこの値のとき、そのテクセルは「基準の高さ」ちょうどになる。
+//
+// ディスプレイスメントマップは「中間グレーが変位ゼロ」という慣習で作られるため、
+// マップ自身の平均ではなく 0.5 を固定で使う。goals.md の「業界標準に合わせる」に従う。
+// シェーダの kHeightPivot と一致させること。
+inline constexpr float kHeightPivot = 0.5f;
+
 // テクスチャの ID。0 は「なし」。TextureLibrary が払い出す。
 using TextureId = uint32_t;
 inline constexpr TextureId kNoTexture = 0;
@@ -137,9 +144,19 @@ struct MaterialLayer {
     float metallic = 0.0f;
     float ambientOcclusion = 1.0f;
 
-    // ハイト。定数を基準に、ノイズを amount ぶん足す。
+    // ハイト。基準の高さに、ソースの値を kHeightPivot 基準で振れさせたぶんを足す。
+    //
+    //   定数          : h = heightBase
+    //   ノイズ / 画像 : h = heightBase + (src - kHeightPivot) * heightGain
+    //
+    // heightGain を変えても平均の高さは heightBase のまま動かないので、
+    // 「どこに座るか」と「どれだけ起伏するか」を独立に決められる。
+    // ハイトでは NoiseParams::amount を使わない（heightGain がその役目を担う）。
+    // 既定値は「起伏 1.0 で 0〜1 に収まり、平均が基準面に乗る」ように選んである。
+    // 追加したてのレイヤーが既存のレイヤーより極端に低く沈まないようにするため。
     ValueSource heightSource = ValueSource::Noise;
-    float heightBase = 0.0f;
+    float heightBase = 0.5f;
+    float heightGain = 1.0f;
     NoiseParams heightNoise{NoiseType::Fbm, 6.0f, 1.0f, 5, 0.0f};
 
     // 法線はハイトの勾配から作る。強さ 0 で平坦。

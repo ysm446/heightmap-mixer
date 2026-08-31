@@ -289,7 +289,8 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             constants.maskParams[3] = static_cast<float>(layer.mask.source);
 
             constants.heightNoise[0] = layer.heightNoise.scale;
-            constants.heightNoise[1] = layer.heightNoise.amount;
+            // ハイトはノイズの amount ではなく heightGain を使う。
+            constants.heightNoise[1] = layer.heightGain;
             constants.heightNoise[2] = static_cast<float>(layer.heightNoise.octaves);
             constants.heightNoise[3] = layer.heightNoise.offset;
 

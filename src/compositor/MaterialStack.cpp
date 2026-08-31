@@ -16,7 +16,8 @@ MaterialStack::MaterialStack() {
     rock.roughness = 0.70f;
     rock.metallic = 0.0f;
     rock.heightSource = ValueSource::Noise;
-    rock.heightBase = 0.0f;
+    rock.heightBase = 0.5f;
+    rock.heightGain = 1.0f;
     rock.heightNoise = NoiseParams{NoiseType::Fbm, 7.0f, 1.0f, 6, 0.0f};
     rock.normalStrength = 1.0f;
     rock.mask.source = MaskSource::Constant;
@@ -31,7 +32,8 @@ MaterialStack::MaterialStack() {
     sand.metallic = 0.0f;
     sand.heightSource = ValueSource::Noise;
     // 砂が溜まる水位。岩の高さ（0〜1）の中央より少し下に置く。
-    sand.heightBase = 0.42f;
+    sand.heightBase = 0.445f;
+    sand.heightGain = 0.05f;
     sand.heightNoise = NoiseParams{NoiseType::Fbm, 26.0f, 0.05f, 4, 11.0f};
     sand.normalStrength = 0.25f;
     sand.mask.source = MaskSource::Constant;
@@ -46,7 +48,8 @@ MaterialStack::MaterialStack() {
     moss.roughness = 0.85f;
     moss.metallic = 0.0f;
     moss.heightSource = ValueSource::Noise;
-    moss.heightBase = 0.5f;
+    moss.heightBase = 0.53f;
+    moss.heightGain = 0.06f;
     moss.heightNoise = NoiseParams{NoiseType::Worley, 40.0f, 0.06f, 3, 23.0f};
     moss.normalStrength = 0.4f;
     moss.mask.source = MaskSource::Cavity;

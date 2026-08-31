@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-08-31 23:40
+更新日時: 2026-09-01 00:20
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -29,13 +29,42 @@
 ### 共通のヘッダ
 
 ```json
-{ "format": "material-mixer.project", "version": 1, "app": "0.1.0" }
+{ "format": "material-mixer.project", "version": 2, "app": "0.1.0" }
 ```
 
 - `format` — `material-mixer.project` または `material-mixer.material`。違えば読み込みを断る。
 - `version` — 形式の版。**読み込み側は「ファイルの版 <= 対応版」なら読む。**
   未知のキーは無視し、欠けているキーは既定値（構造体の初期値）で埋める。
 - `app` — 書き出したアプリのバージョン。参考情報で、読み込みでは見ない。
+
+### 版の履歴
+
+| 版 | 変更 |
+| --- | --- |
+| 1 | 最初の形式 |
+| 2 | レイヤーのハイトに `gain` を追加し、`base` の意味を変えた（下記） |
+
+**版を上げる基準は「キーが増えたか」ではなく「既存のキーの意味が変わったか」。**
+キーが増えただけなら、古いビルドはそれを無視して正しく読める。意味が変わった場合は、
+古いビルドが黙って違う結果を出すので、断れるように版を上げる。
+
+#### 版 2 — ハイトの基準面
+
+版 1 のハイトは `h = base + src * amount` で、`amount` はノイズのパラメータが兼ねていた。
+版 2 では基準面 0.5 を挟む `h = base + (src - 0.5) * gain` になり、`gain` が独立した。
+理由は [design/compositing.md](../design/compositing.md) を参照。
+
+読み込み時、`gain` が**無ければ版 1 と判断**して次のように移行する。
+
+```
+gain  = noise.amount
+base' = base + 0.5 * gain     ただしソースが constant のときは base のまま
+```
+
+`base + src * gain == base' + (src - 0.5) * gain` なので、**近似ではなく厳密に同じ値**になる。
+定数はそもそも `src` の項が無いため、触ると逆にずれる。
+
+版ではなくキーの有無で判定しているのは、版が上がっても移行処理が正しく動くようにするため。
 
 ## `.mmproj`
 
@@ -120,7 +149,7 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 ```json
 {
   "format": "material-mixer.material",
-  "version": 1,
+  "version": 2,
   "name": "砂利",
   "baseColorTint": [1.0, 1.0, 1.0],
   "roughness": 0.5, "metallic": 0.0, "ambientOcclusion": 1.0,
