@@ -52,6 +52,9 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = kImGuiIniFileName;
+    // ウィンドウの移動はタイトルバーからだけにする。
+    // これをしないと、ビューポートの余白をドラッグしただけでパネルが動いてしまう。
+    io.ConfigWindowsMoveFromTitleBarOnly = true;
 
     ImGui::StyleColorsDark();
 

@@ -239,7 +239,10 @@ void Application::DrawUi() {
 void Application::DrawViewportPanel(bool applyLayout) {
     SetDefaultWindowRect(applyLayout, 0.27f, 0.00f, 0.44f, 0.98f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    const bool open = ImGui::Begin("ビューポート");
+    // ホイールでウィンドウがスクロールしないようにする（ズームに使うため）。
+    const bool open = ImGui::Begin("ビューポート", nullptr,
+                                   ImGuiWindowFlags_NoScrollbar |
+                                       ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
 
     if (open) {
@@ -256,26 +259,32 @@ void Application::DrawViewportPanel(bool applyLayout) {
             // テクスチャの実サイズではなくコンテンツ領域に合わせて描く。
             // 実サイズで描くとパネルからはみ出し、スクロールバーの出入りで
             // 要求サイズが振動してしまう。作り直しは 1 フレーム遅れる。
+            const ImVec2 imageOrigin = ImGui::GetCursorScreenPos();
             ImGui::Image(static_cast<ImTextureID>(m_renderer.OutputHandle().ptr), available);
 
-            // 画像の上でのみカメラ操作を受け付ける。
-            if (ImGui::IsItemHovered()) {
-                const ImGuiIO& io = ImGui::GetIO();
-                renderer::Camera& camera = m_renderer.GetCamera();
+            // ImGui::Image は入力を消費しないため、そのままだと画像上のドラッグが
+            // 「ウィンドウの余白のドラッグ」と解釈されてパネルごと動いてしまう。
+            // 同じ矩形に不可視ボタンを重ねてドラッグを受け止める。
+            ImGui::SetCursorScreenPos(imageOrigin);
+            ImGui::InvisibleButton("##viewportInput", available,
+                                   ImGuiButtonFlags_MouseButtonLeft |
+                                       ImGuiButtonFlags_MouseButtonMiddle |
+                                       ImGuiButtonFlags_MouseButtonRight);
 
-                if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-                    const ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
-                    camera.Orbit(delta.x * 0.006f, delta.y * 0.006f);
-                    ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+            const ImGuiIO& io = ImGui::GetIO();
+            renderer::Camera& camera = m_renderer.GetCamera();
+
+            if (ImGui::IsItemActive()) {
+                if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    camera.Orbit(io.MouseDelta.x * 0.006f, io.MouseDelta.y * 0.006f);
+                } else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) ||
+                           ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+                    camera.Pan(io.MouseDelta.x, io.MouseDelta.y);
                 }
-                if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
-                    const ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle);
-                    camera.Pan(delta.x, delta.y);
-                    ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
-                }
-                if (io.MouseWheel != 0.0f) {
-                    camera.Zoom(io.MouseWheel);
-                }
+            }
+
+            if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f) {
+                camera.Zoom(io.MouseWheel);
             }
         }
     }
