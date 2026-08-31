@@ -6,6 +6,13 @@
 // Cook-Torrance の各項。roughness は知覚的な値（perceptual roughness）で受け取り、
 // 内部で alpha = roughness^2 に変換する。
 
+// 知覚ラフネスの下限。**全経路（直接光 / サムネイル / BRDF LUT）でこの値に揃える。**
+// 0 に近づくと GGX の D 項が発散して half のシーンカラーに Inf が出るうえ、
+// alpha^2 = roughness^4 が fp16 で表現できる範囲を割って 0 に潰れる。
+// 値は業界で通っている 0.045（Filament / Frostbite と同じ）。
+// 根拠は docs/design/rendering.md の「ラフネスの下限」を参照。
+static const float kMinPerceptualRoughness = 0.045f;
+
 float DistributionGGX(float nDotH, float roughness)
 {
     const float alpha = roughness * roughness;

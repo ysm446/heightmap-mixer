@@ -26,7 +26,9 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     const float2 uv = (float2(dispatchThreadId.xy) + 0.5f) / float(g_constants.size);
     const float nDotV = max(uv.x, 1e-3f);
-    const float roughness = max(uv.y, 1e-3f);
+    // シェーディング側はラフネスを kMinPerceptualRoughness 未満にしないので、
+    // LUT の下端の行も同じ下限で焼く。極小ラフネスでの数値不安定も避けられる。
+    const float roughness = max(uv.y, kMinPerceptualRoughness);
 
     const float3 viewDirection = float3(sqrt(1.0f - nDotV * nDotV), 0.0f, nDotV);
     const float3 normal = float3(0.0f, 0.0f, 1.0f);

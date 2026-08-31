@@ -62,6 +62,9 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         const float pdf = (d * nDotH / max(4.0f * vDotH, 1e-5f)) + 1e-5f;
         const float sampleSolidAngle = 1.0f / (float(g_constants.sampleCount) * pdf);
 
+        // ミップ 0（roughness = 0）は鏡面をそのまま写す意図的な特別扱い。
+        // シェーディング側の下限 kMinPerceptualRoughness とは独立で、
+        // 下限未満のラフネスはミップ 0 と 1 の間の補間としてしか参照されない。
         const float mipLevel = (g_constants.roughness <= 0.0f)
                                    ? 0.0f
                                    : 0.5f * log2(sampleSolidAngle / texelSolidAngle);

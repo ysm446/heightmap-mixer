@@ -134,7 +134,9 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     float3 f0;
     SplitBaseColor(baseColor, metallic, diffuseColor, f0);
 
-    const float clampedRoughness = clamp(roughness, 0.05f, 1.0f);
+    // 下限はビューポート（MeshPbr）と揃える。ずれていると、同じマテリアルが
+    // サムネイルと本描画で違う粗さに見える。
+    const float clampedRoughness = clamp(roughness, kMinPerceptualRoughness, 1.0f);
     const float3 viewDirection = float3(0.0f, 0.0f, 1.0f);
 
     // --- 2 灯で照らす ------------------------------------------------------

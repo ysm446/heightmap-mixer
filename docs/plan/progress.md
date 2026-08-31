@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-01 07:43
+更新日時: 2026-09-01 08:02
 
 ## 現在の状況
 
@@ -26,6 +26,11 @@ UI はグレー基調に整理し、ルールを [design/design-guide.md](../des
 
 ## 完了済み
 
+- 2026-09-01 08:02 — **ラフネスの下限を 0.045 に統一。**
+  `Brdf.hlsli` の `kMinPerceptualRoughness` に集約し、直接光 / サムネイル /
+  BRDF LUT で同じ値を使う。根拠は [design/rendering.md](../design/rendering.md)
+  の「ラフネスの下限」に記録した。
+
 - 2026-09-01 07:43 — **Application.cpp（約 3,000 行）を責務別に分割。**
   クラス定義（Application.h）は変えず、メンバ関数の定義の置き場所だけを移した。
   - コア（初期化 / フレームループ / レイアウト / ステータスバー / 設定 / 情報）は
@@ -47,7 +52,6 @@ UI はグレー基調に整理し、ルールを [design/design-guide.md](../des
   - 未修正の改善候補（提案のみ）:
     `DispatchCount` / `TransitionIfNeeded` などの共通ヘルパの rhi への集約、
     `ToUtf8` / `FromUtf8` の一本化（core へ）、プレビュー既定値の構造体化、
-    ラフネス下限の統一（0.03 / 0.05 / 1e-3 が混在）、
     `MeshPbr` の VS / DS ディスプレイスメント式の共通化。
 
 - 2026-08-31 05:46 — 方針の合意と [goals.md](goals.md) / [plan.md](plan.md) の作成。

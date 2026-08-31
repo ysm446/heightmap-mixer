@@ -387,7 +387,7 @@ PsOutput PsMain(VsOutput input)
     float3 f0;
     SplitBaseColor(baseColor, metallicValue, diffuseColor, f0);
 
-    const float roughness = clamp(roughnessValue, 0.03f, 1.0f);
+    const float roughness = clamp(roughnessValue, kMinPerceptualRoughness, 1.0f);
 
     const float3 lightDirection = normalize(g_mesh.lightDirection);
     // 影は直接光にだけ掛ける。環境光（IBL）は別に扱う。
