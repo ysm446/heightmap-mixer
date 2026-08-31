@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-09-01 02:47
+更新日時: 2026-09-01 02:54
 
 `src/ui/` と各パネルの見た目・レイアウト・配色・部品のルール。
 
@@ -323,6 +323,15 @@ if (ui::BeginPropertyTable("layerBasicRows")) {
 - 高さを決めた `BeginChild`（枠付き）の中に、パネルの幅に入るだけ横へ並べる。
   列数は `コンテンツ幅 / (サムネイル + ItemSpacing)`。
 - サムネイルは正方形。マテリアルは `Scaled(84)`、テクスチャは `Scaled(72)`。
+- **ドラッグ元にするサムネイルは `InvisibleButton` で ID を持たせ、画像は
+  `ImDrawList::AddImage()` で描く。`ImGui::Image()` を使わない。**
+  `ImGui::Image()` は ID を持たないアイテムなので、
+  **`BeginDragDropSource()` が黙って `false` を返し、ドラッグが一切始まらない**
+  （vcpkg の imgui は Release ビルドで `IM_ASSERT` が無効なため、警告も出ない）。
+  `ImGuiDragDropFlags_SourceAllowNullID` でも動くが、あれはウィンドウ相対の位置から
+  ID を捏造するもので、一覧のスクロールや折り返しで ID が変わる。
+  `PushID(id)` の下に `InvisibleButton` を置けば安定した一意の ID が付く。
+  クリック選択だけなら `ImGui::Image()` でも動いてしまうので、**気づきにくい。**
 - 選択は**画像の上に重ねる枠**で示す（`ui::ThumbnailFrame()`）。**画像を描いた後に呼ぶ。**
   - 選択中はアクセント色（`ImGuiCol_CheckMark`）の 2px。
     枠は矩形の内側へ半分寄せる。境界にまたがって描くと、

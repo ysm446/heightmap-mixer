@@ -2160,17 +2160,29 @@ void Application::DrawTextureLibraryPanel() {
             ImGui::PushID(static_cast<int>(entry.id));
 
             ImGui::BeginGroup();
-            // リニアなテクスチャ（EXR）は表示用に焼き直したものを描く。
-            // 元のまま描くと極端に暗く、一覧で見分けられない。
-            ImGui::Image(static_cast<ImTextureID>(entry.PreviewHandle().ptr),
-                         ImVec2(thumbnailSize, thumbnailSize));
+            // **サムネイルは InvisibleButton で ID を持たせてから描く。**
+            //
+            // ImGui::Image() は ID を持たないアイテムなので、そのままでは
+            // BeginDragDropSource() がドラッグを開始できない（黙って false を返す）。
+            // ImGuiDragDropFlags_SourceAllowNullID を渡す手もあるが、あれは
+            // ウィンドウ相対の位置から ID を捏造するもので、一覧のスクロールや
+            // 折り返しで ID が変わってしまう。PushID(entry.id) の下で
+            // InvisibleButton を置けば、安定した一意の ID が付く。
+            const ImVec2 thumbnailMin = ImGui::GetCursorScreenPos();
+            const ImVec2 thumbnailMax(thumbnailMin.x + thumbnailSize,
+                                      thumbnailMin.y + thumbnailSize);
+            ImGui::InvisibleButton("##thumbnail", ImVec2(thumbnailSize, thumbnailSize));
             const bool hovered = ImGui::IsItemHovered();
             if (ImGui::IsItemClicked()) {
                 m_selectedTexture = i;
             }
+
+            // リニアなテクスチャ（EXR）は表示用に焼き直したものを描く。
+            // 元のまま描くと極端に暗く、一覧で見分けられない。
+            ImGui::GetWindowDrawList()->AddImage(
+                static_cast<ImTextureID>(entry.PreviewHandle().ptr), thumbnailMin, thumbnailMax);
             // 選択枠は画像の**後**に描く。背景として敷くと不透明な画像に隠れる。
-            ui::ThumbnailFrame(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-                               m_selectedTexture == i, hovered);
+            ui::ThumbnailFrame(thumbnailMin, thumbnailMax, m_selectedTexture == i, hovered);
             // 読み込んだ直後のものは枠内へ送る。一覧はスクロールするので、
             // 追加しただけでは見えない位置に入ることがある。
             if (m_selectedTexture == i && m_scrollToSelectedTexture) {
