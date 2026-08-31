@@ -47,7 +47,10 @@ public:
     // 画面上のドラッグ量で視点を回す。ドラッグした向きに内容が付いてくる。
     void Orbit(float deltaX, float deltaY);
     void Pan(float deltaX, float deltaY);
+    // ホイールの刻み単位でズームする。正で寄る。
     void Zoom(float delta);
+    // ドラッグ量（ピクセル）でズームする。右へ引くと寄る（Alt + 右ドラッグ）。
+    void Dolly(float deltaPixels);
     void Reset();
 
     // 注視点を center へ戻す。距離と角度は変えない（F キー）。

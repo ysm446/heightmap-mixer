@@ -1058,13 +1058,19 @@ void Application::DrawViewportPanel() {
                 m_strokeActive = false;
             }
 
-            // ブラシやライトが受け取ったドラッグは視点操作に回さない。
-            if (itemActive && !m_strokeActive && !lightDragging) {
+            // 視点操作は Alt を押している間だけ受ける（Maya と同じ割り当て）。
+            //
+            // Alt なしのドラッグは、将来の選択や範囲選択のために空けてある。
+            // Alt を押している間はブラシもライトも無効になる（上の brushEnabled と
+            // HandleLightDrag が !io.KeyAlt を見る）ので、ここで競合は起きない。
+            if (itemActive && io.KeyAlt) {
                 if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                     camera.Orbit(io.MouseDelta.x * 0.006f, io.MouseDelta.y * 0.006f);
-                } else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) ||
-                           ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+                } else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
                     camera.Pan(io.MouseDelta.x, io.MouseDelta.y);
+                } else if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+                    // 右へ引くと寄る。縦は見ない（斜めに引いたときに暴れるため）。
+                    camera.Dolly(io.MouseDelta.x);
                 }
             }
 

@@ -18,6 +18,10 @@ constexpr float kMaxDistance = 100.0f;
 // Frame() で被写体の周りに残す余白。1.0 だと画面の端に接する。
 constexpr float kFrameMargin = 1.08f;
 
+// ドラッグ 1 ピクセルをホイール何刻みぶんとして扱うか。
+// 画面の端から端まで引いて 10 刻みほどになる勘定。
+constexpr float kDollyNotchPerPixel = 0.012f;
+
 }  // namespace
 
 void Camera::Orbit(float deltaX, float deltaY) {
@@ -44,6 +48,12 @@ void Camera::Pan(float deltaX, float deltaY) {
 
 void Camera::Zoom(float delta) {
     m_distance = std::clamp(m_distance * std::pow(1.1f, -delta), kMinDistance, kMaxDistance);
+}
+
+// ズームは距離に対する比で効くので、ホイールと同じ経路へ流す。
+// そうしないと、遠くにいるときだけ極端に速くなる。
+void Camera::Dolly(float deltaPixels) {
+    Zoom(deltaPixels * kDollyNotchPerPixel);
 }
 
 void Camera::Focus(const XMFLOAT3& center) {
