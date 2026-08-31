@@ -36,6 +36,8 @@ struct GpuTexture {
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
     DescriptorHandle srv;
     DescriptorHandle uav;
+    DescriptorHandle rtv;
+    DescriptorHandle dsv;
 
     bool IsValid() const { return resource != nullptr; }
 
@@ -50,7 +52,13 @@ struct TextureDesc {
     uint32_t mipLevels = 1;
     DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
     bool allowUnorderedAccess = false;
+    bool allowRenderTarget = false;
+    bool allowDepthStencil = false;
     bool createSrv = true;
+    // 深度テクスチャは SRV とリソースでフォーマットが異なるため個別に指定する。
+    DXGI_FORMAT srvFormat = DXGI_FORMAT_UNKNOWN;
+    float clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float clearDepth = 1.0f;
     D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COMMON;
     const wchar_t* debugName = nullptr;
 };
@@ -64,13 +72,18 @@ public:
     ResourceAllocator(const ResourceAllocator&) = delete;
     ResourceAllocator& operator=(const ResourceAllocator&) = delete;
 
-    bool Create(ID3D12Device* device, IDXGIAdapter* adapter, DescriptorHeap* srvHeap);
+    bool Create(ID3D12Device* device, IDXGIAdapter* adapter, DescriptorHeap* srvHeap,
+                DescriptorHeap* rtvHeap, DescriptorHeap* dsvHeap);
     void Destroy();
 
     bool CreateTexture2D(const TextureDesc& desc, GpuTexture& outTexture);
 
     // アップロードヒープ上のバッファ。CPU から直接書き込む用途に使う。
     bool CreateUploadBuffer(uint64_t sizeInBytes, const wchar_t* debugName, GpuBuffer& outBuffer);
+
+    // DEFAULT ヒープ上のバッファ。頂点・インデックス・構造化バッファ用。
+    bool CreateDefaultBuffer(uint64_t sizeInBytes, D3D12_RESOURCE_STATES initialState,
+                             const wchar_t* debugName, GpuBuffer& outBuffer);
 
     // ディスクリプタを解放してから、リソース本体を呼び出し側の削除キューへ渡せる状態にする。
     void ReleaseDescriptors(GpuTexture& texture);
@@ -82,6 +95,8 @@ private:
     ComPtr<D3D12MA::Allocator> m_allocator;
     ID3D12Device* m_device = nullptr;
     DescriptorHeap* m_srvHeap = nullptr;
+    DescriptorHeap* m_rtvHeap = nullptr;
+    DescriptorHeap* m_dsvHeap = nullptr;
 };
 
 }  // namespace hm::rhi

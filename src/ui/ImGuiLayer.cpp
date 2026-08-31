@@ -36,6 +36,10 @@ void SrvDescriptorFree(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDL
 
 }  // namespace
 
+void ImGuiLayer::EnableDpiAwareness() {
+    ImGui_ImplWin32_EnableDpiAwareness();
+}
+
 ImGuiLayer::~ImGuiLayer() {
     Shutdown();
 }
@@ -47,9 +51,19 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.IniFilename = "heightmap_mixer_imgui.ini";
+    io.IniFilename = kImGuiIniFileName;
 
     ImGui::StyleColorsDark();
+
+    // 高 DPI ではフォントと余白をまとめてスケールする。
+    m_dpiScale = ImGui_ImplWin32_GetDpiScaleForHwnd(window.Handle());
+    if (m_dpiScale <= 0.0f) {
+        m_dpiScale = 1.0f;
+    }
+    if (m_dpiScale > 1.0f) {
+        ImGui::GetStyle().ScaleAllSizes(m_dpiScale);
+        HM_LOG_INFO("DPI スケール: %.2f", m_dpiScale);
+    }
 
     if (!ImGui_ImplWin32_Init(window.Handle())) {
         HM_LOG_ERROR("ImGui_ImplWin32_Init に失敗しました");
@@ -72,14 +86,14 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
         return false;
     }
 
-    LoadFonts();
+    LoadFonts(m_dpiScale);
 
     m_device = &device;
     m_initialized = true;
     return true;
 }
 
-void ImGuiLayer::LoadFonts() {
+void ImGuiLayer::LoadFonts(float dpiScale) {
     // 日本語を表示できるよう、システムフォントを優先して読み込む。
     static const char* const kCandidates[] = {
         "C:/Windows/Fonts/YuGothM.ttc",
@@ -87,9 +101,11 @@ void ImGuiLayer::LoadFonts() {
         "C:/Windows/Fonts/msgothic.ttc",
     };
 
+    const float fontSize = 16.0f * ((dpiScale > 0.0f) ? dpiScale : 1.0f);
+
     ImGuiIO& io = ImGui::GetIO();
     for (const char* path : kCandidates) {
-        if (io.Fonts->AddFontFromFileTTF(path, 16.0f) != nullptr) {
+        if (io.Fonts->AddFontFromFileTTF(path, fontSize) != nullptr) {
             HM_LOG_INFO("フォントを読み込みました: %s", path);
             return;
         }
@@ -107,6 +123,7 @@ void ImGuiLayer::Shutdown() {
     ImGui::DestroyContext();
     m_initialized = false;
     m_device = nullptr;
+    m_dpiScale = 1.0f;
 }
 
 void ImGuiLayer::BeginFrame() {

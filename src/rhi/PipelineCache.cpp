@@ -25,7 +25,37 @@ D3D12_STATIC_SAMPLER_DESC MakeStaticSampler(UINT shaderRegister, D3D12_FILTER fi
     return desc;
 }
 
+const D3D12_INPUT_ELEMENT_DESC kMeshStandardLayout[] = {
+    {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
+     D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
+     D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"TANGENT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
+     D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
+     D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+};
+
 }  // namespace
+
+std::wstring GraphicsPipelineDesc::MakeKey() const {
+    std::wstring key = shaderPath;
+    key += L"#";
+    key += vertexEntry;
+    key += L"#";
+    key += pixelEntry;
+    key += L"#";
+    key += std::to_wstring(static_cast<int>(rtvFormat));
+    key += L"#";
+    key += std::to_wstring(static_cast<int>(dsvFormat));
+    key += L"#";
+    key += std::to_wstring(static_cast<int>(layout));
+    key += L"#";
+    key += std::to_wstring(static_cast<int>(cullMode));
+    key += depthTest ? L"#t" : L"#f";
+    key += depthWrite ? L"t" : L"f";
+    return key;
+}
 
 PipelineCache::~PipelineCache() {
     Destroy();
@@ -39,6 +69,7 @@ bool PipelineCache::Create(ID3D12Device* device, ShaderCompiler* compiler) {
 
 void PipelineCache::Destroy() {
     m_computePipelines.clear();
+    m_graphicsPipelines.clear();
     m_rootSignature.Reset();
     m_device = nullptr;
     m_compiler = nullptr;
@@ -72,7 +103,10 @@ bool PipelineCache::CreateGlobalRootSignature() {
     desc.Desc_1_1.pParameters = params;
     desc.Desc_1_1.NumStaticSamplers = _countof(samplers);
     desc.Desc_1_1.pStaticSamplers = samplers;
-    desc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED |
+    // 入力レイアウトを使うグラフィックス PSO には
+    // ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT が必須。無いと PSO 作成が E_INVALIDARG で落ちる。
+    desc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+                          D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED |
                           D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
 
     ComPtr<ID3DBlob> blob;
@@ -106,8 +140,11 @@ ID3D12PipelineState* PipelineCache::GetCompute(const std::wstring& relativePath,
         return nullptr;
     }
 
+    // 失敗した組み合わせも記録する。そうしないと毎フレーム再コンパイルしてしまう。
+    // ホットリロード時は InvalidateAll() でまとめて捨てるため、再挑戦はそこで行われる。
     ComPtr<IDxcBlob> bytecode = m_compiler->Compile(relativePath, entryPoint.c_str(), L"cs_6_6");
     if (!bytecode) {
+        m_computePipelines.emplace(key, nullptr);
         return nullptr;
     }
 
@@ -118,6 +155,7 @@ ID3D12PipelineState* PipelineCache::GetCompute(const std::wstring& relativePath,
 
     ComPtr<ID3D12PipelineState> pipeline;
     if (!HM_CHECK_HR(m_device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pipeline)))) {
+        m_computePipelines.emplace(key, nullptr);
         return nullptr;
     }
     pipeline->SetName(key.c_str());
@@ -127,8 +165,77 @@ ID3D12PipelineState* PipelineCache::GetCompute(const std::wstring& relativePath,
     return inserted->second.Get();
 }
 
+ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc) {
+    const std::wstring key = desc.MakeKey();
+    if (const auto it = m_graphicsPipelines.find(key); it != m_graphicsPipelines.end()) {
+        return it->second.Get();
+    }
+
+    if (m_compiler == nullptr || !m_rootSignature) {
+        return nullptr;
+    }
+
+    // コンピュートと同じく、失敗も記録して毎フレームの再コンパイルを防ぐ。
+    ComPtr<IDxcBlob> vertexBlob =
+        m_compiler->Compile(desc.shaderPath, desc.vertexEntry.c_str(), L"vs_6_6");
+    if (!vertexBlob) {
+        m_graphicsPipelines.emplace(key, nullptr);
+        return nullptr;
+    }
+    ComPtr<IDxcBlob> pixelBlob =
+        m_compiler->Compile(desc.shaderPath, desc.pixelEntry.c_str(), L"ps_6_6");
+    if (!pixelBlob) {
+        m_graphicsPipelines.emplace(key, nullptr);
+        return nullptr;
+    }
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+    psoDesc.pRootSignature = m_rootSignature.Get();
+    psoDesc.VS.pShaderBytecode = vertexBlob->GetBufferPointer();
+    psoDesc.VS.BytecodeLength = vertexBlob->GetBufferSize();
+    psoDesc.PS.pShaderBytecode = pixelBlob->GetBufferPointer();
+    psoDesc.PS.BytecodeLength = pixelBlob->GetBufferSize();
+
+    psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+    psoDesc.SampleMask = UINT_MAX;
+
+    psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    psoDesc.RasterizerState.CullMode = desc.cullMode;
+    psoDesc.RasterizerState.FrontCounterClockwise = FALSE;
+
+    psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+    psoDesc.DepthStencilState.DepthEnable = desc.depthTest ? TRUE : FALSE;
+    psoDesc.DepthStencilState.DepthWriteMask =
+        desc.depthWrite ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+    psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    psoDesc.DepthStencilState.StencilEnable = FALSE;
+
+    if (desc.layout == VertexLayout::MeshStandard) {
+        psoDesc.InputLayout.pInputElementDescs = kMeshStandardLayout;
+        psoDesc.InputLayout.NumElements = _countof(kMeshStandardLayout);
+    }
+
+    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    psoDesc.NumRenderTargets = (desc.rtvFormat != DXGI_FORMAT_UNKNOWN) ? 1 : 0;
+    psoDesc.RTVFormats[0] = desc.rtvFormat;
+    psoDesc.DSVFormat = desc.dsvFormat;
+    psoDesc.SampleDesc.Count = 1;
+
+    ComPtr<ID3D12PipelineState> pipeline;
+    if (!HM_CHECK_HR(m_device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipeline)))) {
+        m_graphicsPipelines.emplace(key, nullptr);
+        return nullptr;
+    }
+    pipeline->SetName(key.c_str());
+
+    const auto [inserted, ok] = m_graphicsPipelines.emplace(key, std::move(pipeline));
+    (void)ok;
+    return inserted->second.Get();
+}
+
 void PipelineCache::InvalidateAll() {
     m_computePipelines.clear();
+    m_graphicsPipelines.clear();
 }
 
 }  // namespace hm::rhi

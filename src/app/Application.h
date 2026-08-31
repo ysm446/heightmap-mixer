@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Window.h"
+#include "renderer/PreviewRenderer.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 #include "rhi/ShaderCompiler.h"
@@ -16,29 +17,30 @@ public:
     int Run();
 
 private:
-    bool CreatePreviewTexture(uint32_t size);
-    void ReleasePreviewTexture();
-    void DispatchPreview(ID3D12GraphicsCommandList* commandList);
     void PollShaderHotReload();
     void DrawUi();
+    void DrawViewportPanel(bool applyLayout);
+    void DrawMaterialPanel(bool applyLayout);
+    void DrawLightingPanel(bool applyLayout);
+    void DrawInfoPanel(bool applyLayout);
 
     Window m_window;
     rhi::Device m_device;
     rhi::ShaderCompiler m_shaderCompiler;
     rhi::PipelineCache m_pipelineCache;
+    renderer::PreviewRenderer m_renderer;
     ImGuiLayer m_imgui;
 
-    // M1 の疎通確認用。DXC / PSO キャッシュ / bindless / 状態遷移を一通り通す。
-    rhi::GpuTexture m_previewTexture;
-    uint32_t m_previewSize = 512;
-    uint32_t m_requestedPreviewSize = 512;
-    float m_time = 0.0f;
-    bool m_animatePreview = true;
+    // ビューポートの表示サイズ。UI 側で決まり、次のフレーム頭で反映する。
+    uint32_t m_requestedViewportWidth = 512;
+    uint32_t m_requestedViewportHeight = 512;
 
     float m_clearColor[4] = {0.09f, 0.09f, 0.11f, 1.0f};
     bool m_vsync = true;
     bool m_showDemoWindow = false;
     bool m_hotReloadEnabled = true;
+    // 保存済みレイアウト(ini)が無い初回起動のときだけ既定配置を適用する。
+    bool m_applyDefaultLayout = false;
     uint32_t m_frameCounter = 0;
 };
 

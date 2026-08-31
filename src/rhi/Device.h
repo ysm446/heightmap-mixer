@@ -6,6 +6,8 @@
 #include "rhi/GpuResource.h"
 #include "rhi/UploadRing.h"
 
+#include <functional>
+
 namespace hm::rhi {
 
 // DX12 のデバイス、キュー、スワップチェーン、フレーム同期をまとめて持つ。
@@ -28,12 +30,22 @@ public:
     ID3D12GraphicsCommandList* BeginFrame(const float clearColor[4]);
     void EndFrame(bool vsync);
 
+    // バックバッファをレンダーターゲットとして再バインドする。
+    // 途中で別のターゲットへ描いたあと、ImGui を描く前に呼ぶ。
+    void BindBackBuffer(ID3D12GraphicsCommandList* commandList);
+
+    // 初期化時のアップロードや事前計算のように、その場で実行して完了を待ちたい処理に使う。
+    // フレームループの中では使わない。
+    bool ExecuteImmediate(const std::function<void(ID3D12GraphicsCommandList*)>& record);
+
     // GPU の完了を待つ。リソース破棄やリサイズの前に必ず呼ぶ。
     void WaitForGpu();
 
     ID3D12Device* GetDevice() const { return m_device.Get(); }
     ID3D12CommandQueue* GetCommandQueue() const { return m_commandQueue.Get(); }
     DescriptorHeap& SrvHeap() { return m_srvHeap; }
+    DescriptorHeap& RtvHeap() { return m_rtvHeap; }
+    DescriptorHeap& DsvHeap() { return m_dsvHeap; }
     ResourceAllocator& Allocator() { return m_allocator; }
     UploadRing& Upload() { return m_uploadRing; }
 
@@ -63,10 +75,14 @@ private:
 
     ComPtr<ID3D12CommandAllocator> m_commandAllocators[kFrameCount];
     ComPtr<ID3D12GraphicsCommandList> m_commandList;
+    // ExecuteImmediate 専用。フレームのコマンドリストとは分ける。
+    ComPtr<ID3D12CommandAllocator> m_immediateAllocator;
+    ComPtr<ID3D12GraphicsCommandList> m_immediateCommandList;
     ComPtr<ID3D12Resource> m_backBuffers[kFrameCount];
     DescriptorHandle m_backBufferRtvs[kFrameCount];
 
     DescriptorHeap m_rtvHeap;
+    DescriptorHeap m_dsvHeap;
     DescriptorHeap m_srvHeap;
     ResourceAllocator m_allocator;
     UploadRing m_uploadRing;

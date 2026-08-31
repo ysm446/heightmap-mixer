@@ -11,6 +11,8 @@ namespace {
 
 // ImGui のフォントアトラスや将来のテクスチャ用に、余裕をもって確保しておく。
 constexpr uint32_t kSrvHeapCapacity = 1024;
+constexpr uint32_t kRtvHeapCapacity = 64;
+constexpr uint32_t kDsvHeapCapacity = 32;
 
 // 1 フレームあたりのアップロード容量。定数バッファと小さめの転送を想定した初期値。
 constexpr uint64_t kUploadBytesPerFrame = 16ull * 1024 * 1024;
@@ -34,7 +36,12 @@ bool Device::Initialize(HWND hwnd, uint32_t width, uint32_t height, bool enableD
     if (!CreateSwapChain(hwnd, width, height)) {
         return false;
     }
-    if (!m_rtvHeap.Create(m_device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kFrameCount, false)) {
+    if (!m_rtvHeap.Create(m_device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvHeapCapacity,
+                          false)) {
+        return false;
+    }
+    if (!m_dsvHeap.Create(m_device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kDsvHeapCapacity,
+                          false)) {
         return false;
     }
     if (!m_srvHeap.Create(m_device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
@@ -44,7 +51,7 @@ bool Device::Initialize(HWND hwnd, uint32_t width, uint32_t height, bool enableD
     if (!CreateBackBufferViews()) {
         return false;
     }
-    if (!m_allocator.Create(m_device.Get(), m_adapter.Get(), &m_srvHeap)) {
+    if (!m_allocator.Create(m_device.Get(), m_adapter.Get(), &m_srvHeap, &m_rtvHeap, &m_dsvHeap)) {
         return false;
     }
     if (!m_uploadRing.Create(m_allocator, kUploadBytesPerFrame)) {
@@ -176,6 +183,19 @@ bool Device::CreateCommandObjects() {
     }
     // 作成直後は開いた状態なので閉じておく。
     if (!HM_CHECK_HR(m_commandList->Close())) {
+        return false;
+    }
+
+    if (!HM_CHECK_HR(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                                      IID_PPV_ARGS(&m_immediateAllocator)))) {
+        return false;
+    }
+    if (!HM_CHECK_HR(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                                 m_immediateAllocator.Get(), nullptr,
+                                                 IID_PPV_ARGS(&m_immediateCommandList)))) {
+        return false;
+    }
+    if (!HM_CHECK_HR(m_immediateCommandList->Close())) {
         return false;
     }
 
@@ -347,6 +367,46 @@ void Device::EndFrame(bool vsync) {
     MoveToNextFrame();
 }
 
+void Device::BindBackBuffer(ID3D12GraphicsCommandList* commandList) {
+    if (commandList == nullptr || !m_initialized) {
+        return;
+    }
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_backBufferRtvs[m_frameIndex].cpu;
+    commandList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+
+    const auto viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, static_cast<float>(m_width),
+                                           static_cast<float>(m_height));
+    const auto scissor = CD3DX12_RECT(0, 0, static_cast<LONG>(m_width),
+                                      static_cast<LONG>(m_height));
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
+}
+
+bool Device::ExecuteImmediate(const std::function<void(ID3D12GraphicsCommandList*)>& record) {
+    if (!m_immediateCommandList || !record) {
+        return false;
+    }
+    if (!HM_CHECK_HR(m_immediateAllocator->Reset())) {
+        return false;
+    }
+    if (!HM_CHECK_HR(m_immediateCommandList->Reset(m_immediateAllocator.Get(), nullptr))) {
+        return false;
+    }
+
+    ID3D12DescriptorHeap* heaps[] = {m_srvHeap.Heap()};
+    m_immediateCommandList->SetDescriptorHeaps(1, heaps);
+
+    record(m_immediateCommandList.Get());
+
+    if (!HM_CHECK_HR(m_immediateCommandList->Close())) {
+        return false;
+    }
+    ID3D12CommandList* lists[] = {m_immediateCommandList.Get()};
+    m_commandQueue->ExecuteCommandLists(1, lists);
+    WaitForGpu();
+    return true;
+}
+
 void Device::MoveToNextFrame() {
     const uint64_t value = m_nextFenceValue++;
     if (!HM_CHECK_HR(m_commandQueue->Signal(m_fence.Get(), value))) {
@@ -390,10 +450,13 @@ void Device::Shutdown() {
     m_uploadRing.Destroy();
     ReleaseBackBuffers();
     m_rtvHeap.Destroy();
+    m_dsvHeap.Destroy();
     m_srvHeap.Destroy();
     // アロケータは、そこから確保した全リソースを解放したあとで破棄する。
     m_allocator.Destroy();
     m_commandList.Reset();
+    m_immediateCommandList.Reset();
+    m_immediateAllocator.Reset();
     for (auto& allocator : m_commandAllocators) {
         allocator.Reset();
     }

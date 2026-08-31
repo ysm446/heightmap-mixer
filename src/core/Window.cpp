@@ -40,6 +40,27 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
         return false;
     }
 
+    // 実際に載ったモニタの作業領域に収める。
+    // SPI_GETWORKAREA はプライマリモニタしか見ないため、ここで改めて調整する。
+    MONITORINFO monitorInfo = {};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (::GetMonitorInfoW(::MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &monitorInfo)) {
+        const LONG workWidth = monitorInfo.rcWork.right - monitorInfo.rcWork.left;
+        const LONG workHeight = monitorInfo.rcWork.bottom - monitorInfo.rcWork.top;
+
+        RECT windowRect = {};
+        ::GetWindowRect(m_hwnd, &windowRect);
+        const LONG windowWidth = windowRect.right - windowRect.left;
+        const LONG windowHeight = windowRect.bottom - windowRect.top;
+
+        if (windowWidth > workWidth || windowHeight > workHeight) {
+            const LONG fittedWidth = (windowWidth < workWidth) ? windowWidth : workWidth;
+            const LONG fittedHeight = (windowHeight < workHeight) ? windowHeight : workHeight;
+            ::SetWindowPos(m_hwnd, nullptr, monitorInfo.rcWork.left, monitorInfo.rcWork.top,
+                           fittedWidth, fittedHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+
     RECT client = {};
     ::GetClientRect(m_hwnd, &client);
     m_width = static_cast<uint32_t>(client.right - client.left);

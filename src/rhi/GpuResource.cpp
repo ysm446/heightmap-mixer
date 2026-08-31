@@ -9,7 +9,8 @@ ResourceAllocator::~ResourceAllocator() {
 }
 
 bool ResourceAllocator::Create(ID3D12Device* device, IDXGIAdapter* adapter,
-                               DescriptorHeap* srvHeap) {
+                               DescriptorHeap* srvHeap, DescriptorHeap* rtvHeap,
+                               DescriptorHeap* dsvHeap) {
     D3D12MA::ALLOCATOR_DESC desc = {};
     desc.pDevice = device;
     desc.pAdapter = adapter;
@@ -22,6 +23,8 @@ bool ResourceAllocator::Create(ID3D12Device* device, IDXGIAdapter* adapter,
     m_allocator.Attach(raw);
     m_device = device;
     m_srvHeap = srvHeap;
+    m_rtvHeap = rtvHeap;
+    m_dsvHeap = dsvHeap;
     return true;
 }
 
@@ -29,6 +32,8 @@ void ResourceAllocator::Destroy() {
     m_allocator.Reset();
     m_device = nullptr;
     m_srvHeap = nullptr;
+    m_rtvHeap = nullptr;
+    m_dsvHeap = nullptr;
 }
 
 bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& outTexture) {
@@ -45,8 +50,34 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
     resourceDesc.Format = desc.format;
     resourceDesc.SampleDesc.Count = 1;
     resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-    resourceDesc.Flags = desc.allowUnorderedAccess ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS
-                                                   : D3D12_RESOURCE_FLAG_NONE;
+    resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+    if (desc.allowUnorderedAccess) {
+        resourceDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    }
+    if (desc.allowRenderTarget) {
+        resourceDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    }
+    if (desc.allowDepthStencil) {
+        resourceDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    }
+
+    // クリア値を渡さないとレンダーターゲット・深度のクリアが最適化されず、
+    // デバッグレイヤーからも警告が出る。
+    D3D12_CLEAR_VALUE clearValue = {};
+    const D3D12_CLEAR_VALUE* clearValuePtr = nullptr;
+    if (desc.allowDepthStencil) {
+        clearValue.Format = desc.format;
+        clearValue.DepthStencil.Depth = desc.clearDepth;
+        clearValue.DepthStencil.Stencil = 0;
+        clearValuePtr = &clearValue;
+    } else if (desc.allowRenderTarget) {
+        clearValue.Format = desc.format;
+        clearValue.Color[0] = desc.clearColor[0];
+        clearValue.Color[1] = desc.clearColor[1];
+        clearValue.Color[2] = desc.clearColor[2];
+        clearValue.Color[3] = desc.clearColor[3];
+        clearValuePtr = &clearValue;
+    }
 
     D3D12MA::ALLOCATION_DESC allocDesc = {};
     allocDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
@@ -54,7 +85,7 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
     D3D12MA::Allocation* allocation = nullptr;
     ID3D12Resource* resource = nullptr;
     if (!HM_CHECK_HR(m_allocator->CreateResource(&allocDesc, &resourceDesc, desc.initialState,
-                                                 nullptr, &allocation,
+                                                 clearValuePtr, &allocation,
                                                  IID_PPV_ARGS(&resource)))) {
         return false;
     }
@@ -78,7 +109,7 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
             return false;
         }
         D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-        srvDesc.Format = desc.format;
+        srvDesc.Format = (desc.srvFormat != DXGI_FORMAT_UNKNOWN) ? desc.srvFormat : desc.format;
         srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         srvDesc.Texture2D.MipLevels = desc.mipLevels;
@@ -97,6 +128,64 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
                                             outTexture.uav.cpu);
     }
 
+    if (desc.allowRenderTarget && m_rtvHeap != nullptr) {
+        outTexture.rtv = m_rtvHeap->Allocate();
+        if (!outTexture.rtv.IsValid()) {
+            return false;
+        }
+        m_device->CreateRenderTargetView(outTexture.resource.Get(), nullptr, outTexture.rtv.cpu);
+    }
+
+    if (desc.allowDepthStencil && m_dsvHeap != nullptr) {
+        outTexture.dsv = m_dsvHeap->Allocate();
+        if (!outTexture.dsv.IsValid()) {
+            return false;
+        }
+        D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+        dsvDesc.Format = desc.format;
+        dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+        m_device->CreateDepthStencilView(outTexture.resource.Get(), &dsvDesc, outTexture.dsv.cpu);
+    }
+
+    return true;
+}
+
+bool ResourceAllocator::CreateDefaultBuffer(uint64_t sizeInBytes,
+                                            D3D12_RESOURCE_STATES initialState,
+                                            const wchar_t* debugName, GpuBuffer& outBuffer) {
+    if (!m_allocator || sizeInBytes == 0) {
+        return false;
+    }
+
+    D3D12_RESOURCE_DESC resourceDesc = {};
+    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    resourceDesc.Width = sizeInBytes;
+    resourceDesc.Height = 1;
+    resourceDesc.DepthOrArraySize = 1;
+    resourceDesc.MipLevels = 1;
+    resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
+    resourceDesc.SampleDesc.Count = 1;
+    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    D3D12MA::ALLOCATION_DESC allocDesc = {};
+    allocDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12MA::Allocation* allocation = nullptr;
+    ID3D12Resource* resource = nullptr;
+    if (!HM_CHECK_HR(m_allocator->CreateResource(&allocDesc, &resourceDesc, initialState, nullptr,
+                                                 &allocation, IID_PPV_ARGS(&resource)))) {
+        return false;
+    }
+
+    outBuffer = GpuBuffer{};
+    outBuffer.allocation.Attach(allocation);
+    outBuffer.resource.Attach(resource);
+    outBuffer.sizeInBytes = sizeInBytes;
+    outBuffer.state = initialState;
+    if (debugName != nullptr) {
+        outBuffer.resource->SetName(debugName);
+    }
     return true;
 }
 
@@ -140,13 +229,20 @@ bool ResourceAllocator::CreateUploadBuffer(uint64_t sizeInBytes, const wchar_t* 
 }
 
 void ResourceAllocator::ReleaseDescriptors(GpuTexture& texture) {
-    if (m_srvHeap == nullptr) {
-        return;
+    if (m_srvHeap != nullptr) {
+        m_srvHeap->Free(texture.srv);
+        m_srvHeap->Free(texture.uav);
     }
-    m_srvHeap->Free(texture.srv);
-    m_srvHeap->Free(texture.uav);
+    if (m_rtvHeap != nullptr) {
+        m_rtvHeap->Free(texture.rtv);
+    }
+    if (m_dsvHeap != nullptr) {
+        m_dsvHeap->Free(texture.dsv);
+    }
     texture.srv = DescriptorHandle{};
     texture.uav = DescriptorHandle{};
+    texture.rtv = DescriptorHandle{};
+    texture.dsv = DescriptorHandle{};
 }
 
 void ResourceAllocator::ReleaseDescriptors(GpuBuffer& buffer) {

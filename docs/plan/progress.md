@@ -1,13 +1,14 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-08-31 10:12
+更新日時: 2026-08-31 10:46
 
 ## 現在の状況
 
-**M1（RHI の整備）完了。** Debug / Release ともにビルドが通り、起動して
-コンピュートシェーダで生成したテクスチャを ImGui 上でプレビューできる状態。
-シェーダのホットリロードも動作確認済み。次は M2（PBR プレビューレンダラ）。
+**M2a（PBR プレビューレンダラ / 直接光まで）完了。** Debug / Release ともに
+ビルドが通り、起動して球・平面・キューブを GGX 直接光で描画し、
+物理カメラの露出（EV100）と ACES トーンマップを通してビューポートに表示できる。
+次は M2b（IBL）。
 
 ## 完了済み
 
@@ -32,6 +33,21 @@
   - デバッグレイヤー + GPU ベースバリデーション、PIX マーカー（`Frame`）
   - Agility SDK の DLL を `D3D12/` へポストビルドコピー
 
+- 2026-08-31 10:46 — **M2a 完了**。
+  - `rhi/PipelineCache` にグラフィックス PSO を追加（入力レイアウトは頂点構造体ごとの列挙で管理）
+  - `rhi/GpuResource` を RTV / DSV と DEFAULT ヒープバッファに対応
+  - `rhi/Device` に DSV ヒープ、`BindBackBuffer`、`ExecuteImmediate` を追加
+  - `renderer/Camera`（軌道カメラ）、`renderer/Mesh`（球 / 平面 / キューブ生成と GPU 転送）
+  - `renderer/PreviewRenderer`（HDR シーンカラー + 深度 → トーンマップ → 表示用テクスチャ）
+  - `shaders/Brdf.hlsli`、`shaders/Tonemap.hlsli`、`shaders/MeshPbr.hlsl`、
+    `shaders/TonemapPass.hlsl`
+  - EV100 ベースの露出（絞り / シャッター / ISO、または EV 直接指定）と
+    Reinhard / ACES の切り替え
+  - 高 DPI 対応（DPI 認識の有効化、フォントとスタイルのスケール、
+    ウィンドウをモニタの作業領域に収める）
+  - M1 の疎通確認用 `shaders/SmokeTest.hlsl` は役目を終えたため削除
+    （同じ経路をトーンマップパスが通る）
+
 ## 環境の実測値（2026-08-31 時点）
 
 - Visual Studio Community 2026 (18.7.11925.98) / MSVC 14.51.36231
@@ -45,15 +61,16 @@
 
 ## 次にやること
 
-M2（PBR プレビューレンダラ）。
+M2b（IBL）。
 
-1. グラフィックス PSO のキャッシュを PipelineCache に追加。
-2. 深度バッファとカメラ操作、プリミティブ（平面 / 球 / キューブ）の描画。
-3. GGX 直接光。
-4. HDRI の読み込みと、irradiance / prefiltered specular / BRDF LUT の生成。
-5. EV100 露出と ACES トーンマップ。
+1. HDRI（.hdr / .exr）の読み込み。stb_image か tinyexr を vcpkg に追加する。
+2. equirectangular → キューブマップ変換（コンピュート）。
+3. irradiance キューブマップの生成（拡散）。
+4. prefiltered specular キューブマップの生成（ラフネス別ミップ）。
+5. BRDF LUT の生成。
+6. スカイボックス表示と、`MeshPbr.hlsl` の暫定環境光を IBL に差し替え。
 
-ここで「マテリアルが正しく見える」基準を確定させる。
+キューブマップを扱うため、`GpuTexture` を配列・キューブ・ミップ別 UAV に対応させる必要がある。
 
 - 2026-08-31 10:12 — **M1 完了**。
   - `rhi/GpuResource`（D3D12MemoryAllocator によるテクスチャ / バッファ生成とディスクリプタ確保）
@@ -66,6 +83,24 @@ M2（PBR プレビューレンダラ）。
     ImGui のプレビューウィンドウへ表示
 
 ## 注意点
+
+- **グローバルルートシグネチャに `ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT` が必須**:
+  入力レイアウトを使うグラフィックス PSO は、このフラグが無いと
+  `CreateGraphicsPipelineState` が `E_INVALIDARG` で失敗する。原因が表に出にくいので注意。
+
+- **PSO の生成失敗もキャッシュする**: 失敗を記録しないと毎フレーム再コンパイルが走り、
+  ログが埋まって原因が追いにくくなる。ホットリロード時は `InvalidateAll()` で再挑戦する。
+
+- **球の巻き順**: 球は行方向が -Y、列方向が経度なので、平面やキューブとは巻き順が逆になる。
+  誤ると外向き面が裏面になり、遠側の内面が見える（暗く巨大な面が映る）。
+
+- **高 DPI**: `ImGui_ImplWin32_EnableDpiAwareness()` はウィンドウ生成前に呼ぶ。
+  呼ばないと Windows にウィンドウごと拡大され、描画解像度が半分になってぼやける。
+  初期ウィンドウサイズも DPI で拡大し、`Window::Create` で実際に載ったモニタの
+  作業領域に収める（`SPI_GETWORKAREA` はプライマリモニタしか見ないため使わない）。
+
+- **既定レイアウト**: 1 フレーム目はメインビューポートの作業領域が確定していないことがある。
+  ini が無い初回起動時のみ、数フレーム待ってから一度だけ既定配置を適用している。
 
 - **Windows SDK の `d3d12.lib` 解決**: Visual Studio ジェネレータでは SDK の lib パスが
   `find_library` の探索対象に入らず、`directx12-agility` の config が

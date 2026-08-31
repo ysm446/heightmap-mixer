@@ -98,6 +98,12 @@ set(hm_sources
     src/rhi/ShaderCompiler.h
     src/rhi/UploadRing.cpp
     src/rhi/UploadRing.h
+    src/renderer/Camera.cpp
+    src/renderer/Camera.h
+    src/renderer/Mesh.cpp
+    src/renderer/Mesh.h
+    src/renderer/PreviewRenderer.cpp
+    src/renderer/PreviewRenderer.h
     src/ui/ImGuiLayer.cpp
     src/ui/ImGuiLayer.h
 )
