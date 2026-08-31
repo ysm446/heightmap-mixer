@@ -11,6 +11,7 @@
 #include <DirectXMath.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -394,7 +395,10 @@ bool Application::Initialize(const StartupOptions& options) {
     }
     UpdateWindowTitle();
 
+    m_settings.Load();
     m_recentProjects.Load();
+    // 設定に拡大率が残っていれば、ウィンドウの大きさもそれに合わせる。
+    ApplyUiScale();
 
     // ログをステータスバーへ流す。以降の警告やエラーは画面上でも見える。
     SetLogSink([this](LogLevel level, const char* text) { PushStatus(level, text); });
@@ -447,6 +451,9 @@ int Application::Run() {
         PollShaderHotReload();
 
 
+
+        // UI の拡大率はスタイル・フォントとウィンドウの大きさに効く。フレームの外で。
+        ApplyUiScale();
 
         // プロジェクトとマテリアルの読み書きも GPU 待機を伴うため、フレームの外で。
         // 他の保留処理より先に行う（読み込みが中身を丸ごと入れ替えるため）。
@@ -563,6 +570,7 @@ void Application::DrawUi() {
                 m_rebuildLayout = true;
             }
             ImGui::Separator();
+            ImGui::MenuItem("設定", nullptr, &m_showSettings);
             ImGui::MenuItem("ImGui デモ", nullptr, &m_showDemoWindow);
             ImGui::EndMenu();
         }
@@ -602,6 +610,8 @@ void Application::DrawUi() {
     DrawMaterialPanel();
     DrawLightingPanel();
     DrawInfoPanel();
+
+    DrawSettingsWindow();
 
     if (m_showDemoWindow) {
         ImGui::ShowDemoWindow(&m_showDemoWindow);
@@ -1967,6 +1977,123 @@ void Application::ProcessPendingFileWork() {
     }
 }
 
+float Application::DesiredUiScale() const {
+    const io::UiSettings& ui = m_settings.Ui();
+    return ui.followSystemScale ? m_imgui.MonitorScale() : ui.manualScale;
+}
+
+namespace {
+
+// 拡大率を掛けた大きさ。動画やテクスチャの都合で偶数に丸める。
+uint32_t ScaledClientSize(uint32_t base, float scale) {
+    const auto scaled = static_cast<uint32_t>(std::lround(static_cast<float>(base) * scale));
+    return (scaled + 1u) & ~1u;
+}
+
+}  // namespace
+
+uint32_t Application::DefaultClientWidth() const {
+    return ScaledClientSize(kInitialWidth, m_imgui.UiScale());
+}
+
+uint32_t Application::DefaultClientHeight() const {
+    return ScaledClientSize(kInitialHeight, m_imgui.UiScale());
+}
+
+// UI を拡大したぶんウィンドウも大きくする。こうすると**作業面積（論理サイズ）が
+// 1920x1080 のまま**で、文字と部品だけが大きくなる。
+// 拡大率だけ上げるとパネルが窮屈になるので、既定では大きさを揃える。
+void Application::ApplyUiScale() {
+    const float desired = DesiredUiScale();
+    if (std::abs(desired - m_imgui.UiScale()) < 0.001f) {
+        return;
+    }
+
+    m_imgui.SetUiScale(desired);
+    m_window.ResizeClient(DefaultClientWidth(), DefaultClientHeight());
+}
+
+// アプリの設定。プロジェクトには保存しない（`%LOCALAPPDATA%` の settings.json）。
+//
+// ドックへは収めない。常設パネルは「何を作るか」に関わるものだけにして、
+// たまにしか触らない設定で作業面積を食わない。
+void Application::DrawSettingsWindow() {
+    if (!m_showSettings) {
+        return;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(ui::Scaled(460.0f), ui::Scaled(500.0f)),
+                             ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("設定", &m_showSettings)) {
+        ImGui::End();
+        return;
+    }
+
+    io::UiSettings& ui = m_settings.Ui();
+    bool changed = false;
+
+    ui::SectionHeader("UI");
+    if (ui::BeginPropertyTable("settingsUiRows")) {
+        ui::PropertyValue("表示スケール", "%.0f%%  (Windows)", m_imgui.MonitorScale() * 100.0f);
+
+        const io::UiSettings defaults;
+        changed |= ui::PropertyBool("スケール追従", &ui.followSystemScale,
+                                    defaults.followSystemScale,
+                                    "Windows の表示スケール（DPI）に UI の大きさを合わせる。"
+                                    "切ると常に 100% で描く");
+
+        if (!ui.followSystemScale) {
+            static const char* const kScaleLabels[] = {"100%", "125%", "150%", "200%"};
+            constexpr float kScaleValues[] = {1.0f, 1.25f, 1.5f, 2.0f};
+            int selected = 0;
+            for (int i = 0; i < IM_ARRAYSIZE(kScaleValues); ++i) {
+                if (std::abs(kScaleValues[i] - ui.manualScale) < 0.01f) {
+                    selected = i;
+                }
+            }
+            if (ui::PropertyCombo("拡大率", &selected, kScaleLabels, IM_ARRAYSIZE(kScaleLabels), 0,
+                                  "UI の大きさ。ウィンドウの大きさは変わらない")) {
+                ui.manualScale = kScaleValues[selected];
+                changed = true;
+            }
+        }
+        ui::EndPropertyTable();
+    }
+    ui::HintText("拡大するとウィンドウも同じ倍率で大きくなる（作業面積は変わらない）");
+    ui::HintText("パネルの幅は ini にピクセルで残る。ずれたら 表示 > レイアウトをリセット");
+
+    ui::SectionHeader("ウィンドウ");
+    if (ui::BeginPropertyTable("settingsWindowRows")) {
+        ui::PropertyValue("描画サイズ", "%u x %u", m_device.Width(), m_device.Height());
+        ui::PropertyLabelEmpty("windowReset");
+        // 録画やスクリーンショットの解像度を揃えるために、既定へ戻す手段を残す。
+        if (ui::Button("既定の大きさに戻す", ui::kWideButtonWidth)) {
+            m_window.ResizeClient(DefaultClientWidth(), DefaultClientHeight());
+        }
+        ui::PropertyEnd();
+        ui::EndPropertyTable();
+    }
+    ui::HintText("既定は %u x %u（%u x %u の %.0f%%）", DefaultClientWidth(),
+                 DefaultClientHeight(), kInitialWidth, kInitialHeight,
+                 m_imgui.UiScale() * 100.0f);
+
+    ui::SectionHeader("表示");
+    if (ui::BeginPropertyTable("settingsDisplayRows")) {
+        ui::PropertyBool("垂直同期", &m_vsync, true);
+        ui::PropertyBool("ホットリロード", &m_hotReloadEnabled, true,
+                         "shaders/ の更新を検出して PSO を作り直す");
+        ui::PropertyColor("背景色", m_clearColor, kDefaultClearColor);
+        ui::EndPropertyTable();
+    }
+
+    if (changed) {
+        // 次のフレームの頭で拡大率を反映し、設定を書き出す。
+        m_settings.Save();
+    }
+
+    ImGui::End();
+}
+
 void Application::DrawInfoPanel() {
     if (ImGui::Begin("情報")) {
         const ImGuiIO& io = ImGui::GetIO();
@@ -1993,14 +2120,6 @@ void Application::DrawInfoPanel() {
             ui::EndPropertyTable();
         }
 
-        ui::SectionHeader("表示");
-        if (ui::BeginPropertyTable("displayRows")) {
-            ui::PropertyBool("垂直同期", &m_vsync, true);
-            ui::PropertyBool("ホットリロード", &m_hotReloadEnabled, true,
-                             "shaders/ の更新を検出して PSO を作り直す");
-            ui::PropertyColor("背景色", m_clearColor, kDefaultClearColor);
-            ui::EndPropertyTable();
-        }
     }
     ImGui::End();
 }

@@ -6,6 +6,7 @@
 #include "compositor/TextureLibrary.h"
 #include "core/Log.h"
 #include "core/Window.h"
+#include "io/AppSettings.h"
 #include "io/RecentFiles.h"
 #include "renderer/PreviewRenderer.h"
 #include "rhi/Device.h"
@@ -61,6 +62,16 @@ private:
     void DrawLayerPanel();
     void DrawMaterialLibraryPanel();
     void DrawTextureLibraryPanel();
+    // アプリの設定ウィンドウ（表示 > 設定）。プロジェクトに保存しない設定を置く。
+    void DrawSettingsWindow();
+    // 設定から決まる UI の拡大率。追従なら Windows の表示スケール。
+    float DesiredUiScale() const;
+    // 拡大率を掛けた既定のクライアント領域。1920x1080 を拡大率倍したもの。
+    // 追従を入れたときに作業面積（論理サイズ）が変わらないようにするため。
+    uint32_t DefaultClientWidth() const;
+    uint32_t DefaultClientHeight() const;
+    // 設定に合わせて拡大率とウィンドウの大きさを反映する。フレームの外で呼ぶこと。
+    void ApplyUiScale();
     // ファイルメニュー。要求を積むだけで、読み書きはフレームの外で行う。
     void DrawFileMenu();
     // キーボードショートカット（Ctrl+N / O / S / Shift+S）。メニューと同じ入口を通す。
@@ -139,6 +150,9 @@ private:
     // 選ばれたパスをここへ積んでおき、次のフレームの頭で処理する。
     std::filesystem::path m_projectPath;  // 現在のプロジェクト。未保存なら空
     io::RecentFiles m_recentProjects;
+    io::AppSettings m_settings;
+    // 設定ウィンドウを出しているか。ドックへは収めない補助ウィンドウ。
+    bool m_showSettings = false;
     std::filesystem::path m_pendingProjectSave;
     std::filesystem::path m_pendingProjectOpen;
     std::filesystem::path m_pendingMaterialExport;

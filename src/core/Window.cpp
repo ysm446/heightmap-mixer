@@ -4,6 +4,8 @@
 
 #include <shellapi.h>
 
+#include <algorithm>
+
 namespace mm {
 namespace {
 
@@ -45,29 +47,10 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
         return false;
     }
 
-    // 実際に載ったモニタの作業領域に収める。
-    // SPI_GETWORKAREA はプライマリモニタしか見ないため、ここで改めて調整する。
-    MONITORINFO monitorInfo = {};
-    monitorInfo.cbSize = sizeof(monitorInfo);
-    if (::GetMonitorInfoW(::MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &monitorInfo)) {
-        const LONG workWidth = monitorInfo.rcWork.right - monitorInfo.rcWork.left;
-        const LONG workHeight = monitorInfo.rcWork.bottom - monitorInfo.rcWork.top;
-
-        RECT windowRect = {};
-        ::GetWindowRect(m_hwnd, &windowRect);
-        const LONG windowWidth = windowRect.right - windowRect.left;
-        const LONG windowHeight = windowRect.bottom - windowRect.top;
-
-        if (windowWidth > workWidth || windowHeight > workHeight) {
-            const LONG fittedWidth = (windowWidth < workWidth) ? windowWidth : workWidth;
-            const LONG fittedHeight = (windowHeight < workHeight) ? windowHeight : workHeight;
-            ::SetWindowPos(m_hwnd, nullptr, monitorInfo.rcWork.left, monitorInfo.rcWork.top,
-                           fittedWidth, fittedHeight, SWP_NOZORDER | SWP_NOACTIVATE);
-            MM_LOG_WARN("ウィンドウがモニタの作業領域に収まらないため縮めました "
-                        "(要求 %ux%u のクライアント領域は確保できません)",
-                        width, height);
-        }
-    }
+    // 要求どおりのクライアント領域で開く。**入りきらなくても縮めない。**
+    // スクリーンショットや録画の解像度を固定するのが目的なので、
+    // モニタの作業領域に合わせて縮めると目的を果たせない。位置だけ調整する。
+    ResizeClient(width, height);
 
     RECT client = {};
     ::GetClientRect(m_hwnd, &client);
@@ -80,6 +63,57 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
     ::ShowWindow(m_hwnd, SW_SHOWDEFAULT);
     ::UpdateWindow(m_hwnd);
     return true;
+}
+
+// クライアント領域（描画される中身）を指定サイズへ合わせる。
+//
+// 最大化やスナップは解除する。解除しないと SetWindowPos の大きさが無視される。
+// 入りきらない場合でも**縮めない**。位置だけ作業領域の中へ寄せる。
+void Window::ResizeClient(uint32_t width, uint32_t height) {
+    if (m_hwnd == nullptr || width == 0 || height == 0) {
+        return;
+    }
+
+    if (::IsZoomed(m_hwnd)) {
+        ::ShowWindow(m_hwnd, SW_RESTORE);
+    }
+
+    // AdjustWindowRect は 96 DPI の枠しか見ないため、実際の DPI 版を使う。
+    RECT rect = {0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+    const UINT dpi = ::GetDpiForWindow(m_hwnd);
+    ::AdjustWindowRectExForDpi(&rect, WS_OVERLAPPEDWINDOW, FALSE, 0,
+                               (dpi != 0) ? dpi : ::GetDpiForSystem());
+    const LONG outerWidth = rect.right - rect.left;
+    const LONG outerHeight = rect.bottom - rect.top;
+
+    // 位置は、いま載っているモニタの作業領域の左上へ寄せる。
+    // タイトルバーが画面外へ出ると窓を掴めなくなる。
+    LONG x = 0;
+    LONG y = 0;
+    MONITORINFO monitorInfo = {};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (::GetMonitorInfoW(::MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &monitorInfo)) {
+        RECT windowRect = {};
+        ::GetWindowRect(m_hwnd, &windowRect);
+        x = windowRect.left;
+        y = windowRect.top;
+
+        const LONG maxX = monitorInfo.rcWork.right - outerWidth;
+        const LONG maxY = monitorInfo.rcWork.bottom - outerHeight;
+        x = (maxX < monitorInfo.rcWork.left) ? monitorInfo.rcWork.left : std::min(x, maxX);
+        y = (maxY < monitorInfo.rcWork.top) ? monitorInfo.rcWork.top : std::min(y, maxY);
+        x = std::max(x, monitorInfo.rcWork.left);
+        y = std::max(y, monitorInfo.rcWork.top);
+
+        if (outerWidth > (monitorInfo.rcWork.right - monitorInfo.rcWork.left) ||
+            outerHeight > (monitorInfo.rcWork.bottom - monitorInfo.rcWork.top)) {
+            MM_LOG_WARN("ウィンドウ (%ux%u) がモニタの作業領域に収まりません。"
+                        "はみ出したまま開きます", width, height);
+        }
+    }
+
+    ::SetWindowPos(m_hwnd, nullptr, x, y, outerWidth, outerHeight,
+                   SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void Window::SetTitle(const wchar_t* title) {

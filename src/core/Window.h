@@ -35,6 +35,11 @@ public:
     // タイトルバーの文字列を差し替える。開いているプロジェクト名を出すのに使う。
     void SetTitle(const wchar_t* title);
 
+    // クライアント領域（描画される中身）を指定サイズへ合わせる。
+    // 最大化やスナップは解除する。**作業領域に入りきらなくても縮めない**
+    // （スクリーンショットや録画の解像度を固定するのが目的なので）。
+    void ResizeClient(uint32_t width, uint32_t height);
+
     // 溜まっているメッセージを処理する。終了要求が来ていたら false を返す。
     bool PumpMessages();
 

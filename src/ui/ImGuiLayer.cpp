@@ -9,15 +9,17 @@
 #include <imgui_impl_dx12.h>
 #include <imgui_impl_win32.h>
 
+#include <algorithm>
+#include <cmath>
+
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wparam,
                                                              LPARAM lparam);
 
 namespace mm {
 namespace {
 
-// UI の拡大率。クライアント領域を実ピクセルで固定しているため 1.0 で固定する。
-// 詳細は docs/design/design-guide.md の「寸法と DPI」を参照。
-constexpr float kUiScale = 1.0f;
+// フォントの基準サイズ。実際の大きさは ImGui 側で UI 拡大率が掛かる。
+constexpr float kFontSize = 17.0f;
 
 // ImGui バックエンドからのディスクリプタ確保要求を、こちらのアロケータへ橋渡しする。
 void SrvDescriptorAlloc(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* outCpu,
@@ -61,17 +63,16 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
     // これをしないと、ビューポートの余白をドラッグしただけでパネルが動いてしまう。
     io.ConfigWindowsMoveFromTitleBarOnly = true;
 
-    // ウィンドウのクライアント領域は実ピクセルで固定してあるので、
-    // UI もそこへ 1:1 で載せる。モニタの DPI で UI まで拡大すると、
-    // 固定したはずの作業面積がモニタ設定によって変わってしまう。
+    // クライアント領域を実ピクセルで固定しているので、UI の拡大率は既定では
+    // モニタの DPI に追従させない（固定したはずの作業面積が変わってしまうため）。
     // DPI 認識自体は有効なままなので、OS によるビットマップ拡大は起きない。
-    const float monitorDpiScale = ImGui_ImplWin32_GetDpiScaleForHwnd(window.Handle());
-    MM_LOG_INFO("モニタの DPI スケール: %.2f（UI スケールは %.2f 固定）", monitorDpiScale,
-                kUiScale);
-    m_dpiScale = kUiScale;
+    // 追従させるかは設定で選べる（Application が SetUiScale を呼ぶ）。
+    m_monitorScale = ImGui_ImplWin32_GetDpiScaleForHwnd(window.Handle());
+    MM_LOG_INFO("モニタの表示スケール: %.0f%%（UI の拡大率は %.0f%%）", m_monitorScale * 100.0f,
+                m_uiScale * 100.0f);
 
     // 配色と余白はここで一括して決める。個々のパネルで色を積まない。
-    ui::ApplyTheme(m_dpiScale);
+    ui::ApplyTheme(m_uiScale);
 
     if (!ImGui_ImplWin32_Init(window.Handle())) {
         MM_LOG_ERROR("ImGui_ImplWin32_Init に失敗しました");
@@ -94,14 +95,29 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
         return false;
     }
 
-    LoadFonts(m_dpiScale);
+    LoadFonts();
 
     m_device = &device;
     m_initialized = true;
     return true;
 }
 
-void ImGuiLayer::LoadFonts(float dpiScale) {
+void ImGuiLayer::SetUiScale(float scale) {
+    const float clamped = std::clamp(scale, 0.5f, 4.0f);
+    if (std::abs(clamped - m_uiScale) < 0.001f) {
+        return;
+    }
+    m_uiScale = clamped;
+
+    // 余白・角丸・部品幅はテーマ側でまとめて掛け直す。
+    ui::ApplyTheme(m_uiScale);
+    // フォントは 1.92 の動的ラスタライズに任せる。アトラスは作り直さない。
+    ImGui::GetStyle().FontScaleDpi = m_uiScale;
+
+    MM_LOG_INFO("UI の拡大率を %.0f%% にしました", m_uiScale * 100.0f);
+}
+
+void ImGuiLayer::LoadFonts() {
     // 日本語を表示できるよう、システムフォントを優先して読み込む。
     static const char* const kCandidates[] = {
         "C:/Windows/Fonts/YuGothM.ttc",
@@ -109,11 +125,10 @@ void ImGuiLayer::LoadFonts(float dpiScale) {
         "C:/Windows/Fonts/msgothic.ttc",
     };
 
-    const float fontSize = 17.0f * ((dpiScale > 0.0f) ? dpiScale : 1.0f);
-
     ImGuiIO& io = ImGui::GetIO();
     for (const char* path : kCandidates) {
-        if (io.Fonts->AddFontFromFileTTF(path, fontSize) != nullptr) {
+        // 基準サイズで読む。拡大率は FontScaleDpi が掛ける。
+        if (io.Fonts->AddFontFromFileTTF(path, kFontSize) != nullptr) {
             MM_LOG_INFO("フォントを読み込みました: %s", path);
             return;
         }
@@ -131,7 +146,7 @@ void ImGuiLayer::Shutdown() {
     ImGui::DestroyContext();
     m_initialized = false;
     m_device = nullptr;
-    m_dpiScale = 1.0f;
+    m_uiScale = 1.0f;
 }
 
 void ImGuiLayer::BeginFrame() {

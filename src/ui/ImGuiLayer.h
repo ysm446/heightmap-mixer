@@ -35,14 +35,19 @@ public:
     // Window のメッセージフックから呼ぶ。true ならウィンドウ側では処理しない。
     bool HandleMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
-    // 高 DPI 環境でのスケール。既定のウィンドウ位置・サイズにも掛けること。
-    float DpiScale() const { return m_dpiScale; }
+    // UI の拡大率を変える。フォントは ImGui 1.92 の FontScaleDpi で動的に拡縮するので、
+    // アトラスの作り直しも GPU 待機も要らない。フレームの外で呼ぶこと。
+    void SetUiScale(float scale);
+    float UiScale() const { return m_uiScale; }
+    // Windows の表示スケール（150% なら 1.5）。設定の表示と「追従」に使う。
+    float MonitorScale() const { return m_monitorScale; }
 
 private:
-    void LoadFonts(float dpiScale);
+    void LoadFonts();
 
     rhi::Device* m_device = nullptr;
-    float m_dpiScale = 1.0f;
+    float m_uiScale = 1.0f;
+    float m_monitorScale = 1.0f;
     bool m_initialized = false;
 };
 

@@ -1,6 +1,7 @@
 #include "io/RecentFiles.h"
 
 #include "core/Log.h"
+#include "io/AppSettings.h"
 
 #include <nlohmann/json.hpp>
 
@@ -29,19 +30,9 @@ fs::path FromUtf8(const std::string& text) {
     return fs::path(std::u8string(text.begin(), text.end()));
 }
 
-// 履歴の置き場所。%LOCALAPPDATA% が引けなければ作業ディレクトリへ落とす。
+// 履歴の置き場所。設定と同じフォルダへ置く。
 fs::path HistoryPath() {
-    const DWORD needed = ::GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0);
-    if (needed > 0) {
-        std::wstring value;
-        value.resize(needed);
-        const DWORD written = ::GetEnvironmentVariableW(L"LOCALAPPDATA", value.data(), needed);
-        if (written > 0) {
-            value.resize(written);
-            return fs::path(value) / L"material-mixer" / L"recent.json";
-        }
-    }
-    return fs::path(L"material_mixer_recent.json");
+    return AppDataDirectory() / L"recent.json";
 }
 
 // 同じファイルを別の書き方で指していても 1 つに寄せる。

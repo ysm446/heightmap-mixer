@@ -100,6 +100,8 @@ set(mm_sources
     src/core/ImageIo.h
     src/core/Window.cpp
     src/core/Window.h
+    src/io/AppSettings.cpp
+    src/io/AppSettings.h
     src/io/ProjectIo.cpp
     src/io/ProjectIo.h
     src/io/RecentFiles.cpp
