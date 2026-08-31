@@ -17,6 +17,9 @@
 static const float kDerivedGradientScale = 0.02f;
 static const float kDerivedCurvatureScale = 0.006f;
 static const float kCavityScale = 0.05f;
+// 窪みリングの半径と正規化の基準解像度。リングを UV 単位で固定することで、
+// 合成解像度を変えてもマスクの効きが変わらないようにする（1024 で従来と一致）。
+static const float kCavityReferenceResolution = 1024.0f;
 
 struct MaskConstants
 {
@@ -97,18 +100,19 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         int count = 0;
         for (int ring = 1; ring <= 2; ++ring)
         {
-            const float radius = float(ring) * 8.0f;
+            // 半径は UV 単位で固定する。テクセル単位にすると解像度で効きが変わる。
+            const float radiusUv = float(ring) * 8.0f / kCavityReferenceResolution;
             for (int i = 0; i < 8; ++i)
             {
                 const float angle = (float(i) / 8.0f) * 2.0f * kPi;
-                const float2 offset = float2(cos(angle), sin(angle)) * radius * texelSize;
+                const float2 offset = float2(cos(angle), sin(angle)) * radiusUv;
                 sum += SampleHeight(height, uv + offset);
                 ++count;
             }
         }
 
         const float average = sum / float(count);
-        result = saturate(0.5f + (average - center) / max(texelSize.x, 1e-6f) *
+        result = saturate(0.5f + (average - center) * kCavityReferenceResolution *
                                      kCavityScale * scale);
     }
 

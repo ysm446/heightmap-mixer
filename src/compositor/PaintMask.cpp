@@ -47,13 +47,8 @@ void TransitionHistory(ID3D12GraphicsCommandList* commandList, ID3D12Resource* r
 }
 
 void ReleaseTexture(rhi::Device& device, rhi::GpuTexture& texture) {
-    if (!texture.IsValid()) {
-        return;
-    }
-    device.Allocator().ReleaseDescriptors(texture);
-    device.Defer(texture.resource);
-    device.Defer(texture.allocation);
-    texture = rhi::GpuTexture{};
+    // ディスクリプタも含めてフレーム同期後に解放する。GPU 待機は不要。
+    device.DeferRelease(texture);
 }
 
 }  // namespace
@@ -112,8 +107,6 @@ PaintMaskId PaintMaskStore::Duplicate(rhi::Device& device, PaintMaskId source) {
     if (sourceEntry == nullptr) {
         return kNoPaintMask;
     }
-    const rhi::GpuTexture sourceTexture = sourceEntry->texture;
-
     PaintMaskEntry entry;
     if (!CreateMaskTexture(device, m_resolution, entry.texture)) {
         return kNoPaintMask;
@@ -122,11 +115,12 @@ PaintMaskId PaintMaskStore::Duplicate(rhi::Device& device, PaintMaskId source) {
     m_entries.push_back(std::move(entry));
 
     // レイヤーを複製したときにテクスチャを共有しないよう、中身ごと写す。
+    // Restore（履歴 = 常に COMMON）へ生きているマスクを流用すると
+    // 状態追跡が壊れるため、専用の CopyMask を使う。
     Op op;
-    op.type = OpType::Restore;
+    op.type = OpType::CopyMask;
     op.target = m_entries.back().id;
-    op.history = sourceTexture;
-    op.releaseHistory = false;
+    op.copySource = source;
     m_pending.push_back(std::move(op));
     return m_entries.back().id;
 }
@@ -138,10 +132,9 @@ void PaintMaskStore::Remove(rhi::Device& device, PaintMaskId id) {
         return;
     }
 
-    // ディスクリプタを解放するため、GPU がこのマスクを読み終わるまで待つ。
-    device.WaitForGpu();
-
     // 破棄するマスクを対象にした要求と履歴を先に片付ける。
+    // テクスチャ本体とディスクリプタの解放はフレーム同期後（DeferRelease）なので、
+    // GPU 待機は要らない。
     m_pending.erase(std::remove_if(m_pending.begin(), m_pending.end(),
                                    [id](const Op& op) { return op.target == id; }),
                     m_pending.end());
@@ -338,7 +331,6 @@ PaintMaskId PaintMaskStore::AddFromPixels(rhi::Device& device, uint32_t resoluti
 }
 
 void PaintMaskStore::Clear(rhi::Device& device) {
-    device.WaitForGpu();
     m_pending.clear();
     ReleaseSnapshots(device, m_undo);
     ReleaseSnapshots(device, m_redo);
@@ -427,6 +419,14 @@ void PaintMaskStore::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache&
     }
 
     // 履歴は解像度が変わると使えない。アンドゥの段は捨てる。
+    // 積んであった履歴のコピー要求（Capture / Restore）もサイズ不一致で
+    // 成立しないため、あわせて捨てる。
+    m_pending.erase(std::remove_if(m_pending.begin(), m_pending.end(),
+                                   [](const Op& op) {
+                                       return op.type == OpType::Capture ||
+                                              op.type == OpType::Restore;
+                                   }),
+                    m_pending.end());
     ReleaseSnapshots(device, m_undo);
     ReleaseSnapshots(device, m_redo);
 
@@ -648,6 +648,20 @@ bool PaintMaskStore::Process(rhi::Device& device, rhi::PipelineCache& pipelineCa
                                           entry->texture.resource.Get());
                 TransitionHistory(commandList, op.history.resource.Get(),
                                   D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
+                recorded = true;
+                break;
+            }
+
+            case OpType::CopyMask: {
+                PaintMaskEntry* sourceEntry = FindMutable(op.copySource);
+                if (sourceEntry == nullptr) {
+                    break;
+                }
+                TransitionIfNeeded(commandList, sourceEntry->texture,
+                                   D3D12_RESOURCE_STATE_COPY_SOURCE);
+                TransitionIfNeeded(commandList, entry->texture, D3D12_RESOURCE_STATE_COPY_DEST);
+                commandList->CopyResource(entry->texture.resource.Get(),
+                                          sourceEntry->texture.resource.Get());
                 recorded = true;
                 break;
             }

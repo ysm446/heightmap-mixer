@@ -15,6 +15,10 @@ constexpr float kPitchLimit = 1.55334306f;  // 89 度
 constexpr float kMinDistance = 0.1f;
 constexpr float kMaxDistance = 100.0f;
 
+// 画角の可動域。SetState / SetFovY で同じ範囲に収める。
+constexpr float kMinFovY = 0.2f;
+constexpr float kMaxFovY = 1.5f;
+
 // Frame() で被写体の周りに残す余白。1.0 だと画面の端に接する。
 constexpr float kFrameMargin = 1.08f;
 
@@ -94,12 +98,16 @@ void Camera::SetState(const CameraState& state) {
     m_distance = std::clamp(state.distance, kMinDistance, kMaxDistance);
     m_yaw = state.yaw;
     m_pitch = std::clamp(state.pitch, -kPitchLimit, kPitchLimit);
-    m_fovY = std::clamp(state.fovY, 0.2f, 1.5f);
+    m_fovY = std::clamp(state.fovY, kMinFovY, kMaxFovY);
 }
 
 void Camera::SetViewportSize(uint32_t width, uint32_t height) {
     m_width = (width > 0) ? width : 1;
     m_height = (height > 0) ? height : 1;
+}
+
+void Camera::SetFovY(float fovY) {
+    m_fovY = std::clamp(fovY, kMinFovY, kMaxFovY);
 }
 
 XMFLOAT3 Camera::Position() const {

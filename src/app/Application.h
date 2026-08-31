@@ -96,9 +96,9 @@ private:
     void ResetProject();
     // ウィンドウタイトルを「プロジェクト名 - Material Mixer」に揃える。
     void UpdateWindowTitle();
-    // このテクスチャを参照しているマテリアルとマスクの数。一覧に出す。
     // このテクスチャを使っている場所の一覧（削除の確認に出す）。
     std::vector<std::string> CollectTextureUsers(compositor::TextureId id) const;
+    // 参照している箇所の数だけを数える。毎フレーム呼ぶので文字列は作らない。
     size_t CountTextureUsers(compositor::TextureId id) const;
     // 参照が残っているテクスチャを消そうとしたときの確認。
     void DrawTextureRemoveModal();
@@ -172,6 +172,8 @@ private:
     // 読み込んだ直後のテクスチャを一覧に見せるための要求。
     // 一覧はスクロールするので、追加しただけでは枠外に入って気づけない。
     bool m_scrollToSelectedTexture = false;
+    // 追加・複製した直後のマテリアルを一覧の枠内へ送る要求。上と同じ理由。
+    bool m_scrollToSelectedMaterial = false;
 
     // ステータスバーに出す直近の通知。ログから受け取る。
     // 時刻は ImGui に依存させない（ログはコンテキストが無い時期にも来る）。
@@ -199,6 +201,9 @@ private:
     std::filesystem::path m_pendingMaterialImport;
     compositor::MaterialAssetId m_pendingExportMaterial = compositor::kNoMaterialAsset;
     compositor::TextureId m_pendingTextureRemove = compositor::kNoTexture;
+    // 削除要求のあったマテリアル。一覧の描画中に消すと、描画側が erase 済みの
+    // 要素を読んでしまうため、フレームの外で処理する。
+    compositor::MaterialAssetId m_pendingMaterialRemove = compositor::kNoMaterialAsset;
     // 確認待ちのテクスチャ。参照が残っているときだけ入る。
     compositor::TextureId m_textureRemoveCandidate = compositor::kNoTexture;
     std::vector<std::string> m_textureRemoveUsers;
@@ -225,6 +230,8 @@ private:
 
     float m_clearColor[4] = {0.09f, 0.09f, 0.11f, 1.0f};
     bool m_vsync = true;
+    // CoInitializeEx が成功したときだけ CoUninitialize する。
+    bool m_comInitialized = false;
     bool m_showDemoWindow = false;
     // ドックレイアウトの初期化。ini に配置が無ければ既定レイアウトを組む。
     bool m_layoutChecked = false;

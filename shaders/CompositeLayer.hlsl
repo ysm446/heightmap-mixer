@@ -40,7 +40,7 @@ struct LayerConstants
     uint4 textureIndices0;  // baseColor, normal, roughness, metallic
     uint4 textureIndices1;  // ao, height, mask, 中間結果由来マスクの SRV
 
-    float4 maskCurve;   // contrast, derivedScale, 未使用, 未使用
+    float4 maskCurve;   // contrast, 未使用 x3（derivedScale は CompositeMask 側で適用済み）
     uint4 noiseTypes;   // height, mask, 未使用, 未使用
     uint4 paintParams;  // ペイントマスクの SRV, 未使用 x3
     // スカラーのマップのチャンネル指定。4bit ずつ MM_CHANNEL_SLOT_* の順で詰めてある。

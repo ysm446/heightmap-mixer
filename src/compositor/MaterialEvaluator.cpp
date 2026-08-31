@@ -92,13 +92,8 @@ void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, rhi::GpuTexture&
 }
 
 void ReleaseTexture(rhi::Device& device, rhi::GpuTexture& texture) {
-    if (!texture.IsValid()) {
-        return;
-    }
-    device.Allocator().ReleaseDescriptors(texture);
-    device.Defer(texture.resource);
-    device.Defer(texture.allocation);
-    texture = rhi::GpuTexture{};
+    // ディスクリプタも含めてフレーム同期後に解放する。GPU 待機は不要。
+    device.DeferRelease(texture);
 }
 
 }  // namespace
@@ -184,14 +179,14 @@ bool MaterialEvaluator::Resize(rhi::Device& device, uint32_t resolution) {
     device.WaitForGpu();
     return Create(device, resolution);
 }
-void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                  ID3D12GraphicsCommandList* commandList,
                                  const MaterialStack& stack, const TextureLibrary& textures,
                                  const MaterialLibrary& materials,
                                  const PaintMaskStore& paintMasks,
                                  const std::vector<TileRect>& tiles) {
     if (!m_textures.IsValid() || tiles.empty()) {
-        return;
+        return false;
     }
 
     ID3D12PipelineState* layerPipeline =
@@ -201,12 +196,14 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     ID3D12PipelineState* thumbnailPipeline =
         pipelineCache.GetCompute(L"CompositeLayer.hlsl", L"CsMaskThumbnail");
     if (layerPipeline == nullptr || maskPipeline == nullptr) {
-        return;
+        return false;
     }
 
     // 有効なレイヤーが 1 枚も無いときは npos。合成はしないが、
     // マスクのサムネイルはレイヤーの有無に関わらず作り直す。
     const size_t baseIndex = stack.FirstEnabledIndex();
+
+    bool complete = true;
 
     PIXBeginEvent(commandList, PIX_COLOR(220, 140, 60), "CompositeStack");
 
@@ -260,6 +257,7 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 const rhi::UploadAllocation cb =
                     device.Upload().Allocate(sizeof(MaskConstants), 256);
                 if (!cb.IsValid()) {
+                    complete = false;
                     break;
                 }
                 std::memcpy(cb.cpu, &constants, sizeof(constants));
@@ -372,8 +370,8 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         constants.textureIndices1[3] =
             useDerivedMask ? m_textures.maskScratch.SrvIndex() : kInvalidTextureIndex;
 
+        // derivedScale は CompositeMask 側で適用済み。二重適用しないため渡さない。
         constants.maskCurve[0] = layer.mask.contrast;
-        constants.maskCurve[1] = layer.mask.derivedScale;
 
         constants.noiseTypes[0] = static_cast<uint32_t>(layer.heightNoise.type);
         constants.noiseTypes[1] = static_cast<uint32_t>(layer.mask.noise.type);
@@ -396,6 +394,7 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 const rhi::UploadAllocation cb =
                     device.Upload().Allocate(sizeof(LayerConstants), 256);
                 if (!cb.IsValid()) {
+                    complete = false;
                     break;
                 }
                 std::memcpy(cb.cpu, &tileConstants, sizeof(tileConstants));
@@ -432,7 +431,9 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
 
             const rhi::UploadAllocation cb =
                 device.Upload().Allocate(sizeof(LayerConstants), 256);
-            if (cb.IsValid()) {
+            if (!cb.IsValid()) {
+                complete = false;
+            } else {
                 std::memcpy(cb.cpu, &thumbnailConstants, sizeof(thumbnailConstants));
                 commandList->SetPipelineState(thumbnailPipeline);
                 commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
@@ -442,13 +443,16 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         }
     }
 
-    // メッシュのピクセルシェーダから読めるようにする。
-    TransitionIfNeeded(commandList, m_textures.baseColor,
-                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    TransitionIfNeeded(commandList, m_textures.normal, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    TransitionIfNeeded(commandList, m_textures.surface,
-                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    // メッシュの描画から読めるようにする。Height は頂点 / ドメインシェーダ
+    // （ディスプレイスメント）からも読まれるため、NON_PIXEL も含める。
+    // 状態の食い違いを避けるため 4 枚とも同じ状態に揃える。
+    constexpr D3D12_RESOURCE_STATES kOutputReadState =
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    TransitionIfNeeded(commandList, m_textures.baseColor, kOutputReadState);
+    TransitionIfNeeded(commandList, m_textures.normal, kOutputReadState);
+    TransitionIfNeeded(commandList, m_textures.surface, kOutputReadState);
+    TransitionIfNeeded(commandList, m_textures.height, kOutputReadState);
 
     // サムネイルは ImGui が SRV として読む。
     for (rhi::GpuTexture& thumbnail : m_maskThumbnails) {
@@ -456,6 +460,7 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     }
 
     PIXEndEvent(commandList);
+    return complete;
 }
 
 void MaterialEvaluator::EvaluateIfDirty(rhi::Device& device, rhi::PipelineCache& pipelineCache,
@@ -480,8 +485,12 @@ void MaterialEvaluator::EvaluateIfDirty(rhi::Device& device, rhi::PipelineCache&
         }
     }
 
-    Evaluate(device, pipelineCache, commandList, stack, textures, materials, paintMasks, tiles);
-    m_evaluatedRevision = stack.Revision();
+    // 途中で定数バッファが確保できなかった場合などは「評価済み」にせず、
+    // 次のフレームで評価し直す（タイルの継ぎ目が残ったまま確定するのを防ぐ）。
+    if (Evaluate(device, pipelineCache, commandList, stack, textures, materials, paintMasks,
+                 tiles)) {
+        m_evaluatedRevision = stack.Revision();
+    }
 }
 
 }  // namespace mm::compositor

@@ -48,7 +48,9 @@ public:
     // ループはレイヤー優先。1 レイヤーぶんを全タイルで終えてから次へ進む。
     // 中間結果由来のマスクは近傍を参照するため、タイル優先で回すと
     // まだ評価されていない隣のタイルを読んでしまい、境界に継ぎ目が出る。
-    void Evaluate(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+    // 全レイヤー・全タイルを記録できたら true。false のときは結果が半端なので、
+    // 呼び出し側は「評価済み」にせず、次のフレームで評価し直すこと。
+    bool Evaluate(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                   ID3D12GraphicsCommandList* commandList, const MaterialStack& stack,
                   const TextureLibrary& textures, const MaterialLibrary& materials,
                   const PaintMaskStore& paintMasks, const std::vector<TileRect>& tiles);

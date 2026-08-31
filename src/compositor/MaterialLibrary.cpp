@@ -51,13 +51,8 @@ uint32_t DispatchCount(uint32_t threads) {
 }
 
 void ReleaseTexture(rhi::Device& device, rhi::GpuTexture& texture) {
-    if (!texture.IsValid()) {
-        return;
-    }
-    device.Allocator().ReleaseDescriptors(texture);
-    device.Defer(texture.resource);
-    device.Defer(texture.allocation);
-    texture = rhi::GpuTexture{};
+    // ディスクリプタも含めてフレーム同期後に解放する。GPU 待機は不要。
+    device.DeferRelease(texture);
 }
 
 }  // namespace
@@ -70,7 +65,6 @@ void MaterialLibrary::Destroy(rhi::Device& device) {
 }
 
 void MaterialLibrary::Clear(rhi::Device& device) {
-    device.WaitForGpu();
     Destroy(device);
 }
 
@@ -119,8 +113,6 @@ void MaterialLibrary::Remove(rhi::Device& device, MaterialAssetId id) {
     if (it == m_entries.end()) {
         return;
     }
-    // ディスクリプタを解放するので、GPU がサムネイルを読み終わるまで待つ。
-    device.WaitForGpu();
     ReleaseTexture(device, it->thumbnail);
     m_entries.erase(it);
 }

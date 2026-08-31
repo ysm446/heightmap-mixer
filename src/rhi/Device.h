@@ -63,6 +63,15 @@ public:
     // 現在記録中のフレームが完了してから解放する。直接 Reset しないこと。
     void Defer(ComPtr<IUnknown> object);
 
+    // ディスクリプタを、現在記録中のフレームが完了してからフリーリストへ返す。
+    // ヒープの Free を直接呼ばないこと（実行中のフレームがまだ参照している）。
+    void DeferFree(DescriptorHeap& heap, const DescriptorHandle& handle);
+
+    // テクスチャ / バッファの本体とディスクリプタを、まとめて遅延解放する。
+    // GPU 待機は不要。呼び出し後、引数は空になる。
+    void DeferRelease(GpuTexture& texture);
+    void DeferRelease(GpuBuffer& buffer);
+
     uint64_t CompletedFenceValue() const;
     size_t PendingDeletionCount() const { return m_deletionQueue.PendingCount(); }
     uint32_t FrameIndex() const { return m_frameIndex; }

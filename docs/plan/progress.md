@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-01 00:30
+更新日時: 2026-09-01 07:28
 
 ## 現在の状況
 
@@ -25,6 +25,17 @@ Megascans の ORD（チャンネルパック）と EXR にも対応した。
 UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
 
 ## 完了済み
+
+- 2026-09-01 07:28 — **コードレビューと不具合修正（全域）。**
+  rhi / compositor / renderer / app・io・ui をレビューし、critical と bug を中心に修正。
+  詳細は [changelog](../changelog.md) の同日時の項を参照。
+  - ディスクリプタの遅延解放（`Device::DeferRelease`）を導入し、
+    手動の `WaitForGpu` に頼る解放を全廃した。
+  - 未修正の改善候補（提案のみ）: `Application.cpp`（約 3,000 行）のパネル別分割、
+    `DispatchCount` / `TransitionIfNeeded` などの共通ヘルパの rhi への集約、
+    `ToUtf8` / `FromUtf8` の一本化（core へ）、プレビュー既定値の構造体化、
+    ラフネス下限の統一（0.03 / 0.05 / 1e-3 が混在）、
+    `MeshPbr` の VS / DS ディスプレイスメント式の共通化。
 
 - 2026-08-31 05:46 — 方針の合意と [goals.md](goals.md) / [plan.md](plan.md) の作成。
   - 合成モデル: レイヤースタック（Quixel Mixer 風）

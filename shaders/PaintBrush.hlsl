@@ -85,8 +85,16 @@ float4 ComputeStrokeSample(uint index)
     const float2 position = lerp(float2(g_brush.fromX, g_brush.fromY),
                                  float2(g_brush.toX, g_brush.toY), t);
 
-    const int2 texel = clamp(int2(position), int2(0, 0),
-                             int2(g_brush.viewportWidth - 1, g_brush.viewportHeight - 1));
+    // ビューポート外の標本は捨てる。clamp で端へ丸めると、ドラッグで
+    // ウィンドウ外へ出たときに縁のテクセルへ貼り付いた線が引かれてしまう。
+    if (position.x < 0.0f || position.y < 0.0f ||
+        position.x >= float(g_brush.viewportWidth) ||
+        position.y >= float(g_brush.viewportHeight))
+    {
+        return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+
+    const int2 texel = int2(position);
 
     Texture2D<float4> uvBuffer = ResourceDescriptorHeap[g_brush.uvBufferIndex];
     const float4 center = uvBuffer[texel];

@@ -80,13 +80,8 @@ void InsertUavBarrier(ID3D12GraphicsCommandList* commandList, const rhi::GpuText
 }
 
 void ReleaseTexture(rhi::Device& device, rhi::GpuTexture& texture) {
-    if (!texture.IsValid()) {
-        return;
-    }
-    device.Allocator().ReleaseDescriptors(texture);
-    device.Defer(texture.resource);
-    device.Defer(texture.allocation);
-    texture = rhi::GpuTexture{};
+    // ディスクリプタも含めてフレーム同期後に解放する。GPU 待機は不要。
+    device.DeferRelease(texture);
 }
 
 }  // namespace
@@ -151,6 +146,9 @@ bool Environment::BuildBrdfLut(rhi::Device& device, rhi::PipelineCache& pipeline
 
 bool Environment::CreateTargets(rhi::Device& device, uint32_t equirectWidth,
                                 uint32_t equirectHeight) {
+    // ここでターゲットを手放すので、以降ビルドが完了するまでは「使えない」状態。
+    // 途中で失敗したときに、解放済みのディスクリプタ番号をシェーダへ渡さないため。
+    m_ready = false;
     ReleaseTargets(device);
 
     rhi::TextureDesc equirectDesc;
@@ -234,6 +232,19 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
     const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
         ID3D12RootSignature* rootSignature = pipelineCache.GlobalRootSignature();
         commandList->SetComputeRootSignature(rootSignature);
+
+        // 再ビルド（空の輝度変更など）では、前回のビルドで読み取り状態にした
+        // ターゲットがそのまま入ってくる。書き込みの前に UAV へ戻す。
+        // 初回ビルド（作成直後の UNORDERED_ACCESS）では状態一致で何もしない。
+        if (m_cube.state != D3D12_RESOURCE_STATE_UNORDERED_ACCESS) {
+            for (uint32_t mip = 0; mip < cubeMipCount; ++mip) {
+                TransitionMip(commandList, m_cube, mip, m_cube.state,
+                              D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            }
+            m_cube.state = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        }
+        TransitionAll(commandList, m_irradiance, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        TransitionAll(commandList, m_prefiltered, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
         // --- equirect → キューブ ミップ 0 ---------------------------------
         PIXBeginEvent(commandList, PIX_COLOR(120, 180, 255), "EnvEquirectToCube");
@@ -341,6 +352,7 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
     });
 
     if (!executed) {
+        m_ready = false;
         return false;
     }
 
@@ -450,6 +462,7 @@ bool Environment::BuildFromHdrFile(rhi::Device& device, rhi::PipelineCache& pipe
     void* mapped = nullptr;
     const D3D12_RANGE readRange = {0, 0};
     if (!MM_CHECK_HR(staging.resource->Map(0, &readRange, &mapped))) {
+        device.DeferRelease(staging);
         return false;
     }
     auto* destination = static_cast<uint8_t*>(mapped) + footprint.Offset;
@@ -470,13 +483,12 @@ bool Environment::BuildFromHdrFile(rhi::Device& device, rhi::PipelineCache& pipe
         commandList->CopyTextureRegion(&destinationLocation, 0, 0, 0, &sourceLocation, nullptr);
         PIXEndEvent(commandList);
     });
+    // ステージングバッファは GPU の完了後に解放する（実行に失敗しても必ず返す）。
+    device.Defer(staging.resource);
+    device.Defer(staging.allocation);
     if (!executed) {
         return false;
     }
-
-    // ステージングバッファは GPU の完了後に解放する。
-    device.Defer(staging.resource);
-    device.Defer(staging.allocation);
 
     m_sourceName = path.filename().string();
     const float scale = LuminanceScaleFor(skyLuminance, m_measuredSkyLuminance);

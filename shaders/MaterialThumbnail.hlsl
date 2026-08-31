@@ -119,9 +119,12 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (g_thumbnail.normalIndex != kInvalidTextureIndex)
     {
         const float3 sampled = SampleMap(g_thumbnail.normalIndex, uv).rgb * 2.0f - 1.0f;
+        // 円板の左右端では法線がほぼ ±X になり、X 軸からの直交化が縮退して
+        // NaN（輝点・黒点）が出る。BuildOrthonormalBasis と同じく軸を切り替える。
+        const float3 axis = (abs(geometricNormal.x) < 0.999f) ? float3(1.0f, 0.0f, 0.0f)
+                                                              : float3(0.0f, 1.0f, 0.0f);
         const float3 tangent =
-            normalize(float3(1.0f, 0.0f, 0.0f) -
-                      geometricNormal * geometricNormal.x);
+            normalize(axis - geometricNormal * dot(geometricNormal, axis));
         const float3 bitangent = cross(geometricNormal, tangent);
         normal = normalize(tangent * sampled.x + bitangent * sampled.y +
                            geometricNormal * sampled.z);
@@ -168,5 +171,5 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float coverage = 1.0f - smoothstep(sphereRadius - aa, sphereRadius + aa, radius);
 
     output[dispatchThreadId.xy] =
-        float4(LinearToSrgb(ApplyTonemap(radiance, 2)), coverage);
+        float4(LinearToSrgb(ApplyTonemap(radiance, kTonemapAces)), coverage);
 }

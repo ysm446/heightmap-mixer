@@ -21,6 +21,14 @@ struct UiSettings {
     float manualScale = 1.0f;
 };
 
+// 表示に関する設定（設定ウィンドウの「表示」節）。
+// design-guide の「設定ウィンドウ」が settings.json に置くと定めているもの。
+struct DisplaySettings {
+    bool vsync = true;
+    bool hotReload = true;
+    float clearColor[4] = {0.09f, 0.09f, 0.11f, 1.0f};
+};
+
 // 設定ファイル（`settings.json`）の読み書き。
 //
 // 値を変えたら Save() を呼ぶ。書けなくても動作は続ける（次回に持ち越せないだけ）。
@@ -32,8 +40,12 @@ public:
     UiSettings& Ui() { return m_ui; }
     const UiSettings& Ui() const { return m_ui; }
 
+    DisplaySettings& Display() { return m_display; }
+    const DisplaySettings& Display() const { return m_display; }
+
 private:
     UiSettings m_ui;
+    DisplaySettings m_display;
 };
 
 }  // namespace mm::io

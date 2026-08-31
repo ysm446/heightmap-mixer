@@ -71,6 +71,9 @@ PipelineCache::~PipelineCache() {
 }
 
 bool PipelineCache::Create(ID3D12Device* device, ShaderCompiler* compiler) {
+    if (device == nullptr) {
+        return false;
+    }
     m_device = device;
     m_compiler = compiler;
     return CreateGlobalRootSignature();
@@ -180,9 +183,9 @@ ID3D12PipelineState* PipelineCache::GetCompute(const std::wstring& relativePath,
     }
     pipeline->SetName(key.c_str());
 
-    const auto [inserted, ok] = m_computePipelines.emplace(key, std::move(pipeline));
-    (void)ok;
-    return inserted->second.Get();
+    const auto [it, insertedNew] = m_computePipelines.emplace(key, std::move(pipeline));
+    (void)insertedNew;
+    return it->second.Get();
 }
 
 ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc) {
@@ -265,11 +268,18 @@ ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc
     // テセレーションを使うときは、IA へパッチとして渡す。
     psoDesc.PrimitiveTopologyType = useTessellation ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH
                                                     : D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    psoDesc.NumRenderTargets = (desc.rtvFormat != DXGI_FORMAT_UNKNOWN) ? 1 : 0;
     psoDesc.RTVFormats[0] = desc.rtvFormat;
     if (desc.rtvFormat1 != DXGI_FORMAT_UNKNOWN) {
+        // RTV1 を使うなら RTV0 も必須。歯抜けの MRT は E_INVALIDARG になる。
+        if (desc.rtvFormat == DXGI_FORMAT_UNKNOWN) {
+            MM_LOG_ERROR("グラフィックス PSO: RTV0 が UNKNOWN のまま RTV1 は指定できません");
+            m_graphicsPipelines.emplace(key, nullptr);
+            return nullptr;
+        }
         psoDesc.NumRenderTargets = 2;
         psoDesc.RTVFormats[1] = desc.rtvFormat1;
+    } else {
+        psoDesc.NumRenderTargets = (desc.rtvFormat != DXGI_FORMAT_UNKNOWN) ? 1 : 0;
     }
     psoDesc.DSVFormat = desc.dsvFormat;
     psoDesc.SampleDesc.Count = 1;
@@ -281,9 +291,24 @@ ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc
     }
     pipeline->SetName(key.c_str());
 
-    const auto [inserted, ok] = m_graphicsPipelines.emplace(key, std::move(pipeline));
-    (void)ok;
-    return inserted->second.Get();
+    const auto [it, insertedNew] = m_graphicsPipelines.emplace(key, std::move(pipeline));
+    (void)insertedNew;
+    return it->second.Get();
+}
+
+size_t PipelineCache::PipelineCount() const {
+    size_t count = 0;
+    for (const auto& [key, pipeline] : m_computePipelines) {
+        if (pipeline) {
+            ++count;
+        }
+    }
+    for (const auto& [key, pipeline] : m_graphicsPipelines) {
+        if (pipeline) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 void PipelineCache::InvalidateAll() {

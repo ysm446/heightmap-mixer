@@ -42,6 +42,7 @@ fs::path AppDataDirectory() {
 
 void AppSettings::Load() {
     m_ui = UiSettings{};
+    m_display = DisplaySettings{};
 
     std::ifstream stream(SettingsPath(), std::ios::binary);
     if (!stream.is_open()) {
@@ -60,17 +61,37 @@ void AppSettings::Load() {
         return;
     }
 
-    const auto ui = document.find("ui");
-    if (ui == document.end() || !ui->is_object()) {
-        return;
+    if (const auto ui = document.find("ui"); ui != document.end() && ui->is_object()) {
+        if (const auto follow = ui->find("followSystemScale");
+            follow != ui->end() && follow->is_boolean()) {
+            m_ui.followSystemScale = follow->get<bool>();
+        }
+        if (const auto scale = ui->find("manualScale");
+            scale != ui->end() && scale->is_number()) {
+            // 壊れた値でも操作不能にならないよう、範囲へ丸める。
+            m_ui.manualScale = std::clamp(scale->get<float>(), 0.5f, 4.0f);
+        }
     }
-    if (const auto follow = ui->find("followSystemScale");
-        follow != ui->end() && follow->is_boolean()) {
-        m_ui.followSystemScale = follow->get<bool>();
-    }
-    if (const auto scale = ui->find("manualScale"); scale != ui->end() && scale->is_number()) {
-        // 壊れた値でも操作不能にならないよう、範囲へ丸める。
-        m_ui.manualScale = std::clamp(scale->get<float>(), 0.5f, 4.0f);
+
+    if (const auto display = document.find("display");
+        display != document.end() && display->is_object()) {
+        if (const auto vsync = display->find("vsync");
+            vsync != display->end() && vsync->is_boolean()) {
+            m_display.vsync = vsync->get<bool>();
+        }
+        if (const auto hotReload = display->find("hotReload");
+            hotReload != display->end() && hotReload->is_boolean()) {
+            m_display.hotReload = hotReload->get<bool>();
+        }
+        if (const auto color = display->find("clearColor");
+            color != display->end() && color->is_array() && color->size() >= 3) {
+            for (size_t i = 0; i < 3; ++i) {
+                if ((*color)[i].is_number()) {
+                    m_display.clearColor[i] =
+                        std::clamp((*color)[i].get<float>(), 0.0f, 1.0f);
+                }
+            }
+        }
     }
 }
 
@@ -85,17 +106,25 @@ bool AppSettings::Save() const {
     ui["followSystemScale"] = m_ui.followSystemScale;
     ui["manualScale"] = m_ui.manualScale;
 
+    json display;
+    display["vsync"] = m_display.vsync;
+    display["hotReload"] = m_display.hotReload;
+    display["clearColor"] = {m_display.clearColor[0], m_display.clearColor[1],
+                             m_display.clearColor[2]};
+
     json document;
     document["format"] = kFormat;
     document["version"] = kVersion;
     document["ui"] = std::move(ui);
+    document["display"] = std::move(display);
 
     std::ofstream stream(path, std::ios::binary | std::ios::trunc);
     if (!stream.is_open()) {
         MM_LOG_WARN("設定を保存できませんでした");
         return false;
     }
-    stream << document.dump(2) << '\n';
+    // 壊れた文字列が混ざっていても例外を出さない（不正な UTF-8 は置換文字にする）。
+    stream << document.dump(2, ' ', false, json::error_handler_t::replace) << '\n';
     return stream.good();
 }
 

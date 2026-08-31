@@ -45,15 +45,4 @@ void LogMessage(LogLevel level, const char* fmt, ...) {
     }
 }
 
-void FatalExit(const char* fmt, ...) {
-    char body[1920];
-    va_list args;
-    va_start(args, fmt);
-    std::vsnprintf(body, sizeof(body), fmt, args);
-    va_end(args);
-    WriteLine("[fatal] ", body);
-    ::MessageBoxA(nullptr, body, "material-mixer", MB_OK | MB_ICONERROR);
-    ::ExitProcess(1);
-}
-
 }  // namespace mm

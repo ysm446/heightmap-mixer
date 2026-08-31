@@ -118,7 +118,8 @@ public:
     bool CreateReadbackBuffer(uint64_t sizeInBytes, const wchar_t* debugName,
                               GpuBuffer& outBuffer);
 
-    // ディスクリプタを解放してから、リソース本体を呼び出し側の削除キューへ渡せる状態にする。
+    // ディスクリプタを即座にフリーリストへ返す。GPU がまだ参照している可能性がある場合は
+    // これを直接使わず、Device::DeferRelease() で遅延解放すること。
     void ReleaseDescriptors(GpuTexture& texture);
     void ReleaseDescriptors(GpuBuffer& buffer);
 

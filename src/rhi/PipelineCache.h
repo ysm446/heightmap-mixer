@@ -73,7 +73,8 @@ public:
     // 呼び出し側は事前に GPU 待機するか、削除キューへ渡すこと。
     void InvalidateAll();
 
-    size_t PipelineCount() const { return m_computePipelines.size() + m_graphicsPipelines.size(); }
+    // 生成に成功した PSO の数。失敗を記録した null プレースホルダは数えない。
+    size_t PipelineCount() const;
 
 private:
     bool CreateGlobalRootSignature();

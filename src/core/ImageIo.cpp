@@ -3,6 +3,9 @@
 #include "core/Log.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <fstream>
+#include <string>
 #include <vector>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -16,16 +19,90 @@
 #include <tinyexr.h>
 
 namespace mm {
+namespace {
+
+// パスを stb / tinyexr のナロー API へ渡さない。ナロー変換（path::string()）は
+// ロケール依存で、ACP に無い文字を含むパスが壊れる（ProjectIo 側の方針と同じ）。
+// ファイルはワイドパス対応の iostream で読み書きし、画像ライブラリには
+// メモリ経由で渡す。
+
+// ログ表示用の UTF-8 変換。
+std::string PathForLog(const std::filesystem::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string(text.begin(), text.end());
+}
+
+std::vector<uint8_t> ReadFileBytes(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary | std::ios::ate);
+    if (!stream.is_open()) {
+        return {};
+    }
+    const std::streamsize size = stream.tellg();
+    if (size <= 0) {
+        return {};
+    }
+    std::vector<uint8_t> bytes(static_cast<size_t>(size));
+    stream.seekg(0);
+    stream.read(reinterpret_cast<char*>(bytes.data()), size);
+    if (!stream.good()) {
+        return {};
+    }
+    return bytes;
+}
+
+bool WriteFileBytes(const std::filesystem::path& path, const void* data, size_t size) {
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    if (!stream.is_open()) {
+        return false;
+    }
+    stream.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+    return stream.good();
+}
+
+bool SavePng(const std::filesystem::path& path, uint32_t width, uint32_t height,
+             uint32_t rowPitch, int channels, const uint8_t* pixels) {
+    if (pixels == nullptr || width == 0 || height == 0) {
+        return false;
+    }
+
+    int pngSize = 0;
+    unsigned char* png =
+        ::stbi_write_png_to_mem(pixels, static_cast<int>(rowPitch), static_cast<int>(width),
+                                static_cast<int>(height), channels, &pngSize);
+    if (png == nullptr || pngSize <= 0) {
+        MM_LOG_ERROR("PNG を書き出せません: %s", PathForLog(path).c_str());
+        ::free(png);
+        return false;
+    }
+    const bool written = WriteFileBytes(path, png, static_cast<size_t>(pngSize));
+    ::free(png);
+    if (!written) {
+        MM_LOG_ERROR("PNG を書き出せません: %s", PathForLog(path).c_str());
+        return false;
+    }
+
+    MM_LOG_INFO("PNG を書き出しました: %s (%u x %u, %d ch)", PathForLog(path).c_str(), width,
+                height, channels);
+    return true;
+}
+
+}  // namespace
 
 bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
     outImage = LdrImage{};
 
-    const std::string utf8Path = path.string();
+    const std::string utf8Path = PathForLog(path);
+    const std::vector<uint8_t> bytes = ReadFileBytes(path);
+    if (bytes.empty()) {
+        MM_LOG_ERROR("画像を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
+        return false;
+    }
 
     int width = 0;
     int height = 0;
     int channels = 0;
-    stbi_uc* data = ::stbi_load(utf8Path.c_str(), &width, &height, &channels, 4);
+    stbi_uc* data = ::stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()),
+                                            &width, &height, &channels, 4);
     if (data == nullptr) {
         MM_LOG_ERROR("画像を読み込めません: %s (%s)", utf8Path.c_str(), ::stbi_failure_reason());
         return false;
@@ -75,12 +152,18 @@ float MedianSkyLuminance(const HdrImage& image) {
 bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {
     outImage = HdrImage{};
 
-    const std::string utf8Path = path.string();
+    const std::string utf8Path = PathForLog(path);
+    const std::vector<uint8_t> bytes = ReadFileBytes(path);
+    if (bytes.empty()) {
+        MM_LOG_ERROR("HDR 画像を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
+        return false;
+    }
 
     int width = 0;
     int height = 0;
     int channels = 0;
-    float* data = ::stbi_loadf(utf8Path.c_str(), &width, &height, &channels, 4);
+    float* data = ::stbi_loadf_from_memory(bytes.data(), static_cast<int>(bytes.size()),
+                                           &width, &height, &channels, 4);
     if (data == nullptr) {
         MM_LOG_ERROR("HDR 画像を読み込めません: %s (%s)", utf8Path.c_str(), ::stbi_failure_reason());
         return false;
@@ -99,14 +182,20 @@ bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {
 bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage) {
     outImage = HdrImage{};
 
-    const std::string utf8Path = path.string();
+    const std::string utf8Path = PathForLog(path);
+    const std::vector<uint8_t> bytes = ReadFileBytes(path);
+    if (bytes.empty()) {
+        MM_LOG_ERROR("EXR を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
+        return false;
+    }
 
     float* data = nullptr;
     int width = 0;
     int height = 0;
     const char* error = nullptr;
-    // LoadEXR は常に RGBA の 4 チャンネルで返す。
-    const int result = ::LoadEXR(&data, &width, &height, utf8Path.c_str(), &error);
+    // LoadEXRFromMemory は常に RGBA の 4 チャンネルで返す。
+    const int result =
+        ::LoadEXRFromMemory(&data, &width, &height, bytes.data(), bytes.size(), &error);
     if (result != TINYEXR_SUCCESS) {
         MM_LOG_ERROR("EXR を読み込めません: %s (%s)", utf8Path.c_str(),
                      (error != nullptr) ? error : "原因不明");
@@ -127,40 +216,12 @@ bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage) {
 
 bool SaveRgba8Png(const std::filesystem::path& path, uint32_t width, uint32_t height,
                   uint32_t rowPitch, const uint8_t* pixels) {
-    if (pixels == nullptr || width == 0 || height == 0) {
-        return false;
-    }
-
-    const std::string utf8Path = path.string();
-    const int result = ::stbi_write_png(utf8Path.c_str(), static_cast<int>(width),
-                                        static_cast<int>(height), 4, pixels,
-                                        static_cast<int>(rowPitch));
-    if (result == 0) {
-        MM_LOG_ERROR("PNG を書き出せません: %s", utf8Path.c_str());
-        return false;
-    }
-
-    MM_LOG_INFO("PNG を書き出しました: %s (%u x %u)", utf8Path.c_str(), width, height);
-    return true;
+    return SavePng(path, width, height, rowPitch, 4, pixels);
 }
 
 bool SaveGray8Png(const std::filesystem::path& path, uint32_t width, uint32_t height,
                   uint32_t rowPitch, const uint8_t* pixels) {
-    if (pixels == nullptr || width == 0 || height == 0) {
-        return false;
-    }
-
-    const std::string utf8Path = path.string();
-    const int result = ::stbi_write_png(utf8Path.c_str(), static_cast<int>(width),
-                                        static_cast<int>(height), 1, pixels,
-                                        static_cast<int>(rowPitch));
-    if (result == 0) {
-        MM_LOG_ERROR("PNG を書き出せません: %s", utf8Path.c_str());
-        return false;
-    }
-
-    MM_LOG_INFO("PNG を書き出しました: %s (%u x %u, 1 ch)", utf8Path.c_str(), width, height);
-    return true;
+    return SavePng(path, width, height, rowPitch, 1, pixels);
 }
 
 }  // namespace mm

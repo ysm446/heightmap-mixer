@@ -69,8 +69,10 @@ public:
     CameraState State() const;
     void SetState(const CameraState& state);
 
-    float& FovY() { return m_fovY; }
-    float& Distance() { return m_distance; }
+    float FovY() const { return m_fovY; }
+    // SetState と同じ範囲に丸める。UI からの直接代入でクランプを迂回させない
+    // （0 や負の画角は投影行列と焦点距離換算のゼロ除算を壊す）。
+    void SetFovY(float fovY);
     const DirectX::XMFLOAT3& Target() const { return m_target; }
 
 private:

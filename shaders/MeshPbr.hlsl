@@ -401,7 +401,9 @@ PsOutput PsMain(VsOutput input)
                       shadow;
 
     // --- IBL（分割和近似） -------------------------------------------------
-    const float nDotV = saturate(dot(normal, viewDirection)) + 1e-5f;
+    // saturate + 加算だと最大 1.00001 になり、FresnelSchlickRoughness の
+    // pow(1 - nDotV, 5) が負の底で NaN になる。clamp で上限も守る。
+    const float nDotV = clamp(dot(normal, viewDirection), 1e-4f, 1.0f);
 
     TextureCube<float4> irradianceMap = ResourceDescriptorHeap[g_mesh.irradianceIndex];
     TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[g_mesh.prefilteredIndex];
@@ -427,7 +429,9 @@ PsOutput PsMain(VsOutput input)
     radiance += (diffuseIbl + specularIbl) * g_mesh.iblIntensity * ambientOcclusion;
 
     PsOutput output;
-    output.color = float4(radiance, 1.0f);
+    // シーンカラーは R16G16B16A16_FLOAT。half の上限（65504）を超えると Inf になり、
+    // トーンマップを経て NaN → ハイライト中心の黒点になる。上限手前でクランプする。
+    output.color = float4(min(radiance, 60000.0f), 1.0f);
     // ペイントマスクはタイル 1 枚ぶんのテクスチャなので、UV も畳んで書き出す。
     output.materialUv = float4(frac(input.uv * g_mesh.materialUvScale), 1.0f, 0.0f);
     return output;

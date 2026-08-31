@@ -69,7 +69,9 @@ ComPtr<IDxcBlob> ShaderCompiler::Compile(const std::wstring& relativePath,
     DxcBuffer source = {};
     source.Ptr = sourceBlob->GetBufferPointer();
     source.Size = sourceBlob->GetBufferSize();
-    source.Encoding = DXC_CP_ACP;
+    // シェーダソースは BOM 無し UTF-8（日本語コメントを含む）。
+    // ACP のままだと CP932 環境で多バイト列が誤解釈される。
+    source.Encoding = DXC_CP_UTF8;
 
     const std::wstring includeArg = m_root.wstring();
     std::vector<const wchar_t*> extraArgs = {
@@ -125,19 +127,22 @@ ComPtr<IDxcBlob> ShaderCompiler::Compile(const std::wstring& relativePath,
 
 void ShaderCompiler::ScanTimestamps(
     std::unordered_map<std::wstring, std::filesystem::file_time_type>& out) const {
+    // 例外は使わない方針のため、イテレータの増分も error_code 版で手動で回す
+    // （range-for の operator++ は I/O エラー時に例外を投げる）。
     std::error_code ec;
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(m_root, ec)) {
-        if (ec) {
-            break;
+    std::filesystem::recursive_directory_iterator it(m_root, ec);
+    const std::filesystem::recursive_directory_iterator end;
+    while (!ec && it != end) {
+        const std::filesystem::directory_entry& entry = *it;
+        std::error_code fileEc;
+        if (entry.is_regular_file(fileEc) && !fileEc && IsShaderFile(entry.path())) {
+            std::error_code timeEc;
+            const auto writeTime = std::filesystem::last_write_time(entry.path(), timeEc);
+            if (!timeEc) {
+                out.emplace(entry.path().wstring(), writeTime);
+            }
         }
-        if (!entry.is_regular_file() || !IsShaderFile(entry.path())) {
-            continue;
-        }
-        std::error_code timeEc;
-        const auto writeTime = std::filesystem::last_write_time(entry.path(), timeEc);
-        if (!timeEc) {
-            out.emplace(entry.path().wstring(), writeTime);
-        }
+        it.increment(ec);
     }
 }
 

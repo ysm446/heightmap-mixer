@@ -140,7 +140,8 @@ bool RecentFiles::Save() const {
         MM_LOG_WARN("最近使ったプロジェクトの履歴を保存できませんでした");
         return false;
     }
-    stream << document.dump(2) << '\n';
+    // 壊れた文字列が混ざっていても例外を出さない（不正な UTF-8 は置換文字にする）。
+    stream << document.dump(2, ' ', false, json::error_handler_t::replace) << '\n';
     return stream.good();
 }
 

@@ -501,53 +501,63 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer, const fs
     renderer.SkyboxBlur() = ReadBool(node, "skyboxBlur", false);
     renderer.ShadowEnabled() = ReadBool(node, "shadow", true);
 
-    if (const json* camera = FindMember(node, "camera");
-        camera != nullptr && camera->is_object()) {
+    // 節が丸ごと欠けていても既定値で埋める。file-format.md の「欠けているキーは
+    // 既定値で埋める」に合わせる（節ごと飛ばすと前のプロジェクトの値が残る）。
+    const json emptySection = json::object();
+    const auto section = [&node, &emptySection](const char* key) -> const json& {
+        const json* member = FindMember(node, key);
+        return (member != nullptr && member->is_object()) ? *member : emptySection;
+    };
+
+    {
+        const json& camera = section("camera");
         renderer::CameraState state;
-        state.target = ReadFloat3(*camera, "target", state.target);
-        state.distance = ReadFloat(*camera, "distance", state.distance);
-        state.yaw = ReadFloat(*camera, "yaw", state.yaw);
-        state.pitch = ReadFloat(*camera, "pitch", state.pitch);
-        state.fovY = ReadFloat(*camera, "fovY", state.fovY);
+        state.target = ReadFloat3(camera, "target", state.target);
+        state.distance = ReadFloat(camera, "distance", state.distance);
+        state.yaw = ReadFloat(camera, "yaw", state.yaw);
+        state.pitch = ReadFloat(camera, "pitch", state.pitch);
+        state.fovY = ReadFloat(camera, "fovY", state.fovY);
         renderer.GetCamera().SetState(state);
     }
 
-    if (const json* light = FindMember(node, "light"); light != nullptr && light->is_object()) {
+    {
+        const json& light = section("light");
         renderer::LightSettings& target = renderer.Light();
         const renderer::LightSettings defaults;
-        target.azimuth = ReadFloat(*light, "azimuth", defaults.azimuth);
-        target.elevation = ReadFloat(*light, "elevation", defaults.elevation);
-        target.illuminance = ReadFloat(*light, "illuminance", defaults.illuminance);
-        target.color = ReadFloat3(*light, "color", defaults.color);
+        target.azimuth = ReadFloat(light, "azimuth", defaults.azimuth);
+        target.elevation = ReadFloat(light, "elevation", defaults.elevation);
+        target.illuminance = ReadFloat(light, "illuminance", defaults.illuminance);
+        target.color = ReadFloat3(light, "color", defaults.color);
     }
 
-    if (const json* exposure = FindMember(node, "exposure");
-        exposure != nullptr && exposure->is_object()) {
+    {
+        const json& exposure = section("exposure");
         renderer::ExposureSettings& target = renderer.Exposure();
         const renderer::ExposureSettings defaults;
-        target.useManualEv = ReadBool(*exposure, "useManualEv", defaults.useManualEv);
-        target.manualEv100 = ReadFloat(*exposure, "manualEv100", defaults.manualEv100);
-        target.aperture = ReadFloat(*exposure, "aperture", defaults.aperture);
-        target.shutterSpeed = ReadFloat(*exposure, "shutterSpeed", defaults.shutterSpeed);
-        target.iso = ReadFloat(*exposure, "iso", defaults.iso);
+        target.useManualEv = ReadBool(exposure, "useManualEv", defaults.useManualEv);
+        target.manualEv100 = ReadFloat(exposure, "manualEv100", defaults.manualEv100);
+        target.aperture = ReadFloat(exposure, "aperture", defaults.aperture);
+        target.shutterSpeed = ReadFloat(exposure, "shutterSpeed", defaults.shutterSpeed);
+        target.iso = ReadFloat(exposure, "iso", defaults.iso);
     }
 
-    if (const json* sky = FindMember(node, "sky"); sky != nullptr && sky->is_object()) {
+    {
+        const json& sky = section("sky");
         renderer::SkySettings& target = renderer.Sky();
         const renderer::SkySettings defaults;
-        target.zenithColor = ReadFloat3(*sky, "zenithColor", defaults.zenithColor);
-        target.horizonColor = ReadFloat3(*sky, "horizonColor", defaults.horizonColor);
-        target.groundColor = ReadFloat3(*sky, "groundColor", defaults.groundColor);
-        target.intensity = ReadFloat(*sky, "intensity", defaults.intensity);
+        target.zenithColor = ReadFloat3(sky, "zenithColor", defaults.zenithColor);
+        target.horizonColor = ReadFloat3(sky, "horizonColor", defaults.horizonColor);
+        target.groundColor = ReadFloat3(sky, "groundColor", defaults.groundColor);
+        target.intensity = ReadFloat(sky, "intensity", defaults.intensity);
     }
 
-    if (const json* flat = FindMember(node, "flatMaterial");
-        flat != nullptr && flat->is_object()) {
+    {
+        const json& flat = section("flatMaterial");
         renderer::MaterialSettings& target = renderer.Material();
         const renderer::MaterialSettings defaults;
-        target.baseColor = ReadFloat3(*flat, "baseColor", defaults.baseColor);
-        target.roughness = ReadFloat(*flat, "roughness", defaults.roughness);
-        target.metallic = ReadFloat(*flat, "metallic", defaults.metallic);
+        target.baseColor = ReadFloat3(flat, "baseColor", defaults.baseColor);
+        target.roughness = ReadFloat(flat, "roughness", defaults.roughness);
+        target.metallic = ReadFloat(flat, "metallic", defaults.metallic);
     }
 
     // 環境は最後に決める。HDRI があればそれを、無ければ手続き的な空を作り直す。
@@ -568,15 +578,30 @@ bool WriteJsonFile(const fs::path& path, const json& document) {
         fs::create_directories(parent, error);
     }
 
-    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
-    if (!stream.is_open()) {
-        MM_LOG_ERROR("ファイルを開けませんでした: %s", ToUtf8(path).c_str());
-        return false;
+    // いきなり上書きすると、ディスクフルなどで途中失敗したときに元のファイルが
+    // 壊れたまま残る。一時ファイルへ書き切ってから rename で差し替える。
+    const fs::path tempPath = path.wstring() + L".tmp";
+    {
+        std::ofstream stream(tempPath, std::ios::binary | std::ios::trunc);
+        if (!stream.is_open()) {
+            MM_LOG_ERROR("ファイルを開けませんでした: %s", ToUtf8(tempPath).c_str());
+            return false;
+        }
+        // 人が読める形で書く。差分も取りやすい。壊れた文字列が混ざっていても
+        // 例外を出さない（不正な UTF-8 は置換文字にする）。
+        stream << document.dump(2, ' ', false, json::error_handler_t::replace) << '\n';
+        if (!stream.good()) {
+            MM_LOG_ERROR("ファイルの書き込みに失敗しました: %s", ToUtf8(tempPath).c_str());
+            return false;
+        }
     }
-    // 人が読める形で書く。差分も取りやすい。
-    stream << document.dump(2) << '\n';
-    if (!stream.good()) {
-        MM_LOG_ERROR("ファイルの書き込みに失敗しました: %s", ToUtf8(path).c_str());
+
+    std::error_code renameError;
+    fs::rename(tempPath, path, renameError);
+    if (renameError) {
+        MM_LOG_ERROR("ファイルを差し替えられませんでした: %s", ToUtf8(path).c_str());
+        std::error_code removeError;
+        fs::remove(tempPath, removeError);
         return false;
     }
     return true;
@@ -622,9 +647,11 @@ std::string PaintMaskFileName(size_t index) {
     return buffer;
 }
 
-// 前回の保存で書いた PNG を消す。**自分が書いた名前（paint_*.png）だけ**を対象にし、
-// 同じフォルダにある他のファイルには触らない。
-void RemoveStalePaintMasks(const fs::path& directory) {
+// 前回の保存で書いた PNG のうち、今回書かなかったものを消す。
+// **自分が書いた名前（paint_*.png）だけ**を対象にし、他のファイルには触らない。
+// 今回のぶんを書き終えてから呼ぶこと。先に消すと、書き出しに失敗したときに
+// 元の PNG まで失われてしまう。
+void RemoveStalePaintMasks(const fs::path& directory, const std::vector<fs::path>& keep) {
     std::error_code error;
     if (!fs::is_directory(directory, error)) {
         return;
@@ -640,6 +667,16 @@ void RemoveStalePaintMasks(const fs::path& directory) {
         if (file.filename().wstring().rfind(L"paint_", 0) != 0) {
             continue;
         }
+        bool kept = false;
+        for (const fs::path& name : keep) {
+            if (file.filename() == name) {
+                kept = true;
+                break;
+            }
+        }
+        if (kept) {
+            continue;
+        }
         std::error_code removeError;
         fs::remove(file, removeError);
     }
@@ -649,7 +686,12 @@ void RemoveStalePaintMasks(const fs::path& directory) {
 
 bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
                  const ProjectRefs& refs) {
-    const fs::path baseDir = path.parent_path();
+    // 裸のファイル名（親ディレクトリ無し）で保存すると相対パスが作れず、
+    // 全参照が絶対パスで書かれてしまう。先に絶対化してから基準を取る。
+    std::error_code absoluteError;
+    const fs::path absolutePath = fs::absolute(path, absoluteError);
+    const fs::path& savePath = absoluteError ? path : absolutePath;
+    const fs::path baseDir = savePath.parent_path();
 
     json document;
     document["format"] = kProjectFormat;
@@ -696,10 +738,9 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
     // 参照しているのはレイヤーだけなので、レイヤーから辿って集める。
     std::unordered_map<compositor::PaintMaskId, int> paintIndex;
     json paintMasks = json::array();
-    const fs::path paintDir = PaintMaskDirectory(path);
-    // 前回の保存で書いた PNG を先に片付ける。残しておくと、マスクを減らしたときに
-    // どれが今のプロジェクトのものか分からなくなる。消すのは自分が書いた名前だけ。
-    RemoveStalePaintMasks(paintDir);
+    const fs::path paintDir = PaintMaskDirectory(savePath);
+    // 今回書いたファイル名を控えておき、書き終えてから前回の残りを片付ける。
+    std::vector<fs::path> writtenPaintFiles;
     for (const compositor::MaterialLayer& layer : refs.stack.Layers()) {
         const compositor::PaintMaskId id = layer.mask.paint;
         if (id == compositor::kNoPaintMask || paintIndex.count(id) != 0) {
@@ -723,6 +764,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
         }
 
         paintIndex[id] = index;
+        writtenPaintFiles.push_back(FromUtf8(fileName));
         json node;
         node["id"] = index;
         node["resolution"] = resolution;
@@ -732,6 +774,8 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
     }
     document["paintMasks"] = std::move(paintMasks);
     document["paintResolution"] = refs.paintMasks.Resolution();
+    // マスクを減らしたときに前回の PNG が残らないよう、ここで片付ける。
+    RemoveStalePaintMasks(paintDir, writtenPaintFiles);
 
     // --- レイヤー ---------------------------------------------------------
     json layers = json::array();
@@ -751,10 +795,10 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
 
     document["preview"] = WritePreview(refs.renderer, baseDir);
 
-    if (!WriteJsonFile(path, document)) {
+    if (!WriteJsonFile(savePath, document)) {
         return false;
     }
-    MM_LOG_INFO("プロジェクトを保存しました: %s", ToUtf8(path).c_str());
+    MM_LOG_INFO("プロジェクトを保存しました: %s", ToUtf8(savePath).c_str());
     return true;
 }
 
@@ -912,10 +956,12 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
     }
     refs.stack.MarkDirty();
 
-    if (const json* preview = FindMember(document, "preview");
-        preview != nullptr && preview->is_object()) {
-        ReadPreview(*preview, refs.renderer, baseDir);
-    }
+    // preview が無い（または壊れている）プロジェクトでも必ず既定値で埋める。
+    // 呼ばないと、前のプロジェクトのカメラ・ライト・露出が残ってしまう。
+    const json* preview = FindMember(document, "preview");
+    const json emptyPreview = json::object();
+    ReadPreview((preview != nullptr && preview->is_object()) ? *preview : emptyPreview,
+                refs.renderer, baseDir);
 
     MM_LOG_INFO("プロジェクトを開きました: %s", ToUtf8(path).c_str());
     return true;
@@ -923,7 +969,11 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
 
 bool SaveMaterial(const std::filesystem::path& path, const compositor::MaterialAsset& asset,
                   const compositor::TextureLibrary& textures) {
-    const fs::path baseDir = path.parent_path();
+    // SaveProject と同じく、裸のファイル名でも相対パスが作れるよう絶対化する。
+    std::error_code absoluteError;
+    const fs::path absolutePath = fs::absolute(path, absoluteError);
+    const fs::path& savePath = absoluteError ? path : absolutePath;
+    const fs::path baseDir = savePath.parent_path();
 
     // 単体ファイルでは、テクスチャをこのファイルからの相対パスで参照する。
     const TextureWriter writeTexture = [&textures, &baseDir](compositor::TextureId id) {
@@ -939,10 +989,10 @@ bool SaveMaterial(const std::filesystem::path& path, const compositor::MaterialA
     document["version"] = kFormatVersion;
     document["app"] = MM_APP_VERSION;
 
-    if (!WriteJsonFile(path, document)) {
+    if (!WriteJsonFile(savePath, document)) {
         return false;
     }
-    MM_LOG_INFO("マテリアルを書き出しました: %s", ToUtf8(path).c_str());
+    MM_LOG_INFO("マテリアルを書き出しました: %s", ToUtf8(savePath).c_str());
     return true;
 }
 

@@ -67,9 +67,9 @@ public:
     // 空のストアなら解像度もこの画像に合わせる。
     PaintMaskId AddFromPixels(rhi::Device& device, uint32_t resolution,
                               const std::vector<uint8_t>& pixels);
-    // すべて破棄する。プロジェクトを開く前に呼ぶ。
+    // すべて破棄する。プロジェクトを開く前に呼ぶ。解放はフレーム同期後に行われる。
     void Clear(rhi::Device& device);
-    // 破棄する。フレームの外で呼ぶこと（GPU 待機を伴う）。
+    // 破棄する。解放はフレーム同期後に行われるため、GPU 待機は伴わない。
     void Remove(rhi::Device& device, PaintMaskId id);
 
     const PaintMaskEntry* Find(PaintMaskId id) const;
@@ -104,10 +104,11 @@ public:
 
 private:
     enum class OpType {
-        Fill,     // 一様な値で埋める
-        Stroke,   // ブラシを 1 回積む
-        Capture,  // マスク → 履歴テクスチャ（アンドゥ用の退避）
-        Restore,  // 履歴テクスチャ（または他のマスク） → マスク
+        Fill,      // 一様な値で埋める
+        Stroke,    // ブラシを 1 回積む
+        Capture,   // マスク → 履歴テクスチャ（アンドゥ用の退避）
+        Restore,   // 履歴テクスチャ → マスク
+        CopyMask,  // マスク → マスク（複製用。両側とも状態を追跡して遷移する）
     };
 
     struct Op {
@@ -116,10 +117,14 @@ private:
         float value = 0.0f;
         BrushStroke stroke;
         // Capture の書き込み先 / Restore の読み出し元。
+        // 履歴テクスチャは常に COMMON に置く取り決め（生きているマスクを入れないこと。
+        // 状態追跡が壊れる。マスク同士のコピーは CopyMask を使う）。
         // GpuTexture のコピーは ComPtr の共有なので、所有権は元の持ち主に残る。
         rhi::GpuTexture history;
         // Restore で消費した履歴テクスチャを、記録後に解放するか。
         bool releaseHistory = false;
+        // CopyMask の読み出し元。
+        PaintMaskId copySource = kNoPaintMask;
     };
 
     // アンドゥ / リドゥ 1 段ぶん。対象のマスクとその時点の内容を持つ。

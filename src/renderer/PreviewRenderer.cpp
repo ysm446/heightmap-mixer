@@ -201,12 +201,7 @@ XMMATRIX PreviewRenderer::LightViewProjection() const {
 }
 
 void PreviewRenderer::Shutdown(rhi::Device& device) {
-    if (m_shadowMap.IsValid()) {
-        device.Allocator().ReleaseDescriptors(m_shadowMap);
-        device.Defer(m_shadowMap.resource);
-        device.Defer(m_shadowMap.allocation);
-        m_shadowMap = rhi::GpuTexture{};
-    }
+    device.DeferRelease(m_shadowMap);
     m_evaluator.Destroy(device);
     m_environment.Shutdown(device);
     m_sphere.Release(device);
@@ -291,10 +286,8 @@ void PreviewRenderer::ReleaseTargets(rhi::Device& device) {
         if (!target->IsValid()) {
             continue;
         }
-        device.Allocator().ReleaseDescriptors(*target);
-        device.Defer(target->resource);
-        device.Defer(target->allocation);
-        *target = rhi::GpuTexture{};
+        // ディスクリプタも含めてフレーム同期後に解放する。
+        device.DeferRelease(*target);
     }
     m_width = 0;
     m_height = 0;
@@ -329,12 +322,14 @@ bool PreviewRenderer::SaveOutputToPng(rhi::Device& device, const std::filesystem
         TransitionIfNeeded(commandList, m_output, previousState);
     });
     if (!executed) {
+        device.DeferRelease(readback);
         return false;
     }
 
     void* mapped = nullptr;
     const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(totalBytes)};
     if (!MM_CHECK_HR(readback.resource->Map(0, &readRange, &mapped))) {
+        device.DeferRelease(readback);
         return false;
     }
 
@@ -387,6 +382,13 @@ bool PreviewRenderer::Resize(rhi::Device& device, uint32_t width, uint32_t heigh
     if (!device.Allocator().CreateTexture2D(materialUvDesc, m_materialUv)) {
         return false;
     }
+
+    // リサイズ直後の最初のフレームには「前フレームの UV」がまだ無い。
+    // 未初期化のままブラシが読むと、被覆フラグのゴミで意図しない位置に描いてしまう。
+    const float uvClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+        commandList->ClearRenderTargetView(m_materialUv.rtv.cpu, uvClearColor, 0, nullptr);
+    });
 
     rhi::TextureDesc depthDesc;
     depthDesc.width = width;
@@ -492,8 +494,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     const XMMATRIX projection = m_camera.ProjectionMatrix();
     const XMMATRIX model = XMMatrixIdentity();
 
+    const XMMATRIX viewProjection = XMMatrixMultiply(view, projection);
+
     MeshConstants constants = {};
-    XMStoreFloat4x4(&constants.viewProjection, XMMatrixMultiply(view, projection));
+    XMStoreFloat4x4(&constants.viewProjection, viewProjection);
     XMStoreFloat4x4(&constants.model, model);
     // 法線行列だけは (M^-1)^T が要るため、転置を明示する。
     XMStoreFloat4x4(&constants.normalMatrix,
@@ -522,8 +526,9 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.materialUvScale = m_materialUvScale;
     constants.debugView = static_cast<uint32_t>(m_debugView);
     constants.displacementScale = m_displacementScale;
-    // 分割量はカメラから見た見え方で決める。シャドウパスでも同じ値を使う。
-    XMStoreFloat4x4(&constants.tessellationViewProjection, XMMatrixMultiply(view, projection));
+    // 分割量はカメラから見た見え方で決める。本描画では viewProjection と同一で、
+    // シャドウパスだけが viewProjection 側を上書きして分岐する。
+    XMStoreFloat4x4(&constants.tessellationViewProjection, viewProjection);
     constants.viewportSize[0] = static_cast<float>(m_width);
     constants.viewportSize[1] = static_cast<float>(m_height);
     constants.tessellationMaxFactor = m_tessellationFactor;

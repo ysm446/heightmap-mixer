@@ -36,6 +36,8 @@ public:
 private:
     ComPtr<ID3D12DescriptorHeap> m_heap;
     std::vector<uint32_t> m_freeList;
+    // 二重解放の検出用。index が払い出し中かどうか。
+    std::vector<bool> m_inUse;
     D3D12_CPU_DESCRIPTOR_HANDLE m_cpuStart = {};
     D3D12_GPU_DESCRIPTOR_HANDLE m_gpuStart = {};
     uint32_t m_capacity = 0;

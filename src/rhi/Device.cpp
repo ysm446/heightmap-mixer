@@ -4,6 +4,7 @@
 
 #include "core/Log.h"
 
+#include <cstddef>
 #include <vector>
 
 #include <pix3.h>
@@ -69,6 +70,34 @@ bool Device::Initialize(HWND hwnd, uint32_t width, uint32_t height, bool enableD
 void Device::Defer(ComPtr<IUnknown> object) {
     // 現在記録中のフレームは m_nextFenceValue で Signal される。
     m_deletionQueue.Push(std::move(object), m_nextFenceValue);
+}
+
+void Device::DeferFree(DescriptorHeap& heap, const DescriptorHandle& handle) {
+    m_deletionQueue.Push(&heap, handle, m_nextFenceValue);
+}
+
+void Device::DeferRelease(GpuTexture& texture) {
+    // uav は mipUavs[0] と同じハンドルなので、二重解放しないよう mipUavs 側だけ返す。
+    DeferFree(m_srvHeap, texture.srv);
+    for (const DescriptorHandle& handle : texture.mipUavs) {
+        DeferFree(m_srvHeap, handle);
+    }
+    for (const DescriptorHandle& handle : texture.mipSrvs) {
+        DeferFree(m_srvHeap, handle);
+    }
+    DeferFree(m_rtvHeap, texture.rtv);
+    DeferFree(m_dsvHeap, texture.dsv);
+    Defer(texture.resource);
+    Defer(texture.allocation);
+    texture = GpuTexture{};
+}
+
+void Device::DeferRelease(GpuBuffer& buffer) {
+    DeferFree(m_srvHeap, buffer.srv);
+    DeferFree(m_srvHeap, buffer.uav);
+    Defer(buffer.resource);
+    Defer(buffer.allocation);
+    buffer = GpuBuffer{};
 }
 
 uint64_t Device::CompletedFenceValue() const {
@@ -151,6 +180,13 @@ bool Device::CreateFactoryAndDevice(bool enableDebugLayer) {
         return false;
     }
 
+    // 合成パスは R11G11B10F / RG16F / RGBA8 / R8 の UAV を読み書きする。
+    // 無条件で保証される typed UAV load は R32 系のみなので、追加フォーマット対応を必須とする。
+    if (!options.TypedUAVLoadAdditionalFormats) {
+        MM_LOG_ERROR("Typed UAV Load の追加フォーマットに対応していません（合成パスに必要）");
+        return false;
+    }
+
     // デバッガ未接続で SetBreakOnSeverity を有効にすると、警告のたびにプロセスが落ちる。
     // デバッガ接続時のみ break させ、それ以外はメッセージの出力に留める。
     if (enableDebugLayer && SUCCEEDED(m_device.As(&m_infoQueue))) {
@@ -173,13 +209,14 @@ void Device::DrainDebugMessages() {
     }
 
     const UINT64 count = m_infoQueue->GetNumStoredMessages();
-    std::vector<uint8_t> buffer;
+    // D3D12_MESSAGE として読むため、最大アライメントの要素で確保する。
+    std::vector<std::max_align_t> buffer;
     for (UINT64 i = 0; i < count; ++i) {
         SIZE_T length = 0;
         if (FAILED(m_infoQueue->GetMessage(i, nullptr, &length)) || length == 0) {
             continue;
         }
-        buffer.resize(length);
+        buffer.resize((length + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t));
         auto* message = reinterpret_cast<D3D12_MESSAGE*>(buffer.data());
         if (FAILED(m_infoQueue->GetMessage(i, message, &length))) {
             continue;
@@ -320,13 +357,20 @@ void Device::Resize(uint32_t width, uint32_t height) {
     const UINT flags = m_allowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0u;
     if (!MM_CHECK_HR(m_swapChain->ResizeBuffers(kFrameCount, width, height, kBackBufferFormat,
                                                 flags))) {
+        // バックバッファは既に手放しているため、続行すると null 参照になる。
+        // デバイスロスト相当として描画を止める。
+        MM_LOG_ERROR("スワップチェーンのリサイズに失敗しました。描画を停止します");
+        m_initialized = false;
         return;
     }
 
     m_width = width;
     m_height = height;
     m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
-    CreateBackBufferViews();
+    if (!CreateBackBufferViews()) {
+        MM_LOG_ERROR("バックバッファビューの再作成に失敗しました。描画を停止します");
+        m_initialized = false;
+    }
 }
 
 ID3D12GraphicsCommandList* Device::BeginFrame(const float clearColor[4]) {
@@ -434,6 +478,10 @@ void Device::EndFrame(bool vsync) {
 
     if (!MM_CHECK_HR(m_commandList->Close())) {
         m_frameOpen = false;
+        // このフレームは投入されない。キャプチャを抱えたままにすると、
+        // 次フレームで未実行のリードバックを上書きしてゴミを保存してしまう。
+        m_pendingCapture = GpuBuffer{};
+        m_capturePath.clear();
         return;
     }
 
@@ -442,7 +490,16 @@ void Device::EndFrame(bool vsync) {
 
     const UINT syncInterval = vsync ? 1u : 0u;
     const UINT presentFlags = (!vsync && m_allowTearing) ? DXGI_PRESENT_ALLOW_TEARING : 0u;
-    MM_CHECK_HR(m_swapChain->Present(syncInterval, presentFlags));
+    const HRESULT presentResult = m_swapChain->Present(syncInterval, presentFlags);
+    if (presentResult == DXGI_ERROR_DEVICE_REMOVED || presentResult == DXGI_ERROR_DEVICE_RESET) {
+        const HRESULT reason = m_device->GetDeviceRemovedReason();
+        MM_LOG_ERROR(
+            "デバイスロストを検出しました (Present=0x%08X, Reason=0x%08X)。描画を停止します",
+            static_cast<unsigned int>(presentResult), static_cast<unsigned int>(reason));
+        m_initialized = false;
+    } else {
+        MM_CHECK_HR(presentResult);
+    }
 
     m_frameOpen = false;
     MoveToNextFrame();
@@ -490,6 +547,11 @@ bool Device::ExecuteImmediate(const std::function<void(ID3D12GraphicsCommandList
     if (!m_immediateCommandList || !record) {
         return false;
     }
+    if (m_frameOpen) {
+        // 内部で WaitForGpu するため、フレーム記録中には使えない（WaitForGpu と同じ理由）。
+        MM_LOG_ERROR("BeginFrame と EndFrame の間で ExecuteImmediate が呼ばれました（無視します）");
+        return false;
+    }
     if (!MM_CHECK_HR(m_immediateAllocator->Reset())) {
         return false;
     }
@@ -514,6 +576,10 @@ bool Device::ExecuteImmediate(const std::function<void(ID3D12GraphicsCommandList
 void Device::MoveToNextFrame() {
     const uint64_t value = m_nextFenceValue++;
     if (!MM_CHECK_HR(m_commandQueue->Signal(m_fence.Get(), value))) {
+        // Signal に失敗するのは実質デバイスロスト時のみ。古いフェンス値のまま続けると、
+        // GPU が実行中のアロケータを次の BeginFrame が Reset してしまうため止める。
+        MM_LOG_ERROR("フェンスの Signal に失敗しました。描画を停止します");
+        m_initialized = false;
         return;
     }
     m_fenceValues[m_frameIndex] = value;
@@ -523,6 +589,12 @@ void Device::MoveToNextFrame() {
 
 void Device::WaitForGpu() {
     if (!m_commandQueue || !m_fence || m_fenceEvent == nullptr) {
+        return;
+    }
+    if (m_frameOpen) {
+        // フレーム記録中に待つと、記録中のコマンドが参照するオブジェクトの
+        // フェンス値まで完了扱いになり、削除キューが早回収してしまう。
+        MM_LOG_ERROR("BeginFrame と EndFrame の間で WaitForGpu が呼ばれました（無視します）");
         return;
     }
 
@@ -541,6 +613,10 @@ void Device::WaitForGpu() {
     for (auto& fenceValue : m_fenceValues) {
         fenceValue = 0;
     }
+
+    // GPU アイドルが確定したので、解放待ちをここで回収する。
+    // ExecuteImmediate が連続する読み込み経路でステージングが滞留しないようにする。
+    m_deletionQueue.Collect(m_fence->GetCompletedValue());
 }
 
 void Device::Shutdown() {
@@ -549,6 +625,10 @@ void Device::Shutdown() {
     }
     m_initialized = false;
     m_frameOpen = false;
+
+    // Close 失敗などで残ったキャプチャを、アロケータ破棄より先に手放す。
+    m_pendingCapture = GpuBuffer{};
+    m_capturePath.clear();
 
     m_deletionQueue.Flush();
     m_uploadRing.Destroy();
@@ -571,6 +651,8 @@ void Device::Shutdown() {
         m_fenceEvent = nullptr;
     }
     m_commandQueue.Reset();
+    // InfoQueue はデバイスへの参照を持つため、先に手放さないとデバイスが解放されない。
+    m_infoQueue.Reset();
     m_device.Reset();
     m_adapter.Reset();
     m_factory.Reset();

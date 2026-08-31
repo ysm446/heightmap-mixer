@@ -40,6 +40,18 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
     if (!m_allocator) {
         return false;
     }
+    // mipLevels = 0（フルミップ連鎖の自動決定）は、ビュー生成や
+    // SubresourceIndex の計算が実ミップ数を前提とするため受け付けない。
+    if (desc.mipLevels == 0) {
+        MM_LOG_ERROR("CreateTexture2D: mipLevels = 0 は未対応です");
+        return false;
+    }
+    // RTV / DSV は現状スライス 0 の 2D ビューしか作らないため、配列とは併用できない。
+    if (desc.arraySize > 1 && !desc.isCube &&
+        (desc.allowRenderTarget || desc.allowDepthStencil)) {
+        MM_LOG_ERROR("CreateTexture2D: 配列テクスチャの RTV / DSV は未対応です");
+        return false;
+    }
 
     D3D12_RESOURCE_DESC resourceDesc = {};
     resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -110,6 +122,8 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
     if (desc.createSrv && m_srvHeap != nullptr) {
         outTexture.srv = m_srvHeap->Allocate();
         if (!outTexture.srv.IsValid()) {
+            ReleaseDescriptors(outTexture);
+            outTexture = GpuTexture{};
             return false;
         }
         D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -138,6 +152,8 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
         for (uint32_t mip = 0; mip < uavMipCount; ++mip) {
             DescriptorHandle handle = m_srvHeap->Allocate();
             if (!handle.IsValid()) {
+                ReleaseDescriptors(outTexture);
+                outTexture = GpuTexture{};
                 return false;
             }
 
@@ -163,6 +179,8 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
         for (uint32_t mip = 0; mip < desc.mipLevels; ++mip) {
             DescriptorHandle handle = m_srvHeap->Allocate();
             if (!handle.IsValid()) {
+                ReleaseDescriptors(outTexture);
+                outTexture = GpuTexture{};
                 return false;
             }
 
@@ -192,6 +210,8 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
     if (desc.allowRenderTarget && m_rtvHeap != nullptr) {
         outTexture.rtv = m_rtvHeap->Allocate();
         if (!outTexture.rtv.IsValid()) {
+            ReleaseDescriptors(outTexture);
+            outTexture = GpuTexture{};
             return false;
         }
         m_device->CreateRenderTargetView(outTexture.resource.Get(), nullptr, outTexture.rtv.cpu);
@@ -200,6 +220,8 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
     if (desc.allowDepthStencil && m_dsvHeap != nullptr) {
         outTexture.dsv = m_dsvHeap->Allocate();
         if (!outTexture.dsv.IsValid()) {
+            ReleaseDescriptors(outTexture);
+            outTexture = GpuTexture{};
             return false;
         }
         D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};

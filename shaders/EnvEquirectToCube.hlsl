@@ -35,5 +35,9 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float2 uv = DirectionToEquirectUv(direction);
     const float3 radiance = source.SampleLevel(g_samplerEquirect, uv, 0.0f).rgb;
 
-    output[uint3(dispatchThreadId.xy, face)] = float4(radiance * g_constants.luminanceScale, 1.0f);
+    // 出力は R16G16B16A16_FLOAT。較正後の太陽ピークが half の上限（65504）を
+    // 超えると Inf になり、irradiance の畳み込み全体へ NaN が伝播して拡散 IBL が
+    // 黒く落ちる。太陽光はディレクショナルライトで別に扱う設計なので削って構わない。
+    const float3 calibrated = min(radiance * g_constants.luminanceScale, 60000.0f);
+    output[uint3(dispatchThreadId.xy, face)] = float4(calibrated, 1.0f);
 }

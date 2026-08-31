@@ -279,6 +279,10 @@ float Scaled(float value) {
 void ApplyTheme(float dpiScale) {
     g_dpiScale = (dpiScale > 0.0f) ? dpiScale : 1.0f;
 
+    // 拡大率を変えて呼び直しても累積しないよう、毎回既定値から作り直す。
+    // ScaleAllSizes は「現在の値に掛ける」ので、リセット無しだと 125% → 150% の
+    // ような変更で、下で上書きしていない寸法だけが二重に拡大されてしまう。
+    ImGui::GetStyle() = ImGuiStyle{};
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
 
@@ -378,9 +382,8 @@ void ApplyTheme(float dpiScale) {
     colors[ImGuiCol_PlotHistogramHovered] = kAccent;
 
     // 余白と枠は最後にまとめて DPI へ合わせる。色はスケールの影響を受けない。
-    if (g_dpiScale > 1.0f) {
-        style.ScaleAllSizes(g_dpiScale);
-    }
+    // 既定値から作り直しているので、100% へ戻す方向でも常に掛けてよい。
+    style.ScaleAllSizes(g_dpiScale);
 }
 
 bool BeginPropertyTable(const char* id) {

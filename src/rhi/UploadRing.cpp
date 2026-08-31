@@ -12,7 +12,13 @@ uint64_t AlignUp(uint64_t value, uint64_t alignment) {
 }  // namespace
 
 bool UploadRing::Create(ResourceAllocator& allocator, uint64_t bytesPerFrame) {
-    m_bytesPerFrame = AlignUp(bytesPerFrame, 256);
+    // フレーム境界自体を最大要求アライメント（テクスチャコピーの 512）に合わせておく。
+    // これが揃っていないと、フレーム 1 以降で絶対オフセットのアライメントが崩れる。
+    m_bytesPerFrame = AlignUp(bytesPerFrame, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
+    if (m_bytesPerFrame == 0 || m_bytesPerFrame > (UINT64_MAX / kFrameCount)) {
+        MM_LOG_ERROR("アップロードリングのサイズ指定が不正です");
+        return false;
+    }
 
     const uint64_t total = m_bytesPerFrame * kFrameCount;
     if (!allocator.CreateUploadBuffer(total, L"UploadRing", m_buffer)) {
@@ -39,6 +45,8 @@ void UploadRing::Destroy() {
     m_bytesPerFrame = 0;
     m_frameBase = 0;
     m_offset = 0;
+    m_peakBytes = 0;
+    m_overflowReported = false;
 }
 
 void UploadRing::BeginFrame(uint32_t frameIndex) {
@@ -52,13 +60,23 @@ UploadAllocation UploadRing::Allocate(uint64_t size, uint64_t alignment) {
     if (m_mapped == nullptr || size == 0) {
         return result;
     }
+    if (alignment == 0 || (alignment & (alignment - 1)) != 0 ||
+        alignment > D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT) {
+        // 0 や非 2 冪を通すと AlignUp が壊れ、無言で確保が重なり合う。
+        MM_LOG_ERROR("アップロードリングのアライメント指定が不正です (%llu)",
+                     static_cast<unsigned long long>(alignment));
+        return result;
+    }
 
-    const uint64_t alignedOffset = AlignUp(m_offset, alignment);
+    // アライメントはバッファ先頭からの絶対オフセット（= GPU 仮想アドレス）に対して満たす。
+    const uint64_t alignedOffset = AlignUp(m_frameBase + m_offset, alignment) - m_frameBase;
     if (alignedOffset + size > m_bytesPerFrame) {
         if (!m_overflowReported) {
+            const uint64_t remaining =
+                (alignedOffset < m_bytesPerFrame) ? m_bytesPerFrame - alignedOffset : 0;
             MM_LOG_ERROR("アップロードリングが不足しました (要求 %llu, 残り %llu)",
                          static_cast<unsigned long long>(size),
-                         static_cast<unsigned long long>(m_bytesPerFrame - alignedOffset));
+                         static_cast<unsigned long long>(remaining));
             m_overflowReported = true;
         }
         return result;

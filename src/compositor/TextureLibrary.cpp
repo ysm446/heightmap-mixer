@@ -63,13 +63,8 @@ void TransitionMip(ID3D12GraphicsCommandList* commandList, const rhi::GpuTexture
 }
 
 void ReleaseTexture(rhi::Device& device, rhi::GpuTexture& texture) {
-    if (!texture.IsValid()) {
-        return;
-    }
-    device.Allocator().ReleaseDescriptors(texture);
-    device.Defer(texture.resource);
-    device.Defer(texture.allocation);
-    texture = rhi::GpuTexture{};
+    // ディスクリプタも含めてフレーム同期後に解放する。GPU 待機は不要。
+    device.DeferRelease(texture);
 }
 
 }  // namespace
@@ -81,11 +76,9 @@ void TextureLibrary::Destroy(rhi::Device& device) {
         // float は sRGB 用の SRV を別に張っていない（linear と同じものを指す）。
         // 二重解放しないよう、別に張ったときだけ返す。
         if (!entry.isFloat && entry.srgbSrvIndex != kInvalidTextureIndex) {
-            device.SrvHeap().Free(device.SrvHeap().At(entry.srgbSrvIndex));
+            device.DeferFree(device.SrvHeap(), device.SrvHeap().At(entry.srgbSrvIndex));
         }
-        device.Allocator().ReleaseDescriptors(entry.texture);
-        device.Defer(entry.texture.resource);
-        device.Defer(entry.texture.allocation);
+        device.DeferRelease(entry.texture);
     }
     m_entries.clear();
 }
@@ -122,8 +115,6 @@ TextureId TextureLibrary::FindByPath(const std::filesystem::path& path) const {
 }
 
 void TextureLibrary::Clear(rhi::Device& device) {
-    // ディスクリプタを解放するので、GPU が読み終わるまで待つ。
-    device.WaitForGpu();
     Destroy(device);
 }
 
@@ -146,11 +137,9 @@ void TextureLibrary::Remove(rhi::Device& device, TextureId id) {
     ReleaseTexture(device, it->preview);
     // Destroy と同じ理由で、別に張ったときだけ返す。
     if (!it->isFloat && it->srgbSrvIndex != kInvalidTextureIndex) {
-        device.SrvHeap().Free(device.SrvHeap().At(it->srgbSrvIndex));
+        device.DeferFree(device.SrvHeap(), device.SrvHeap().At(it->srgbSrvIndex));
     }
-    device.Allocator().ReleaseDescriptors(it->texture);
-    device.Defer(it->texture.resource);
-    device.Defer(it->texture.allocation);
+    device.DeferRelease(it->texture);
     m_entries.erase(it);
 }
 
@@ -193,8 +182,23 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
 
     LibraryTexture entry;
     entry.path = path;
-    entry.name = path.filename().string();
+    // 名前は UTF-8 で持つ。string() は ACP 変換で、日本語などのファイル名が
+    // プロジェクト保存（JSON の dump）で壊れる。
+    const std::u8string fileName = path.filename().u8string();
+    entry.name = std::string(fileName.begin(), fileName.end());
     entry.isFloat = isFloat;
+
+    // ここから先の失敗では、確保済みのリソースとディスクリプタを必ず返す。
+    // 返し漏れると、読み込み失敗を繰り返すだけで SRV ヒープが枯渇していく。
+    const auto failCleanup = [&]() -> TextureId {
+        if (!entry.isFloat && entry.srgbSrvIndex != kInvalidTextureIndex &&
+            entry.srgbSrvIndex != entry.linearSrvIndex) {
+            device.DeferFree(device.SrvHeap(), device.SrvHeap().At(entry.srgbSrvIndex));
+        }
+        device.DeferRelease(entry.preview);
+        device.DeferRelease(entry.texture);
+        return kNoTexture;
+    };
 
     rhi::TextureDesc desc;
     desc.width = width;
@@ -227,7 +231,7 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
         // sRGB 用の SRV を追加で張る。
         const rhi::DescriptorHandle srgbHandle = device.SrvHeap().Allocate();
         if (!srgbHandle.IsValid()) {
-            return kNoTexture;
+            return failCleanup();
         }
         D3D12_SHADER_RESOURCE_VIEW_DESC srgbSrvDesc = {};
         srgbSrvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
@@ -250,13 +254,14 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
 
     rhi::GpuBuffer staging;
     if (!device.Allocator().CreateUploadBuffer(totalBytes, L"TextureStaging", staging)) {
-        return kNoTexture;
+        return failCleanup();
     }
 
     void* mapped = nullptr;
     const D3D12_RANGE readRange = {0, 0};
     if (!MM_CHECK_HR(staging.resource->Map(0, &readRange, &mapped))) {
-        return kNoTexture;
+        device.DeferRelease(staging);
+        return failCleanup();
     }
     auto* destination = static_cast<uint8_t*>(mapped) + footprint.Offset;
     for (uint32_t row = 0; row < rowCount; ++row) {
@@ -276,13 +281,13 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
     device.Defer(staging.resource);
     device.Defer(staging.allocation);
     if (!uploaded) {
-        return kNoTexture;
+        return failCleanup();
     }
 
     // アップロード直後はミップ 0 のみ COPY_DEST。残りは作成時の状態のまま。
     entry.texture.state = D3D12_RESOURCE_STATE_COPY_DEST;
     if (!GenerateMips(device, pipelineCache, entry.texture)) {
-        return kNoTexture;
+        return failCleanup();
     }
 
     // リニアなテクスチャは、そのまま一覧へ出すと極端に暗い。表示用に焼き直す。
@@ -303,6 +308,11 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
 // リソースは一覧に描くのと同じもの（表示用があればそれ、無ければ元のテクスチャ）。
 // どちらも RGBA8 の UNORM なので、書式は共通でよい。
 void TextureLibrary::CreateChannelViews(rhi::Device& device, LibraryTexture& entry) {
+    // float は表示用（RGBA8）の焼き直しが前提。それが無いのに元の float リソースへ
+    // UNORM の SRV を張ると、フォーマット互換違反になる。
+    if (entry.isFloat && !entry.preview.IsValid()) {
+        return;
+    }
     const rhi::GpuTexture& source = entry.preview.IsValid() ? entry.preview : entry.texture;
     if (!source.IsValid()) {
         return;
@@ -330,7 +340,7 @@ void TextureLibrary::CreateChannelViews(rhi::Device& device, LibraryTexture& ent
 void TextureLibrary::ReleaseChannelViews(rhi::Device& device, LibraryTexture& entry) {
     for (rhi::DescriptorHandle& handle : entry.channelSrv) {
         if (handle.IsValid()) {
-            device.SrvHeap().Free(handle);
+            device.DeferFree(device.SrvHeap(), handle);
             handle = rhi::DescriptorHandle{};
         }
     }

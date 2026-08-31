@@ -29,12 +29,14 @@ bool DescriptorHeap::Create(ID3D12Device* device, D3D12_DESCRIPTOR_HEAP_TYPE typ
     for (uint32_t i = capacity; i > 0; --i) {
         m_freeList.push_back(i - 1);
     }
+    m_inUse.assign(capacity, false);
     return true;
 }
 
 void DescriptorHeap::Destroy() {
     m_heap.Reset();
     m_freeList.clear();
+    m_inUse.clear();
     m_capacity = 0;
     m_descriptorSize = 0;
     m_cpuStart = {};
@@ -48,6 +50,7 @@ DescriptorHandle DescriptorHeap::Allocate() {
     }
     const uint32_t index = m_freeList.back();
     m_freeList.pop_back();
+    m_inUse[index] = true;
     return At(index);
 }
 
@@ -59,6 +62,14 @@ void DescriptorHeap::Free(const DescriptorHandle& handle) {
         MM_LOG_ERROR("範囲外のディスクリプタを解放しようとしました (index=%u)", handle.index);
         return;
     }
+    if (!m_inUse[handle.index]) {
+        // 二重解放するとフリーリストに同じスロットが 2 つ積まれ、
+        // 以後 2 つの別リソースが同じディスクリプタを共有してしまう。
+        MM_LOG_ERROR("解放済みのディスクリプタを再度解放しようとしました (index=%u)",
+                     handle.index);
+        return;
+    }
+    m_inUse[handle.index] = false;
     m_freeList.push_back(handle.index);
 }
 

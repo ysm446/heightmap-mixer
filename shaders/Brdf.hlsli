@@ -33,7 +33,8 @@ float3 FresnelSchlick(float3 f0, float vDotH)
 float3 FresnelSchlickRoughness(float3 f0, float nDotV, float roughness)
 {
     const float3 fr = max(float3(1.0f - roughness, 1.0f - roughness, 1.0f - roughness), f0);
-    return f0 + (fr - f0) * pow(1.0f - nDotV, 5.0f);
+    // nDotV が 1 をわずかに超えると pow の底が負になり NaN が出る。saturate で守る。
+    return f0 + (fr - f0) * pow(saturate(1.0f - nDotV), 5.0f);
 }
 
 float DiffuseLambert()
@@ -61,7 +62,9 @@ float3 ShadeDirectionalLight(float3 normal, float3 viewDirection, float3 lightDi
     }
 
     const float3 halfVector = normalize(viewDirection + lightDirection);
-    const float nDotV = saturate(dot(normal, viewDirection)) + 1e-5f;
+    // 上限を超えないよう clamp する（saturate + 加算だと最大 1.00001 になり、
+    // 1 - nDotV を底に取る pow が NaN を作る）。
+    const float nDotV = clamp(dot(normal, viewDirection), 1e-5f, 1.0f);
     const float nDotH = saturate(dot(normal, halfVector));
     const float vDotH = saturate(dot(viewDirection, halfVector));
 

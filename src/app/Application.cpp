@@ -412,7 +412,9 @@ bool Application::Initialize(const StartupOptions& options) {
     m_options = options;
 
     // ファイル選択ダイアログ（IFileDialog）が COM を使う。
-    if (FAILED(::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE))) {
+    m_comInitialized =
+        SUCCEEDED(::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE));
+    if (!m_comInitialized) {
         MM_LOG_WARN("COM を初期化できませんでした。ファイル選択ダイアログは使えません");
     }
 
@@ -473,6 +475,15 @@ bool Application::Initialize(const StartupOptions& options) {
 
     m_settings.Load();
     m_recentProjects.Load();
+    // 表示設定（垂直同期・ホットリロード・背景色）を settings.json から反映する。
+    {
+        const io::DisplaySettings& display = m_settings.Display();
+        m_vsync = display.vsync;
+        m_hotReloadEnabled = display.hotReload;
+        for (int i = 0; i < 4; ++i) {
+            m_clearColor[i] = display.clearColor[i];
+        }
+    }
     // 設定に拡大率が残っていれば、ウィンドウの大きさもそれに合わせる。
     ApplyUiScale();
 
@@ -500,7 +511,10 @@ void Application::Shutdown() {
     m_shaderCompiler.Destroy();
     m_device.Shutdown();
     m_window.Destroy();
-    ::CoUninitialize();
+    // 初期化に失敗していたのに解除すると、他所の COM 初期化を巻き戻してしまう。
+    if (m_comInitialized) {
+        ::CoUninitialize();
+    }
 }
 
 void Application::PollShaderHotReload() {
@@ -1229,7 +1243,7 @@ void Application::DrawMaterialPanel() {
                                   renderer::FocalLengthFromFovY(kDefaultCamera.fovY),
                                   "35mm フルサイズ換算。小さいほど広角で、遠近が強く出る",
                                   "%.0f mm", ImGuiSliderFlags_Logarithmic, 1.0f)) {
-                camera.FovY() = renderer::FovYFromFocalLength(focalLength);
+                camera.SetFovY(renderer::FovYFromFocalLength(focalLength));
             }
             ui::PropertyValue("画角", "%.1f 度（垂直）", RadiansToDegrees(camera.FovY()));
             ui::PropertyLabelEmpty("cameraReset");
@@ -1609,6 +1623,8 @@ void Application::DrawLayerPanel() {
         std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", layer.name.c_str());
         if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer))) {
             layer.name = nameBuffer;
+            // 名前もアンドゥの対象。落とすと、次のアンドゥで改名まで巻き戻る。
+            changed = true;
         }
         // マテリアルを割り当てているときは、見た目はマテリアル側の値で決まる。
         // 同じ意味の値を 2 か所に置くと、どちらが効いているのか分からなくなる。
@@ -1831,7 +1847,9 @@ bool Application::DrawPaintSection(compositor::MaterialLayer& layer) {
 
         ui::PropertyLabelEmpty("paintDiscard");
         if (ui::Button("マスクを破棄", ui::kWideButtonWidth)) {
-            m_paintMasks.Remove(m_device, layer.mask.paint);
+            // 実体はここでは消さない。履歴から参照されている間は SweepPaintMasks が
+            // 持っておき、アンドゥで戻したときに描いた内容が失われないようにする
+            // （RemoveLayer と同じ方針）。
             layer.mask.paint = compositor::kNoPaintMask;
             m_paintMode = false;
             changed = true;
@@ -1857,27 +1875,21 @@ void Application::DrawMaterialLibraryPanel() {
     if (ui::Button("追加")) {
         m_materialLibrary.Add("マテリアル " + std::to_string(assets.size() + 1));
         m_selectedMaterial = static_cast<int>(assets.size()) - 1;
+        m_scrollToSelectedMaterial = true;
         MarkDocumentChanged();
     }
     ImGui::SameLine();
     if (ui::Button("複製") && assetCount > 0) {
         m_materialLibrary.Duplicate(assets[static_cast<size_t>(m_selectedMaterial)]);
         m_selectedMaterial = static_cast<int>(assets.size()) - 1;
+        m_scrollToSelectedMaterial = true;
         MarkDocumentChanged();
     }
     ImGui::SameLine();
     if (ui::Button("削除") && assetCount > 0) {
-        const compositor::MaterialAssetId removed =
-            assets[static_cast<size_t>(m_selectedMaterial)].id;
-        m_materialLibrary.Remove(m_device, removed);
-        // 参照していたレイヤーは「なし」へ戻す。無効な ID を残さない。
-        for (compositor::MaterialLayer& layer : m_materialStack.Layers()) {
-            if (layer.material == removed) {
-                layer.material = compositor::kNoMaterialAsset;
-            }
-        }
-        m_selectedMaterial = std::max(0, m_selectedMaterial - 1);
-        MarkDocumentChanged();
+        // その場で消すと、この後の一覧描画が erase 済みの要素（assetCount は
+        // 古いまま）を読んでしまう。要求だけ積み、フレームの外で処理する。
+        m_pendingMaterialRemove = assets[static_cast<size_t>(m_selectedMaterial)].id;
     }
 
     // マテリアル単体のファイル (.mmmat)。プロジェクト間で持ち回るために使う。
@@ -1916,21 +1928,23 @@ void Application::DrawMaterialLibraryPanel() {
 
             ImGui::BeginGroup();
             const bool selected = (m_selectedMaterial == i);
-            // サムネイルは円の外を抜いてあるので、下に敷いた色が四隅から透ける。
-            // 選択の手掛かりとしては弱いため、枠を画像の後に重ねる。
-            if (asset.thumbnail.IsValid()) {
-                ImGui::Image(static_cast<ImTextureID>(asset.thumbnail.srv.gpu.ptr),
-                             ImVec2(thumbnailSize, thumbnailSize));
-                if (ImGui::IsItemClicked()) {
-                    m_selectedMaterial = i;
-                }
-            } else if (ImGui::Button("##thumbnail", ImVec2(thumbnailSize, thumbnailSize))) {
+            // design-guide §5 に合わせ、テクスチャ一覧と同じ ThumbnailButton を使う。
+            // ImGui::Image + IsItemClicked はドラッグ元にした瞬間に効かなくなる罠がある。
+            const ImTextureID textureId =
+                asset.thumbnail.IsValid()
+                    ? static_cast<ImTextureID>(asset.thumbnail.srv.gpu.ptr)
+                    : static_cast<ImTextureID>(0);
+            const ui::Thumbnail thumbnail =
+                ui::ThumbnailButton("##thumbnail", textureId, thumbnailSize, selected);
+            if (thumbnail.clicked) {
                 m_selectedMaterial = i;
             }
-            const bool hovered = ImGui::IsItemHovered();
-            ui::ThumbnailFrame(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), selected,
-                               hovered);
-            if (hovered) {
+            // 追加・複製した直後のものは枠内へ送る（テクスチャ一覧と同じ）。
+            if (m_selectedMaterial == i && m_scrollToSelectedMaterial) {
+                m_scrollToSelectedMaterial = false;
+                ImGui::SetScrollHereY(1.0f);
+            }
+            if (thumbnail.hovered) {
                 ImGui::SetTooltip("%s", asset.name.c_str());
             }
             ImGui::EndGroup();
@@ -1959,6 +1973,8 @@ void Application::DrawMaterialLibraryPanel() {
         std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", asset.name.c_str());
         if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer))) {
             asset.name = nameBuffer;
+            // 名前もアンドゥの対象。落とすと、次のアンドゥで改名まで巻き戻る。
+            changed = true;
         }
 
         static const compositor::MaterialAsset kDefaultAsset;
@@ -2059,6 +2075,11 @@ void Application::HandleShortcuts() {
         // Ctrl + Shift + S は「名前を付けて保存」。
         RequestSaveProject(io.KeyShift);
     } else if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+        // テキスト入力中は InputText 内部のアンドゥに任せる。
+        // 文書のアンドゥまで同時に走ると、無関係な編集が巻き戻る。
+        if (io.WantTextInput) {
+            return;
+        }
         // Ctrl + Shift + Z も「やり直す」。Ctrl + Y と同じ。
         if (io.KeyShift) {
             if (m_undoHistory.CanRedo()) {
@@ -2067,7 +2088,8 @@ void Application::HandleShortcuts() {
         } else if (m_undoHistory.CanUndo()) {
             m_pendingHistoryStep = -1;
         }
-    } else if (ImGui::IsKeyPressed(ImGuiKey_Y, false) && m_undoHistory.CanRedo()) {
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Y, false) && !io.WantTextInput &&
+               m_undoHistory.CanRedo()) {
         m_pendingHistoryStep = 1;
     }
 }
@@ -2387,7 +2409,22 @@ std::vector<std::string> Application::CollectTextureUsers(compositor::TextureId 
 }
 
 size_t Application::CountTextureUsers(compositor::TextureId id) const {
-    return CollectTextureUsers(id).size();
+    if (id == compositor::kNoTexture) {
+        return 0;
+    }
+    size_t count = 0;
+    for (const compositor::MaterialAsset& asset : m_materialLibrary.Entries()) {
+        count += (asset.baseColor == id) ? 1 : 0;
+        count += (asset.normal == id) ? 1 : 0;
+        count += (asset.roughness.texture == id) ? 1 : 0;
+        count += (asset.metallic.texture == id) ? 1 : 0;
+        count += (asset.ambientOcclusion.texture == id) ? 1 : 0;
+        count += (asset.height.texture == id) ? 1 : 0;
+    }
+    for (const compositor::MaterialLayer& layer : m_materialStack.Layers()) {
+        count += (layer.mask.texture.texture == id) ? 1 : 0;
+    }
+    return count;
 }
 
 // 参照が残っているテクスチャを消そうとしたときの確認。
@@ -2827,10 +2864,26 @@ void Application::ProcessPendingFileWork() {
         }
         clearSlot(m_ordTexture);
 
-        // ディスクリプタを返すので、GPU が読み終わるまで待つ。
-        m_device.WaitForGpu();
+        // 解放は DeferRelease でフレーム同期後に行われるため、GPU 待機は不要。
         m_textureLibrary.Remove(m_device, removed);
         m_materialStack.MarkDirty();
+    }
+
+    if (m_pendingMaterialRemove != compositor::kNoMaterialAsset) {
+        const compositor::MaterialAssetId removed = m_pendingMaterialRemove;
+        m_pendingMaterialRemove = compositor::kNoMaterialAsset;
+
+        if (m_materialLibrary.Find(removed) != nullptr) {
+            m_materialLibrary.Remove(m_device, removed);
+            // 参照していたレイヤーは「なし」へ戻す。無効な ID を残さない。
+            for (compositor::MaterialLayer& layer : m_materialStack.Layers()) {
+                if (layer.material == removed) {
+                    layer.material = compositor::kNoMaterialAsset;
+                }
+            }
+            m_selectedMaterial = std::max(0, m_selectedMaterial - 1);
+            MarkDocumentChanged();
+        }
     }
 }
 
@@ -2936,10 +2989,21 @@ void Application::DrawSettingsWindow() {
 
     ui::SectionHeader("表示");
     if (ui::BeginPropertyTable("settingsDisplayRows")) {
-        ui::PropertyBool("垂直同期", &m_vsync, true);
-        ui::PropertyBool("ホットリロード", &m_hotReloadEnabled, true,
-                         "shaders/ の更新を検出して PSO を作り直す");
-        ui::PropertyColor("背景色", m_clearColor, kDefaultClearColor);
+        bool displayChanged = false;
+        displayChanged |= ui::PropertyBool("垂直同期", &m_vsync, true);
+        displayChanged |= ui::PropertyBool("ホットリロード", &m_hotReloadEnabled, true,
+                                           "shaders/ の更新を検出して PSO を作り直す");
+        displayChanged |= ui::PropertyColor("背景色", m_clearColor, kDefaultClearColor);
+        if (displayChanged) {
+            // design-guide の「設定ウィンドウ」に従い、変えたらその場で書く。
+            io::DisplaySettings& display = m_settings.Display();
+            display.vsync = m_vsync;
+            display.hotReload = m_hotReloadEnabled;
+            for (int i = 0; i < 4; ++i) {
+                display.clearColor[i] = m_clearColor[i];
+            }
+            changed = true;
+        }
         ui::EndPropertyTable();
     }
 

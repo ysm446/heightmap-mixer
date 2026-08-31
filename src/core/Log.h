@@ -21,9 +21,6 @@ void LogMessage(LogLevel level, const char* fmt, ...);
 using LogSink = std::function<void(LogLevel, const char*)>;
 void SetLogSink(LogSink sink);
 
-// 回復不能な初期化失敗などで使う。メッセージボックスを出してプロセスを終了する。
-[[noreturn]] void FatalExit(const char* fmt, ...);
-
 }  // namespace mm
 
 #define MM_LOG_INFO(...)  ::mm::LogMessage(::mm::LogLevel::Info, __VA_ARGS__)
