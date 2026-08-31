@@ -143,15 +143,19 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     //   キー  : 左上手前。主役。暖色寄りの白
     //   フィル: 右奥。**カメラより奥に置く**ことで、右の輪郭が光って
     //           背景からシルエットが分離する。寒色寄りにしてキーと差をつける
+    //
+    // **強さは素材の暗さを見込んで決めてある。** 地面素材はアルベドが 0.1〜0.3 と
+    // 暗く、控えめに当てると 2 灯にしても差が模様のノイズに埋もれてしまう。
+    // 白い素材でも飽和しないことは確認済み（最も明るい素材で最大 168 / 255）。
     const float3 keyDirection = normalize(float3(-0.45f, 0.55f, 0.70f));
-    const float3 fillDirection = normalize(float3(0.75f, 0.25f, -0.30f));
+    const float3 fillDirection = normalize(float3(0.70f, 0.35f, -0.62f));
 
     // 一覧の中で明るさが揃うよう、露出は掛けずに正規化した強さで直接シェーディングする。
     float3 radiance = ShadeDirectionalLight(normal, viewDirection, keyDirection,
-                                            float3(1.0f, 0.98f, 0.95f), 2.6f, diffuseColor, f0,
+                                            float3(1.0f, 0.98f, 0.95f), 4.5f, diffuseColor, f0,
                                             clampedRoughness);
     radiance += ShadeDirectionalLight(normal, viewDirection, fillDirection,
-                                      float3(0.72f, 0.80f, 1.0f), 1.1f, diffuseColor, f0,
+                                      float3(0.62f, 0.74f, 1.0f), 3.0f, diffuseColor, f0,
                                       clampedRoughness);
 
     // 環境光の代わり。上からの弱い半球光で、影側が真っ黒にならないようにする。
