@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-08-31 15:12
+更新日時: 2026-08-31 23:40
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -103,9 +103,9 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 | 種別 | 値 |
 | --- | --- |
 | チャンネル指定 | `r` / `g` / `b` / `a` |
-| ハイトの出どころ | `constant` / `noise` / `texture` |
+| ハイトのソース | `constant` / `noise` / `texture` |
 | ノイズ | `fbm` / `ridged` / `worley` |
-| マスクの出どころ | `constant` / `noise` / `texture` / `height` / `slope` / `curvature` / `cavity` / `paint` |
+| マスクのソース | `constant` / `noise` / `texture` / `height` / `slope` / `curvature` / `cavity` / `paint` |
 | 書き込むチャンネル | `["baseColor", "normal", "surface", "height"]`（配列） |
 | プレビュー形状 | `sphere` / `plane` / `cube` |
 | トーンマップ | `none` / `reinhard` / `aces` |

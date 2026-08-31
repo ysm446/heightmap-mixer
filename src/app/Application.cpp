@@ -1393,7 +1393,7 @@ void Application::DrawLayerPanel() {
     ui::SectionHeader("ハイト");
     if (ui::BeginPropertyTable("layerHeightRows")) {
         int heightSource = static_cast<int>(layer.heightSource);
-        if (ui::PropertyCombo("出どころ", &heightSource, kValueSourceLabels,
+        if (ui::PropertyCombo("ソース", &heightSource, kValueSourceLabels,
                               IM_ARRAYSIZE(kValueSourceLabels),
                               static_cast<int>(kDefaultLayer.heightSource))) {
             layer.heightSource = static_cast<compositor::ValueSource>(heightSource);
@@ -1415,7 +1415,7 @@ void Application::DrawLayerPanel() {
     ui::SectionHeader("マスク");
     if (ui::BeginPropertyTable("layerMaskRows")) {
         int maskSource = static_cast<int>(layer.mask.source);
-        if (ui::PropertyCombo("出どころ", &maskSource, kMaskSourceLabels,
+        if (ui::PropertyCombo("ソース", &maskSource, kMaskSourceLabels,
                               IM_ARRAYSIZE(kMaskSourceLabels),
                               static_cast<int>(kDefaultLayer.mask.source),
                               "マスクは不透明度として高さと同じ土俵で競合する。"
@@ -1425,7 +1425,7 @@ void Application::DrawLayerPanel() {
         }
         changed |= ui::PropertyFloat("定数", &layer.mask.constant, 0.0f, 1.0f,
                                      kDefaultLayer.mask.constant,
-                                     "出どころの値に掛ける係数", "%.2f");
+                                     "ソースの値に掛ける係数", "%.2f");
 
         if (layer.mask.source == compositor::MaskSource::Texture) {
             changed |= DrawMapSlotRow("画像", layer.mask.texture, m_textureLibrary);
@@ -1759,7 +1759,7 @@ void Application::DrawMaterialLibraryPanel() {
         ui::EndPropertyTable();
     }
     ui::HintText("ORD は AO=R / ラフネス=G / ハイト=B に割り当てる（Megascans の並び）");
-    ui::HintText("ハイトはレイヤーの「ハイトの出どころ」をテクスチャにすると効く");
+    ui::HintText("ハイトはレイヤーの「ハイトのソース」をテクスチャにすると効く");
 
     if (changed) {
         // サムネイルと合成の両方を作り直す。

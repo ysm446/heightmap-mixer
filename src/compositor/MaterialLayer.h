@@ -22,7 +22,7 @@ inline constexpr uint32_t ChannelBit(Channel channel) {
 
 inline constexpr uint32_t kAllChannelBits = 0xFu;
 
-// レイヤーの値の出どころ。
+// レイヤーの値のソース。
 enum class ValueSource : uint32_t {
     Constant = 0,
     Noise = 1,
@@ -84,7 +84,7 @@ struct NoiseParams {
     float offset = 0.0f;   // 同じレイヤー内で別パターンにしたいときにずらす
 };
 
-// マスクの出どころ。合成の中間結果に由来するものを含む。
+// マスクのソース。合成の中間結果に由来するものを含む。
 //
 // 「下地」とは、このレイヤーより下のレイヤーを合成した結果のこと。
 // 傾斜や曲率を使うと「急斜面にだけ岩を出す」「窪みにだけ苔を生やす」が書ける。
@@ -105,7 +105,7 @@ inline bool IsDerivedMaskSource(MaskSource source) {
            source == MaskSource::Curvature || source == MaskSource::Cavity;
 }
 
-// マスク。出どころの値に定数を掛け、カーブ・レベル調整・反転を掛ける。
+// マスク。ソースの値に定数を掛け、カーブ・レベル調整・反転を掛ける。
 struct LayerMask {
     MaskSource source = MaskSource::Constant;
     float constant = 1.0f;
