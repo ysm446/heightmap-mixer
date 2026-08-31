@@ -5,6 +5,8 @@
 
 #include <imgui.h>
 
+#include <DirectXMath.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
@@ -172,6 +174,74 @@ bool DrawTextureSlotRow(const char* label, compositor::TextureId& slot,
     }
     ui::PropertyEnd();
     return changed;
+}
+
+// ビューポート左下に置く座標軸ギズモ。
+//
+// 軸の色は DCC 共通の意味色（X=赤 / Y=緑 / Z=青）なので、テーマからは引かない。
+// 透視投影は掛けず、向きだけを見せる。
+void DrawAxisGizmo(const renderer::Camera& camera, const ImVec2& viewportMin,
+                   const ImVec2& viewportMax) {
+    const renderer::CameraBasis basis = camera.Basis();
+
+    const float radius = ui::Scaled(30.0f);
+    const float margin = ui::Scaled(16.0f);
+    const ImVec2 center(viewportMin.x + margin + radius, viewportMax.y - margin - radius);
+    if (center.x + radius > viewportMax.x || center.y - radius < viewportMin.y) {
+        return;  // ビューポートが小さすぎる。
+    }
+
+    struct Axis {
+        float direction[3];
+        ImU32 color;
+        const char* label;
+    };
+    static const Axis kAxes[] = {
+        {{1.0f, 0.0f, 0.0f}, IM_COL32(226, 96, 96, 255), "X"},
+        {{0.0f, 1.0f, 0.0f}, IM_COL32(124, 196, 104, 255), "Y"},
+        {{0.0f, 0.0f, 1.0f}, IM_COL32(96, 146, 226, 255), "Z"},
+    };
+
+    struct Projected {
+        ImVec2 tip;
+        float depth = 0.0f;  // 正なら画面の奥を向いている
+        ImU32 color = 0;
+        const char* label = nullptr;
+    };
+
+    const auto project = [](const float* axis, const DirectX::XMFLOAT3& b) {
+        return axis[0] * b.x + axis[1] * b.y + axis[2] * b.z;
+    };
+
+    Projected projected[IM_ARRAYSIZE(kAxes)];
+    for (int i = 0; i < IM_ARRAYSIZE(kAxes); ++i) {
+        const float x = project(kAxes[i].direction, basis.right);
+        const float y = project(kAxes[i].direction, basis.up);
+        projected[i].depth = project(kAxes[i].direction, basis.forward);
+        projected[i].tip = ImVec2(center.x + x * radius, center.y - y * radius);
+        projected[i].label = kAxes[i].label;
+
+        // 奥を向いている軸は落として、手前と見分けられるようにする。
+        const ImU32 color = kAxes[i].color;
+        projected[i].color = (projected[i].depth > 0.0f)
+                                 ? ((color & ~IM_COL32_A_MASK) | (110u << IM_COL32_A_SHIFT))
+                                 : color;
+    }
+
+    // 奥の軸から先に描く。
+    std::sort(std::begin(projected), std::end(projected),
+              [](const Projected& a, const Projected& b) { return a.depth > b.depth; });
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const float dotRadius = ui::Scaled(7.0f);
+    for (const Projected& axis : projected) {
+        drawList->AddLine(center, axis.tip, axis.color, ui::Scaled(1.6f));
+        drawList->AddCircleFilled(axis.tip, dotRadius, axis.color);
+
+        const ImVec2 textSize = ImGui::CalcTextSize(axis.label);
+        const ImVec2 textPos(axis.tip.x - textSize.x * 0.5f, axis.tip.y - textSize.y * 0.5f);
+        drawList->AddText(textPos, IM_COL32(22, 22, 22, 235), axis.label);
+    }
 }
 
 }  // namespace
@@ -501,6 +571,9 @@ void Application::DrawViewportPanel(bool applyLayout) {
             if (itemHovered && io.MouseWheel != 0.0f) {
                 camera.Zoom(io.MouseWheel);
             }
+
+            DrawAxisGizmo(camera, imageOrigin,
+                          ImVec2(imageOrigin.x + available.x, imageOrigin.y + available.y));
 
             // ブラシの当たる範囲を円で示す。半径はビューポートのピクセル単位なので、
             // 表示倍率で割って ImGui の座標へ戻す。

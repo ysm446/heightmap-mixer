@@ -6,10 +6,22 @@
 
 namespace hm::renderer {
 
+// カメラのビュー空間の基底をワールド座標で表したもの。
+// 座標軸ギズモのように「向きだけ」が要る用途に使う。
+struct CameraBasis {
+    DirectX::XMFLOAT3 right;    // 画面の右
+    DirectX::XMFLOAT3 up;       // 画面の上
+    DirectX::XMFLOAT3 forward;  // 画面の奥
+};
+
 // 注視点を中心に回る軌道カメラ。マテリアルプレビューではこれで十分。
+//
+// 座標系は**右手系 Y-up**。X が右、Y が上、Z が手前（画面から見て奥が -Z）。
+// 詳細は docs/design/rendering.md の「座標系」を参照。
 class Camera {
 public:
-    void Orbit(float deltaYaw, float deltaPitch);
+    // 画面上のドラッグ量で視点を回す。ドラッグした向きに内容が付いてくる。
+    void Orbit(float deltaX, float deltaY);
     void Pan(float deltaX, float deltaY);
     void Zoom(float delta);
     void Reset();
@@ -19,6 +31,7 @@ public:
     DirectX::XMMATRIX ViewMatrix() const;
     DirectX::XMMATRIX ProjectionMatrix() const;
     DirectX::XMFLOAT3 Position() const;
+    CameraBasis Basis() const;
 
     float& FovY() { return m_fovY; }
     float& Distance() { return m_distance; }

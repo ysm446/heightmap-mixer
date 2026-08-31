@@ -13,9 +13,11 @@ constexpr float kPitchLimit = 1.55334306f;  // 89 度
 
 }  // namespace
 
-void Camera::Orbit(float deltaYaw, float deltaPitch) {
-    m_yaw += deltaYaw;
-    m_pitch = std::clamp(m_pitch + deltaPitch, -kPitchLimit, kPitchLimit);
+void Camera::Orbit(float deltaX, float deltaY) {
+    // 右手系では画面の右が +X なので、ヨーは符号を反転する。
+    // そうしないと、ドラッグした向きと逆に内容が回る。
+    m_yaw -= deltaX;
+    m_pitch = std::clamp(m_pitch + deltaY, -kPitchLimit, kPitchLimit);
 }
 
 void Camera::Pan(float deltaX, float deltaY) {
@@ -56,15 +58,35 @@ XMFLOAT3 Camera::Position() const {
     return XMFLOAT3{x, y, z};
 }
 
+CameraBasis Camera::Basis() const {
+    const XMFLOAT3 position = Position();
+    const XMVECTOR eye = XMLoadFloat3(&position);
+    const XMVECTOR target = XMLoadFloat3(&m_target);
+    const XMVECTOR worldUp = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+
+    // 右手系なので 右 = 前 × 上。ビュー行列が作る基底と一致する。
+    const XMVECTOR forward = XMVector3Normalize(XMVectorSubtract(target, eye));
+    const XMVECTOR right = XMVector3Normalize(XMVector3Cross(forward, worldUp));
+    const XMVECTOR up = XMVector3Cross(right, forward);
+
+    CameraBasis basis;
+    XMStoreFloat3(&basis.right, right);
+    XMStoreFloat3(&basis.up, up);
+    XMStoreFloat3(&basis.forward, forward);
+    return basis;
+}
+
 XMMATRIX Camera::ViewMatrix() const {
     const XMFLOAT3 position = Position();
-    return XMMatrixLookAtLH(XMLoadFloat3(&position), XMLoadFloat3(&m_target),
+    // 右手系。LH を使うと画面が左右反転し、+X が画面左に出てしまう。
+    return XMMatrixLookAtRH(XMLoadFloat3(&position), XMLoadFloat3(&m_target),
                             XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
 }
 
 XMMATRIX Camera::ProjectionMatrix() const {
     const float aspect = static_cast<float>(m_width) / static_cast<float>(m_height);
-    return XMMatrixPerspectiveFovLH(m_fovY, aspect, m_nearZ, m_farZ);
+    // ビュー行列と手系を揃える。深度の範囲は LH 版と同じ [0, 1]。
+    return XMMatrixPerspectiveFovRH(m_fovY, aspect, m_nearZ, m_farZ);
 }
 
 }  // namespace hm::renderer
