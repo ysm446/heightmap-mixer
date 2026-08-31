@@ -30,7 +30,11 @@ struct MaterialAsset {
     MapSlot ambientOcclusion;
     MapSlot height;
 
-    DirectX::XMFLOAT3 baseColorTint = {0.5f, 0.5f, 0.5f};
+    // **乗算の中立値なので 1.0。** マップがあるときは掛け算で効く
+    // （`layerBaseColor *= テクスチャ`）ため、1 以外を既定にすると
+    // 外から持ち込んだ素材のアルベドが黙って変わってしまう。
+    // マップが無いスロットでは、この値がそのままベースカラーになる。
+    DirectX::XMFLOAT3 baseColorTint = {1.0f, 1.0f, 1.0f};
     float roughnessValue = 0.5f;
     float metallicValue = 0.0f;
     float ambientOcclusionValue = 1.0f;
