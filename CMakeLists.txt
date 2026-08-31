@@ -71,6 +71,8 @@ find_package(directx-headers CONFIG REQUIRED)
 find_package(directx12-agility CONFIG REQUIRED)
 find_package(winpixevent CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
+find_package(D3D12MemoryAllocator CONFIG REQUIRED)
+find_package(directx-dxc CONFIG REQUIRED)
 
 set(hm_sources
     src/app/Main.cpp
@@ -82,15 +84,30 @@ set(hm_sources
     src/core/Window.h
     src/rhi/Common.cpp
     src/rhi/Common.h
+    src/rhi/DeletionQueue.cpp
+    src/rhi/DeletionQueue.h
     src/rhi/DescriptorHeap.cpp
     src/rhi/DescriptorHeap.h
     src/rhi/Device.cpp
     src/rhi/Device.h
+    src/rhi/GpuResource.cpp
+    src/rhi/GpuResource.h
+    src/rhi/PipelineCache.cpp
+    src/rhi/PipelineCache.h
+    src/rhi/ShaderCompiler.cpp
+    src/rhi/ShaderCompiler.h
+    src/rhi/UploadRing.cpp
+    src/rhi/UploadRing.h
     src/ui/ImGuiLayer.cpp
     src/ui/ImGuiLayer.h
 )
 
-add_executable(heightmap_mixer WIN32 ${hm_sources})
+# シェーダはビルド対象ではないが、VS のソリューションから編集できるようにしておく。
+file(GLOB hm_shaders CONFIGURE_DEPENDS "shaders/*.hlsl" "shaders/*.hlsli")
+set_source_files_properties(${hm_shaders} PROPERTIES HEADER_FILE_ONLY TRUE)
+source_group("shaders" FILES ${hm_shaders})
+
+add_executable(heightmap_mixer WIN32 ${hm_sources} ${hm_shaders})
 
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" PREFIX "src" FILES ${hm_sources})
 
@@ -101,7 +118,12 @@ target_compile_definitions(heightmap_mixer PRIVATE
     _UNICODE
     WIN32_LEAN_AND_MEAN
     NOMINMAX
+    # PIX マーカーを有効にする。未定義だと pix3.h の呼び出しが消え、
+    # Release で PIX による計測ができなくなる。
+    USE_PIX
     HM_APP_VERSION="${PROJECT_VERSION}"
+    # シェーダはホットリロードのためソースツリーを直接参照する。
+    HM_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders"
     $<$<CONFIG:Debug>:HM_DEBUG=1>
 )
 
@@ -112,6 +134,8 @@ target_link_libraries(heightmap_mixer PRIVATE
     Microsoft::DirectX-Guids
     Microsoft::DirectX12-Agility
     Microsoft::WinPixEventRuntime
+    Microsoft::DirectXShaderCompiler
+    GPUOpen::D3D12MemoryAllocator
     imgui::imgui
     d3d12
     dxgi
@@ -129,6 +153,17 @@ add_custom_command(TARGET heightmap_mixer POST_BUILD
         "$<TARGET_FILE_DIR:heightmap_mixer>/D3D12"
     COMMAND_EXPAND_LISTS
     COMMENT "Agility SDK の DLL を D3D12/ に配置"
+)
+
+# --- DXC の署名用 DLL を実行ファイル横に置く -------------------------------
+# dxcompiler.dll はリンクしているため applocal で配置されるが、
+# dxil.dll (署名) はリンクしていないので明示的にコピーする。
+add_custom_command(TARGET heightmap_mixer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_PROPERTY:Microsoft::DXIL,IMPORTED_LOCATION_DEBUG>"
+        "$<TARGET_FILE_DIR:heightmap_mixer>"
+    COMMAND_EXPAND_LISTS
+    COMMENT "dxil.dll を配置"
 )
 
 set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT heightmap_mixer)

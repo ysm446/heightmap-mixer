@@ -4,11 +4,16 @@
 
 #include <pix3.h>
 
+#include <utility>
+
 namespace hm::rhi {
 namespace {
 
 // ImGui のフォントアトラスや将来のテクスチャ用に、余裕をもって確保しておく。
 constexpr uint32_t kSrvHeapCapacity = 1024;
+
+// 1 フレームあたりのアップロード容量。定数バッファと小さめの転送を想定した初期値。
+constexpr uint64_t kUploadBytesPerFrame = 16ull * 1024 * 1024;
 
 }  // namespace
 
@@ -39,9 +44,24 @@ bool Device::Initialize(HWND hwnd, uint32_t width, uint32_t height, bool enableD
     if (!CreateBackBufferViews()) {
         return false;
     }
+    if (!m_allocator.Create(m_device.Get(), m_adapter.Get(), &m_srvHeap)) {
+        return false;
+    }
+    if (!m_uploadRing.Create(m_allocator, kUploadBytesPerFrame)) {
+        return false;
+    }
 
     m_initialized = true;
     return true;
+}
+
+void Device::Defer(ComPtr<IUnknown> object) {
+    // 現在記録中のフレームは m_nextFenceValue で Signal される。
+    m_deletionQueue.Push(std::move(object), m_nextFenceValue);
+}
+
+uint64_t Device::CompletedFenceValue() const {
+    return m_fence ? m_fence->GetCompletedValue() : 0;
 }
 
 bool Device::CreateFactoryAndDevice(bool enableDebugLayer) {
@@ -108,6 +128,15 @@ bool Device::CreateFactoryAndDevice(bool enableDebugLayer) {
                                              sizeof(shaderModel))) ||
         shaderModel.HighestShaderModel < D3D_SHADER_MODEL_6_6) {
         HM_LOG_ERROR("シェーダモデル 6.6 に対応していません");
+        return false;
+    }
+
+    // bindless（ResourceDescriptorHeap）は Resource Binding Tier 3 を前提とする。
+    D3D12_FEATURE_DATA_D3D12_OPTIONS options = {};
+    if (FAILED(m_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options,
+                                             sizeof(options))) ||
+        options.ResourceBindingTier < D3D12_RESOURCE_BINDING_TIER_3) {
+        HM_LOG_ERROR("Resource Binding Tier 3 に対応していません（bindless に必要）");
         return false;
     }
 
@@ -254,6 +283,10 @@ ID3D12GraphicsCommandList* Device::BeginFrame(const float clearColor[4]) {
         ::WaitForSingleObjectEx(m_fenceEvent, INFINITE, FALSE);
     }
 
+    // このスロットの処理は完了しているので、解放待ちを回収してリングを巻き戻す。
+    m_deletionQueue.Collect(m_fence->GetCompletedValue());
+    m_uploadRing.BeginFrame(m_frameIndex);
+
     if (!HM_CHECK_HR(m_commandAllocators[m_frameIndex]->Reset())) {
         return nullptr;
     }
@@ -353,9 +386,13 @@ void Device::Shutdown() {
     m_initialized = false;
     m_frameOpen = false;
 
+    m_deletionQueue.Flush();
+    m_uploadRing.Destroy();
     ReleaseBackBuffers();
     m_rtvHeap.Destroy();
     m_srvHeap.Destroy();
+    // アロケータは、そこから確保した全リソースを解放したあとで破棄する。
+    m_allocator.Destroy();
     m_commandList.Reset();
     for (auto& allocator : m_commandAllocators) {
         allocator.Reset();

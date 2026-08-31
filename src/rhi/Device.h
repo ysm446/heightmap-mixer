@@ -1,7 +1,10 @@
 #pragma once
 
 #include "rhi/Common.h"
+#include "rhi/DeletionQueue.h"
 #include "rhi/DescriptorHeap.h"
+#include "rhi/GpuResource.h"
+#include "rhi/UploadRing.h"
 
 namespace hm::rhi {
 
@@ -31,6 +34,15 @@ public:
     ID3D12Device* GetDevice() const { return m_device.Get(); }
     ID3D12CommandQueue* GetCommandQueue() const { return m_commandQueue.Get(); }
     DescriptorHeap& SrvHeap() { return m_srvHeap; }
+    ResourceAllocator& Allocator() { return m_allocator; }
+    UploadRing& Upload() { return m_uploadRing; }
+
+    // GPU がまだ参照している可能性のあるオブジェクトを、
+    // 現在記録中のフレームが完了してから解放する。直接 Reset しないこと。
+    void Defer(ComPtr<IUnknown> object);
+
+    uint64_t CompletedFenceValue() const;
+    size_t PendingDeletionCount() const { return m_deletionQueue.PendingCount(); }
     uint32_t FrameIndex() const { return m_frameIndex; }
     uint32_t Width() const { return m_width; }
     uint32_t Height() const { return m_height; }
@@ -56,6 +68,9 @@ private:
 
     DescriptorHeap m_rtvHeap;
     DescriptorHeap m_srvHeap;
+    ResourceAllocator m_allocator;
+    UploadRing m_uploadRing;
+    DeletionQueue m_deletionQueue;
 
     ComPtr<ID3D12Fence> m_fence;
     HANDLE m_fenceEvent = nullptr;

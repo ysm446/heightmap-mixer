@@ -8,6 +8,8 @@
     "directx-headers",
     "directx12-agility",
     "winpixevent",
+    "d3d12-memory-allocator",
+    "directx-dxc",
     {
       "name": "imgui",
       "features": [
