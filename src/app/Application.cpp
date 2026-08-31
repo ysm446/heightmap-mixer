@@ -2125,26 +2125,32 @@ void Application::DrawTextureRemoveModal() {
     }
 
     const compositor::LibraryTexture* entry = m_textureLibrary.Find(m_textureRemoveCandidate);
-    ImGui::Text("「%s」は %zu か所で使われています。",
-                (entry != nullptr) ? entry->name.c_str() : "?", m_textureRemoveUsers.size());
-    ImGui::Spacing();
+    const char* const name = (entry != nullptr) ? entry->name.c_str() : "?";
 
-    // 使用箇所。多いときは枠を作ってスクロールさせる（窓が縦に伸びきらないように）。
-    constexpr size_t kMaxRowsWithoutScroll = 8;
-    const bool scroll = m_textureRemoveUsers.size() > kMaxRowsWithoutScroll;
-    const float listHeight =
-        scroll ? ImGui::GetTextLineHeightWithSpacing() * kMaxRowsWithoutScroll : 0.0f;
-    if (ImGui::BeginChild("textureRemoveUsers",
-                          ImVec2(ui::Scaled(360.0f), listHeight),
-                          ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY)) {
-        for (const std::string& user : m_textureRemoveUsers) {
-            ImGui::BulletText("%s", user.c_str());
+    if (m_textureRemoveUsers.empty()) {
+        ImGui::Text("「%s」を削除します。", name);
+        ImGui::Spacing();
+        ui::HintText("どこからも使われていない。画像ファイルは消えない");
+    } else {
+        ImGui::Text("「%s」は %zu か所で使われています。", name, m_textureRemoveUsers.size());
+        ImGui::Spacing();
+
+        // 使用箇所。多いときは枠を作ってスクロールさせる（窓が縦に伸びきらないように）。
+        constexpr size_t kMaxRowsWithoutScroll = 8;
+        const bool scroll = m_textureRemoveUsers.size() > kMaxRowsWithoutScroll;
+        const float listHeight =
+            scroll ? ImGui::GetTextLineHeightWithSpacing() * kMaxRowsWithoutScroll : 0.0f;
+        if (ImGui::BeginChild("textureRemoveUsers", ImVec2(ui::Scaled(360.0f), listHeight),
+                              ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY)) {
+            for (const std::string& user : m_textureRemoveUsers) {
+                ImGui::BulletText("%s", user.c_str());
+            }
         }
-    }
-    ImGui::EndChild();
+        ImGui::EndChild();
 
-    ImGui::Spacing();
-    ui::HintText("削除すると、これらの割り当ては「なし」に戻る");
+        ImGui::Spacing();
+        ui::HintText("削除すると、これらの割り当ては「なし」に戻る");
+    }
     ImGui::Spacing();
 
     const auto close = [this]() {
@@ -2189,20 +2195,22 @@ void Application::DrawTextureLibraryPanel() {
     }
     ImGui::SameLine();
     ImGui::BeginDisabled(textureCount == 0);
-    if (ui::Button("削除")) {
-        const compositor::TextureId target = entries[static_cast<size_t>(m_selectedTexture)].id;
-        // マテリアルやレイヤーから参照されているなら、どこが壊れるかを見せて確認する。
-        // 参照が無ければ、いちいち止めない。
-        m_textureRemoveUsers = CollectTextureUsers(target);
-        if (m_textureRemoveUsers.empty()) {
-            // 破棄はディスクリプタを返すので、フレームの外で処理する。
-            m_pendingTextureRemove = target;
-        } else {
-            m_textureRemoveCandidate = target;
-            ImGui::OpenPopup(kTextureRemoveModalTitle);
-        }
-    }
+    const bool deletePressed = ui::Button("削除");
     ImGui::EndDisabled();
+
+    // Del キーでも消せる。**このパネルにフォーカスがあるときだけ**効かせ、
+    // 名前を打っている最中は無視する。
+    const bool deleteKey = textureCount > 0 && !ImGui::GetIO().WantTextInput &&
+                           ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+                           ImGui::IsKeyPressed(ImGuiKey_Delete, false);
+
+    if (deletePressed || deleteKey) {
+        // **参照が無くても必ず確認する。** テクスチャの削除は取り消せないため
+        // （アンドゥの対象はレイヤーとマテリアルだけ）。
+        m_textureRemoveCandidate = entries[static_cast<size_t>(m_selectedTexture)].id;
+        m_textureRemoveUsers = CollectTextureUsers(m_textureRemoveCandidate);
+        ImGui::OpenPopup(kTextureRemoveModalTitle);
+    }
     DrawTextureRemoveModal();
 
     // ビューポートの下の横長の帯に置くことを前提に、一覧と詳細を左右に分ける。
