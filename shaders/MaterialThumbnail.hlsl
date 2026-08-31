@@ -133,16 +133,30 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     const float clampedRoughness = clamp(roughness, 0.05f, 1.0f);
     const float3 viewDirection = float3(0.0f, 0.0f, 1.0f);
-    const float3 lightDirection = normalize(float3(-0.45f, 0.55f, 0.70f));
+
+    // --- 2 灯で照らす ------------------------------------------------------
+    //
+    // 1 灯だけだと陰側がのっぺりして、素材の凹凸が半分しか読めない。
+    // 素材ライブラリのサムネイルは**見比べるためのもの**なので、
+    // 形と粗さが一目で分かるように 2 方向から当てる。
+    //
+    //   キー  : 左上手前。主役。暖色寄りの白
+    //   フィル: 右奥。**カメラより奥に置く**ことで、右の輪郭が光って
+    //           背景からシルエットが分離する。寒色寄りにしてキーと差をつける
+    const float3 keyDirection = normalize(float3(-0.45f, 0.55f, 0.70f));
+    const float3 fillDirection = normalize(float3(0.75f, 0.25f, -0.30f));
 
     // 一覧の中で明るさが揃うよう、露出は掛けずに正規化した強さで直接シェーディングする。
-    float3 radiance = ShadeDirectionalLight(normal, viewDirection, lightDirection,
+    float3 radiance = ShadeDirectionalLight(normal, viewDirection, keyDirection,
                                             float3(1.0f, 0.98f, 0.95f), 2.6f, diffuseColor, f0,
                                             clampedRoughness);
+    radiance += ShadeDirectionalLight(normal, viewDirection, fillDirection,
+                                      float3(0.72f, 0.80f, 1.0f), 1.1f, diffuseColor, f0,
+                                      clampedRoughness);
 
     // 環境光の代わり。上からの弱い半球光で、影側が真っ黒にならないようにする。
     const float hemisphere = saturate(normal.y * 0.5f + 0.5f);
-    radiance += diffuseColor * lerp(0.06f, 0.24f, hemisphere) * ambientOcclusion;
+    radiance += diffuseColor * lerp(0.05f, 0.20f, hemisphere) * ambientOcclusion;
 
     // 輪郭は「縁を暗く落とす」のではなくアルファで抜く。
     // 落とすと、素材の色によっては濃いグレーの輪郭として見えてしまう。
