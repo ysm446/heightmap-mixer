@@ -103,6 +103,8 @@ private:
     void DrawTextureRemoveModal();
     // レイヤー一覧。ドラッグで並べ替える。
     void DrawLayerList();
+    // レイヤーを 1 枚消す。ツールバーのボタンと一覧の削除アイコンの共通の入口。
+    void RemoveLayer(int index);
     // ペイントの対象になるレイヤー。ペイントモードで、選択中のレイヤーが
     // ペイントマスクを持つときだけ返す。
     compositor::MaterialLayer* CurrentPaintLayer();

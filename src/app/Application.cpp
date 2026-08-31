@@ -1316,14 +1316,42 @@ void Application::DrawLightingPanel() {
     ImGui::End();
 }
 
+// レイヤーを 1 枚消す。ツールバーのボタンと一覧の削除アイコンの共通の入口。
+//
+// 入口を分けると、ペイントマスクの後始末のような手当てが片方に付き忘れる。
+void Application::RemoveLayer(int index) {
+    std::vector<compositor::MaterialLayer>& layers = m_materialStack.Layers();
+    const auto layerCount = static_cast<int>(layers.size());
+    // 下地が無くなると合成の起点が消えるので、最後の 1 枚は残す。
+    if (index < 0 || index >= layerCount || layerCount <= 1) {
+        return;
+    }
+
+    // レイヤーが持っていたペイントマスクも破棄する。残すと参照されないまま
+    // VRAM を占めたうえ、保存時にも書き出されない。
+    if (const compositor::PaintMaskId paint = layers[static_cast<size_t>(index)].mask.paint;
+        paint != compositor::kNoPaintMask) {
+        m_paintMasks.Remove(m_device, paint);
+    }
+
+    m_materialStack.Remove(static_cast<size_t>(index));
+
+    // 消した行より後ろを選んでいたら 1 つ手前へ詰める。
+    if (m_selectedLayer > index) {
+        --m_selectedLayer;
+    }
+    m_selectedLayer = std::clamp(m_selectedLayer, 0, static_cast<int>(layers.size()) - 1);
+}
+
 // レイヤー一覧。一番上が最前面。ドラッグで並べ替える。
 void Application::DrawLayerList() {
     std::vector<compositor::MaterialLayer>& layers = m_materialStack.Layers();
     const auto layerCount = static_cast<int>(layers.size());
 
-    // ドラッグの結果はループの外で反映する。走査中に並びを変えない。
+    // ドラッグと削除の結果はループの外で反映する。走査中に並びを変えない。
     int dropFrom = -1;
     int dropTo = -1;
+    int deleteIndex = -1;
 
     if (ImGui::BeginChild("layerList", ImVec2(0.0f, ui::Scaled(150.0f)),
                           ImGuiChildFlags_Borders)) {
@@ -1335,7 +1363,15 @@ void Application::DrawLayerList() {
                 m_materialStack.MarkDirty();
             }
             ImGui::SameLine();
-            if (ImGui::Selectable(layer.name.c_str(), m_selectedLayer == i)) {
+
+            // 行の右端に削除アイコンを置く。名前はその手前までに収める。
+            const float deleteSize = ImGui::GetFrameHeight();
+            const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
+            const float nameWidth = std::max(ui::Scaled(40.0f),
+                                             ImGui::GetContentRegionAvail().x - deleteSize - gap);
+
+            if (ImGui::Selectable(layer.name.c_str(), m_selectedLayer == i, 0,
+                                  ImVec2(nameWidth, 0.0f))) {
                 m_selectedLayer = i;
             }
 
@@ -1354,6 +1390,20 @@ void Application::DrawLayerList() {
                 ImGui::EndDragDropTarget();
             }
 
+            // 最後の 1 枚は消せない。下地が無くなると合成の起点が消えるため。
+            ImGui::SameLine(0.0f, gap);
+            ImGui::BeginDisabled(layerCount <= 1);
+            // 記号は `×`（U+00D7）。`✕`(U+2715) のような装飾的な字は
+            // Yu Gothic に無く、`?` に化ける。
+            if (ImGui::Button("×", ImVec2(deleteSize, deleteSize))) {
+                deleteIndex = i;
+            }
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip((layerCount > 1) ? "このレイヤーを削除"
+                                                   : "最後の 1 枚は削除できない");
+            }
+
             ImGui::PopID();
         }
     }
@@ -1362,6 +1412,9 @@ void Application::DrawLayerList() {
     if (dropFrom >= 0 && dropTo >= 0 && dropFrom != dropTo) {
         m_materialStack.MoveTo(static_cast<size_t>(dropFrom), static_cast<size_t>(dropTo));
         m_selectedLayer = dropTo;
+    }
+    if (deleteIndex >= 0) {
+        RemoveLayer(deleteIndex);
     }
 }
 
@@ -1397,15 +1450,11 @@ void Application::DrawLayerPanel() {
         m_selectedLayer = static_cast<int>(layers.size()) - 1;
     }
     ImGui::SameLine();
-    if (ui::Button("削除") && layerCount > 1) {
-        const compositor::PaintMaskId paint =
-            layers[static_cast<size_t>(m_selectedLayer)].mask.paint;
-        if (paint != compositor::kNoPaintMask) {
-            m_paintMasks.Remove(m_device, paint);
-        }
-        m_materialStack.Remove(static_cast<size_t>(m_selectedLayer));
-        m_selectedLayer = std::max(0, m_selectedLayer - 1);
+    ImGui::BeginDisabled(layerCount <= 1);
+    if (ui::Button("削除")) {
+        RemoveLayer(m_selectedLayer);
     }
+    ImGui::EndDisabled();
 
     DrawLayerList();
     ui::HintText("上が最前面。ドラッグで並べ替え");
