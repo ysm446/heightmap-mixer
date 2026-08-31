@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-01 08:02
+更新日時: 2026-09-01 08:11
 
 ## 現在の状況
 
@@ -26,6 +26,17 @@ UI はグレー基調に整理し、ルールを [design/design-guide.md](../des
 
 ## 完了済み
 
+- 2026-09-01 08:11 — **レビューで挙がった改善候補の残りを全て消化。**
+  - 共通ヘルパ（`DispatchCount` / `TransitionIfNeeded` / `TransitionMip`）を
+    `rhi/GpuResource.h` へ集約。`ReleaseTexture` ラッパは削除して
+    `Device::DeferRelease` を直接呼ぶ。
+  - パスの UTF-8 変換を `core/PathUtf8.h` へ一本化
+    （表示用 `ToUtf8Display` / 保存用 `ToUtf8Portable` / `FromUtf8`）。
+  - プレビュー設定の既定値を `renderer::kPreviewDefaults` へ集約
+    （メンバ初期化子・UI マーカー・読み込みフォールバックの 3 か所を統一）。
+  - `MeshPbr` の VS / DS ディスプレイスメントを共通関数 `ApplyDisplacement`
+    （ワールド空間）へ統一。[design/rendering.md](../design/rendering.md) も更新。
+
 - 2026-09-01 08:02 — **ラフネスの下限を 0.045 に統一。**
   `Brdf.hlsli` の `kMinPerceptualRoughness` に集約し、直接光 / サムネイル /
   BRDF LUT で同じ値を使う。根拠は [design/rendering.md](../design/rendering.md)
@@ -49,10 +60,7 @@ UI はグレー基調に整理し、ルールを [design/design-guide.md](../des
   詳細は [changelog](../changelog.md) の同日時の項を参照。
   - ディスクリプタの遅延解放（`Device::DeferRelease`）を導入し、
     手動の `WaitForGpu` に頼る解放を全廃した。
-  - 未修正の改善候補（提案のみ）:
-    `DispatchCount` / `TransitionIfNeeded` などの共通ヘルパの rhi への集約、
-    `ToUtf8` / `FromUtf8` の一本化（core へ）、プレビュー既定値の構造体化、
-    `MeshPbr` の VS / DS ディスプレイスメント式の共通化。
+  - 上記の改善候補は全て対応済み（後続の項を参照）。
 
 - 2026-08-31 05:46 — 方針の合意と [goals.md](goals.md) / [plan.md](plan.md) の作成。
   - 合成モデル: レイヤースタック（Quixel Mixer 風）

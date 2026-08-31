@@ -141,27 +141,35 @@ float SampleShadow(float3 worldPosition, float nDotL, uint shadowIndex, float te
     return visibility / 9.0f;
 }
 
+// --- ディスプレイスメント -------------------------------------------------
+// 合成した Height を読み、ワールド空間の法線方向へ押し引きする。
+// **VsMain と DsMain の両方がこの関数を通る。** 別々の式を書くと、
+// モデル行列を入れたときにテセレーションの ON / OFF で形が変わってしまう。
+// 頂点 / ドメインシェーダには微分が無いので SampleLevel を使う。
+float3 ApplyDisplacement(float3 worldPosition, float3 worldNormal, float2 uv)
+{
+    if (g_mesh.useMaterialTextures == 0u || g_mesh.displacementScale == 0.0f)
+    {
+        return worldPosition;
+    }
+    Texture2D<float> heightMap = ResourceDescriptorHeap[g_mesh.materialHeightIndex];
+    const float height =
+        heightMap.SampleLevel(g_samplerLinearWrap, uv * g_mesh.materialUvScale, 0.0f);
+    // 高さの中央（0.5）を基準にする。全体が膨らまないようにするため。
+    return worldPosition + worldNormal * ((height - 0.5f) * g_mesh.displacementScale);
+}
+
 VsOutput VsMain(VsInput input)
 {
     VsOutput output;
 
-    // --- ディスプレイスメント ---------------------------------------------
-    // 合成した Height を頂点で読み、法線方向へ押し引きする。
-    // 頂点シェーダには微分が無いので SampleLevel を使う。
-    float3 localPosition = input.position;
-    if (g_mesh.useMaterialTextures != 0u && g_mesh.displacementScale != 0.0f)
-    {
-        Texture2D<float> heightMap = ResourceDescriptorHeap[g_mesh.materialHeightIndex];
-        const float height =
-            heightMap.SampleLevel(g_samplerLinearWrap, input.uv * g_mesh.materialUvScale, 0.0f);
-        // 高さの中央（0.5）を基準にする。全体が膨らまないようにするため。
-        localPosition += input.normal * ((height - 0.5f) * g_mesh.displacementScale);
-    }
+    const float3 worldNormal = mul((float3x3)g_mesh.normalMatrix, input.normal);
+    float3 worldPosition = mul(g_mesh.model, float4(input.position, 1.0f)).xyz;
+    worldPosition = ApplyDisplacement(worldPosition, normalize(worldNormal), input.uv);
 
-    const float4 worldPosition = mul(g_mesh.model, float4(localPosition, 1.0f));
-    output.worldPosition = worldPosition.xyz;
-    output.clipPosition = mul(g_mesh.viewProjection, worldPosition);
-    output.worldNormal = mul((float3x3)g_mesh.normalMatrix, input.normal);
+    output.worldPosition = worldPosition;
+    output.clipPosition = mul(g_mesh.viewProjection, float4(worldPosition, 1.0f));
+    output.worldNormal = worldNormal;
     output.worldTangent = mul((float3x3)g_mesh.model, input.tangent.xyz);
     output.tangentSign = input.tangent.w;
     output.uv = input.uv;
@@ -261,14 +269,8 @@ VsOutput DsMain(HsPatchConstants patchConstants, float3 barycentric : SV_DomainL
     const float2 uv = patch[0].uv * barycentric.x + patch[1].uv * barycentric.y +
                       patch[2].uv * barycentric.z;
 
-    // 分割後の点で高さを引いて押し出す。頂点シェーダ側と同じ式にすること。
-    if (g_mesh.useMaterialTextures != 0u && g_mesh.displacementScale != 0.0f)
-    {
-        Texture2D<float> heightMap = ResourceDescriptorHeap[g_mesh.materialHeightIndex];
-        const float height =
-            heightMap.SampleLevel(g_samplerLinearWrap, uv * g_mesh.materialUvScale, 0.0f);
-        worldPosition += worldNormal * ((height - 0.5f) * g_mesh.displacementScale);
-    }
+    // 分割後の点で高さを引いて押し出す。式は VsMain と共通の ApplyDisplacement。
+    worldPosition = ApplyDisplacement(worldPosition, worldNormal, uv);
 
     output.worldPosition = worldPosition;
     output.clipPosition = mul(g_mesh.viewProjection, float4(worldPosition, 1.0f));

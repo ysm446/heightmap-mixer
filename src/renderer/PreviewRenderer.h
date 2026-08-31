@@ -74,6 +74,28 @@ struct MaterialSettings {
 };
 
 // シーンを HDR で描き、露出とトーンマップを通して表示用テクスチャへ書き出す。
+// プレビュー設定の既定値。**メンバ初期化子・UI の既定値マーカー・
+// プロジェクト読み込みのフォールバックの 3 か所で必ずこれを使う。**
+// 数値を直接書くと、片方だけ変えたときに「既定値マーカーが点いたまま」
+// 「読み込みで別の値に化ける」という食い違いが起きる。
+struct PreviewDefaults {
+    PreviewShape shape = PreviewShape::Sphere;
+    TonemapMode tonemap = TonemapMode::Aces;
+    bool useMaterialTextures = true;
+    float materialUvScale = 1.0f;
+    float displacementScale = 0.0f;
+    bool tessellationEnabled = false;
+    float tessellationFactor = 8.0f;
+    uint32_t materialResolution = 1024;
+    float iblIntensity = 1.0f;
+    // 晴天の空はおよそ 4000-15000 cd/m^2。SkySettings::intensity と揃えてある。
+    float hdriSkyLuminance = 12000.0f;
+    bool showSkybox = true;
+    bool skyboxBlur = false;
+    bool shadowEnabled = true;
+};
+inline constexpr PreviewDefaults kPreviewDefaults{};
+
 class PreviewRenderer {
 public:
     bool Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache);
@@ -173,23 +195,22 @@ private:
     Environment m_environment;
     compositor::MaterialEvaluator m_evaluator;
     SkySettings m_sky;
-    PreviewShape m_shape = PreviewShape::Sphere;
-    TonemapMode m_tonemap = TonemapMode::Aces;
+    PreviewShape m_shape = kPreviewDefaults.shape;
+    TonemapMode m_tonemap = kPreviewDefaults.tonemap;
     DebugView m_debugView = DebugView::Shaded;
-    float m_iblIntensity = 1.0f;
-    // 晴天の空はおよそ 4000-15000 cd/m^2。SkySettings::intensity と揃えてある。
-    float m_hdriSkyLuminance = 12000.0f;
+    float m_iblIntensity = kPreviewDefaults.iblIntensity;
+    float m_hdriSkyLuminance = kPreviewDefaults.hdriSkyLuminance;
     bool m_hdriLuminanceRebuildRequested = false;
-    float m_materialUvScale = 1.0f;
-    float m_displacementScale = 0.0f;
-    uint32_t m_materialResolution = 1024;
-    uint32_t m_requestedMaterialResolution = 1024;
-    bool m_useMaterialTextures = true;
-    bool m_showSkybox = true;
-    bool m_skyboxBlur = false;
-    bool m_shadowEnabled = true;
-    bool m_tessellationEnabled = false;
-    float m_tessellationFactor = 8.0f;
+    float m_materialUvScale = kPreviewDefaults.materialUvScale;
+    float m_displacementScale = kPreviewDefaults.displacementScale;
+    uint32_t m_materialResolution = kPreviewDefaults.materialResolution;
+    uint32_t m_requestedMaterialResolution = kPreviewDefaults.materialResolution;
+    bool m_useMaterialTextures = kPreviewDefaults.useMaterialTextures;
+    bool m_showSkybox = kPreviewDefaults.showSkybox;
+    bool m_skyboxBlur = kPreviewDefaults.skyboxBlur;
+    bool m_shadowEnabled = kPreviewDefaults.shadowEnabled;
+    bool m_tessellationEnabled = kPreviewDefaults.tessellationEnabled;
+    float m_tessellationFactor = kPreviewDefaults.tessellationFactor;
     bool m_skyRebuildRequested = false;
     std::filesystem::path m_pendingHdrPath;
     std::filesystem::path m_hdriPath;

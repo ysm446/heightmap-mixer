@@ -116,17 +116,6 @@ struct TonemapConstants {
     uint32_t debugView;
 };
 
-void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, rhi::GpuTexture& texture,
-                        D3D12_RESOURCE_STATES newState) {
-    if (texture.state == newState) {
-        return;
-    }
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(texture.resource.Get(),
-                                                              texture.state, newState);
-    commandList->ResourceBarrier(1, &barrier);
-    texture.state = newState;
-}
-
 }  // namespace
 
 float ExposureSettings::Ev100() const {
@@ -709,9 +698,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     commandList->SetComputeRoot32BitConstants(0, sizeof(tonemapConstants) / sizeof(uint32_t),
                                               &tonemapConstants, 0);
 
-    constexpr uint32_t kGroupSize = 8;
-    commandList->Dispatch((m_width + kGroupSize - 1) / kGroupSize,
-                          (m_height + kGroupSize - 1) / kGroupSize, 1);
+    commandList->Dispatch(rhi::DispatchCount(m_width), rhi::DispatchCount(m_height), 1);
 
     // ImGui から SRV として読むため、ピクセルシェーダ可視の状態へ移す。
     TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);

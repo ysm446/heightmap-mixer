@@ -7,6 +7,7 @@
 // 使うため、関数と変数は inline にしてある。
 
 #include "compositor/MaterialLayer.h"
+#include "core/PathUtf8.h"
 #include "compositor/MaterialLibrary.h"
 #include "compositor/PaintMask.h"
 #include "compositor/TextureLibrary.h"
@@ -24,16 +25,6 @@
 #include <string>
 
 namespace mm {
-
-// ImGui へ渡す文字列は UTF-8。path::string() はロケール依存なので使わない。
-inline std::string ToUtf8(const std::filesystem::path& path) {
-    const std::u8string text = path.u8string();
-    return std::string(text.begin(), text.end());
-}
-
-inline std::filesystem::path FromUtf8(const std::string& text) {
-    return std::filesystem::path(std::u8string(text.begin(), text.end()));
-}
 
 inline float RadiansToDegrees(float radians) {
     return radians * (180.0f / 3.14159265358979323846f);

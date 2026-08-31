@@ -13,7 +13,7 @@ using namespace DirectX;
 namespace mm::compositor {
 namespace {
 
-constexpr uint32_t kGroupSize = 8;
+using rhi::DispatchCount;
 
 constexpr DXGI_FORMAT kBaseColorFormat = DXGI_FORMAT_R11G11B10_FLOAT;
 constexpr DXGI_FORMAT kNormalFormat = DXGI_FORMAT_R16G16_FLOAT;
@@ -63,10 +63,6 @@ struct MaskConstants {
     float pad0[2];
 };
 
-uint32_t DispatchCount(uint32_t threads) {
-    return (threads + kGroupSize - 1) / kGroupSize;
-}
-
 bool CreateChannelTexture(rhi::Device& device, uint32_t resolution, DXGI_FORMAT format,
                           const wchar_t* debugName, rhi::GpuTexture& outTexture) {
     rhi::TextureDesc desc;
@@ -78,22 +74,6 @@ bool CreateChannelTexture(rhi::Device& device, uint32_t resolution, DXGI_FORMAT 
     desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     desc.debugName = debugName;
     return device.Allocator().CreateTexture2D(desc, outTexture);
-}
-
-void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, rhi::GpuTexture& texture,
-                        D3D12_RESOURCE_STATES newState) {
-    if (texture.state == newState) {
-        return;
-    }
-    const auto barrier =
-        CD3DX12_RESOURCE_BARRIER::Transition(texture.resource.Get(), texture.state, newState);
-    commandList->ResourceBarrier(1, &barrier);
-    texture.state = newState;
-}
-
-void ReleaseTexture(rhi::Device& device, rhi::GpuTexture& texture) {
-    // ディスクリプタも含めてフレーム同期後に解放する。GPU 待機は不要。
-    device.DeferRelease(texture);
 }
 
 }  // namespace
@@ -122,7 +102,7 @@ bool MaterialEvaluator::Create(rhi::Device& device, uint32_t resolution) {
 void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseTextures(device);
     for (rhi::GpuTexture& thumbnail : m_maskThumbnails) {
-        ReleaseTexture(device, thumbnail);
+        device.DeferRelease(thumbnail);
     }
     m_maskThumbnails.clear();
     m_resolution = 0;
@@ -133,7 +113,7 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
 void MaterialEvaluator::EnsureMaskThumbnails(rhi::Device& device, size_t layerCount) {
     // 減ったぶんは捨てる。GPU がまだ見ているかもしれないので Defer を通す。
     while (m_maskThumbnails.size() > layerCount) {
-        ReleaseTexture(device, m_maskThumbnails.back());
+        device.DeferRelease(m_maskThumbnails.back());
         m_maskThumbnails.pop_back();
     }
 
@@ -164,11 +144,11 @@ D3D12_GPU_DESCRIPTOR_HANDLE MaterialEvaluator::MaskThumbnailHandle(size_t layerI
 }
 
 void MaterialEvaluator::ReleaseTextures(rhi::Device& device) {
-    ReleaseTexture(device, m_textures.baseColor);
-    ReleaseTexture(device, m_textures.normal);
-    ReleaseTexture(device, m_textures.surface);
-    ReleaseTexture(device, m_textures.height);
-    ReleaseTexture(device, m_textures.maskScratch);
+    device.DeferRelease(m_textures.baseColor);
+    device.DeferRelease(m_textures.normal);
+    device.DeferRelease(m_textures.surface);
+    device.DeferRelease(m_textures.height);
+    device.DeferRelease(m_textures.maskScratch);
 }
 
 bool MaterialEvaluator::Resize(rhi::Device& device, uint32_t resolution) {

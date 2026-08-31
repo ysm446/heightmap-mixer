@@ -108,6 +108,7 @@ set(mm_sources
     src/core/FileDialog.h
     src/core/ImageIo.cpp
     src/core/ImageIo.h
+    src/core/PathUtf8.h
     src/core/Window.cpp
     src/core/Window.h
     src/io/AppSettings.cpp

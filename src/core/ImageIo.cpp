@@ -1,5 +1,7 @@
 #include "core/ImageIo.h"
 
+#include "core/PathUtf8.h"
+
 #include "core/Log.h"
 
 #include <algorithm>
@@ -25,12 +27,6 @@ namespace {
 // ロケール依存で、ACP に無い文字を含むパスが壊れる（ProjectIo 側の方針と同じ）。
 // ファイルはワイドパス対応の iostream で読み書きし、画像ライブラリには
 // メモリ経由で渡す。
-
-// ログ表示用の UTF-8 変換。
-std::string PathForLog(const std::filesystem::path& path) {
-    const std::u8string text = path.u8string();
-    return std::string(text.begin(), text.end());
-}
 
 std::vector<uint8_t> ReadFileBytes(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary | std::ios::ate);
@@ -70,18 +66,18 @@ bool SavePng(const std::filesystem::path& path, uint32_t width, uint32_t height,
         ::stbi_write_png_to_mem(pixels, static_cast<int>(rowPitch), static_cast<int>(width),
                                 static_cast<int>(height), channels, &pngSize);
     if (png == nullptr || pngSize <= 0) {
-        MM_LOG_ERROR("PNG を書き出せません: %s", PathForLog(path).c_str());
+        MM_LOG_ERROR("PNG を書き出せません: %s", ToUtf8Display(path).c_str());
         ::free(png);
         return false;
     }
     const bool written = WriteFileBytes(path, png, static_cast<size_t>(pngSize));
     ::free(png);
     if (!written) {
-        MM_LOG_ERROR("PNG を書き出せません: %s", PathForLog(path).c_str());
+        MM_LOG_ERROR("PNG を書き出せません: %s", ToUtf8Display(path).c_str());
         return false;
     }
 
-    MM_LOG_INFO("PNG を書き出しました: %s (%u x %u, %d ch)", PathForLog(path).c_str(), width,
+    MM_LOG_INFO("PNG を書き出しました: %s (%u x %u, %d ch)", ToUtf8Display(path).c_str(), width,
                 height, channels);
     return true;
 }
@@ -91,7 +87,7 @@ bool SavePng(const std::filesystem::path& path, uint32_t width, uint32_t height,
 bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
     outImage = LdrImage{};
 
-    const std::string utf8Path = PathForLog(path);
+    const std::string utf8Path = ToUtf8Display(path);
     const std::vector<uint8_t> bytes = ReadFileBytes(path);
     if (bytes.empty()) {
         MM_LOG_ERROR("画像を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
@@ -152,7 +148,7 @@ float MedianSkyLuminance(const HdrImage& image) {
 bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {
     outImage = HdrImage{};
 
-    const std::string utf8Path = PathForLog(path);
+    const std::string utf8Path = ToUtf8Display(path);
     const std::vector<uint8_t> bytes = ReadFileBytes(path);
     if (bytes.empty()) {
         MM_LOG_ERROR("HDR 画像を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
@@ -182,7 +178,7 @@ bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {
 bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage) {
     outImage = HdrImage{};
 
-    const std::string utf8Path = PathForLog(path);
+    const std::string utf8Path = ToUtf8Display(path);
     const std::vector<uint8_t> bytes = ReadFileBytes(path);
     if (bytes.empty()) {
         MM_LOG_ERROR("EXR を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());

@@ -27,8 +27,6 @@ constexpr DXGI_FORMAT kEquirectFormat = DXGI_FORMAT_R32G32B32A32_FLOAT;
 constexpr DXGI_FORMAT kRadianceFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 constexpr DXGI_FORMAT kBrdfLutFormat = DXGI_FORMAT_R16G16_FLOAT;
 
-constexpr uint32_t kGroupSize = 8;
-
 // これらは PS（メッシュ・スカイボックス）と CS（プリフィルタ）の両方から読むため、
 // 読み取り状態をまとめて指定する。
 constexpr D3D12_RESOURCE_STATES kShaderReadState =
@@ -47,41 +45,11 @@ uint32_t MipCountFor(uint32_t size) {
     return count;
 }
 
-uint32_t DispatchCount(uint32_t threads) {
-    return (threads + kGroupSize - 1) / kGroupSize;
-}
-
-// ミップ mip の全スライスをまとめて遷移させる。
-void TransitionMip(ID3D12GraphicsCommandList* commandList, const rhi::GpuTexture& texture,
-                   uint32_t mip, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
-    D3D12_RESOURCE_BARRIER barriers[6] = {};
-    const uint32_t sliceCount = std::min<uint32_t>(texture.arraySize, 6);
-    for (uint32_t slice = 0; slice < sliceCount; ++slice) {
-        barriers[slice] = CD3DX12_RESOURCE_BARRIER::Transition(
-            texture.resource.Get(), before, after, texture.SubresourceIndex(mip, slice));
-    }
-    commandList->ResourceBarrier(sliceCount, barriers);
-}
-
-void TransitionAll(ID3D12GraphicsCommandList* commandList, rhi::GpuTexture& texture,
-                   D3D12_RESOURCE_STATES after) {
-    if (texture.state == after) {
-        return;
-    }
-    const auto barrier =
-        CD3DX12_RESOURCE_BARRIER::Transition(texture.resource.Get(), texture.state, after);
-    commandList->ResourceBarrier(1, &barrier);
-    texture.state = after;
-}
+using rhi::DispatchCount;
 
 void InsertUavBarrier(ID3D12GraphicsCommandList* commandList, const rhi::GpuTexture& texture) {
     const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(texture.resource.Get());
     commandList->ResourceBarrier(1, &barrier);
-}
-
-void ReleaseTexture(rhi::Device& device, rhi::GpuTexture& texture) {
-    // ディスクリプタも含めてフレーム同期後に解放する。GPU 待機は不要。
-    device.DeferRelease(texture);
 }
 
 }  // namespace
@@ -107,15 +75,15 @@ bool Environment::Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCa
 
 void Environment::Shutdown(rhi::Device& device) {
     ReleaseTargets(device);
-    ReleaseTexture(device, m_brdfLut);
+    device.DeferRelease(m_brdfLut);
     m_ready = false;
 }
 
 void Environment::ReleaseTargets(rhi::Device& device) {
-    ReleaseTexture(device, m_equirect);
-    ReleaseTexture(device, m_cube);
-    ReleaseTexture(device, m_irradiance);
-    ReleaseTexture(device, m_prefiltered);
+    device.DeferRelease(m_equirect);
+    device.DeferRelease(m_cube);
+    device.DeferRelease(m_irradiance);
+    device.DeferRelease(m_prefiltered);
 }
 
 bool Environment::BuildBrdfLut(rhi::Device& device, rhi::PipelineCache& pipelineCache) {
@@ -138,7 +106,7 @@ bool Environment::BuildBrdfLut(rhi::Device& device, rhi::PipelineCache& pipeline
         commandList->SetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t),
                                                   &constants, 0);
         commandList->Dispatch(DispatchCount(kBrdfLutSize), DispatchCount(kBrdfLutSize), 1);
-        TransitionAll(commandList, m_brdfLut, kShaderReadState);
+        TransitionIfNeeded(commandList, m_brdfLut, kShaderReadState);
         PIXEndEvent(commandList);
     });
     return executed;
@@ -243,12 +211,12 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
             }
             m_cube.state = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
         }
-        TransitionAll(commandList, m_irradiance, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        TransitionAll(commandList, m_prefiltered, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        TransitionIfNeeded(commandList, m_irradiance, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        TransitionIfNeeded(commandList, m_prefiltered, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
         // --- equirect → キューブ ミップ 0 ---------------------------------
         PIXBeginEvent(commandList, PIX_COLOR(120, 180, 255), "EnvEquirectToCube");
-        TransitionAll(commandList, m_equirect, kShaderReadState);
+        TransitionIfNeeded(commandList, m_equirect, kShaderReadState);
 
         struct EquirectToCubeConstants {
             uint32_t sourceIndex;
@@ -315,7 +283,7 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
         commandList->SetComputeRoot32BitConstants(
             0, sizeof(irradianceConstants) / sizeof(uint32_t), &irradianceConstants, 0);
         commandList->Dispatch(DispatchCount(kIrradianceSize), DispatchCount(kIrradianceSize), 6);
-        TransitionAll(commandList, m_irradiance, kShaderReadState);
+        TransitionIfNeeded(commandList, m_irradiance, kShaderReadState);
         PIXEndEvent(commandList);
 
         // --- プリフィルタ済み鏡面 ------------------------------------------
@@ -347,7 +315,7 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
             InsertUavBarrier(commandList, m_prefiltered);
             prefilterSize = std::max<uint32_t>(prefilterSize >> 1, 1);
         }
-        TransitionAll(commandList, m_prefiltered, kShaderReadState);
+        TransitionIfNeeded(commandList, m_prefiltered, kShaderReadState);
         PIXEndEvent(commandList);
     });
 
@@ -476,7 +444,7 @@ bool Environment::BuildFromHdrFile(rhi::Device& device, rhi::PipelineCache& pipe
 
     const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
         PIXBeginEvent(commandList, PIX_COLOR(120, 180, 255), "EnvUploadHdr");
-        TransitionAll(commandList, m_equirect, D3D12_RESOURCE_STATE_COPY_DEST);
+        TransitionIfNeeded(commandList, m_equirect, D3D12_RESOURCE_STATE_COPY_DEST);
 
         const CD3DX12_TEXTURE_COPY_LOCATION destinationLocation(m_equirect.resource.Get(), 0);
         const CD3DX12_TEXTURE_COPY_LOCATION sourceLocation(staging.resource.Get(), footprint);

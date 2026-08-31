@@ -11,7 +11,7 @@
 namespace mm::compositor {
 namespace {
 
-constexpr uint32_t kGroupSize = 8;
+using rhi::DispatchCount;
 // ペイントマスクのフォーマット。8bit あればブラシの積み上げには足りる。
 constexpr DXGI_FORMAT kPaintFormat = DXGI_FORMAT_R8_UNORM;
 // アンドゥの段数。1024 の R8 で 1 MB / 段。
@@ -22,21 +22,6 @@ constexpr uint32_t kMaxStrokeSamples = 64;
 // 合成パスが読む状態。既定はここに戻しておく。
 constexpr D3D12_RESOURCE_STATES kReadState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 
-uint32_t DispatchCount(uint32_t threads) {
-    return (threads + kGroupSize - 1) / kGroupSize;
-}
-
-void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, rhi::GpuTexture& texture,
-                        D3D12_RESOURCE_STATES newState) {
-    if (texture.state == newState) {
-        return;
-    }
-    const auto barrier =
-        CD3DX12_RESOURCE_BARRIER::Transition(texture.resource.Get(), texture.state, newState);
-    commandList->ResourceBarrier(1, &barrier);
-    texture.state = newState;
-}
-
 // 履歴テクスチャは常に COMMON で置いておき、コピーの前後だけ遷移させる。
 // Op が GpuTexture のコピー（ComPtr の共有）を持つため、
 // 状態を構造体側で追い切れないことによる。
@@ -46,16 +31,11 @@ void TransitionHistory(ID3D12GraphicsCommandList* commandList, ID3D12Resource* r
     commandList->ResourceBarrier(1, &barrier);
 }
 
-void ReleaseTexture(rhi::Device& device, rhi::GpuTexture& texture) {
-    // ディスクリプタも含めてフレーム同期後に解放する。GPU 待機は不要。
-    device.DeferRelease(texture);
-}
-
 }  // namespace
 
 void PaintMaskStore::Destroy(rhi::Device& device) {
     for (PaintMaskEntry& entry : m_entries) {
-        ReleaseTexture(device, entry.texture);
+        device.DeferRelease(entry.texture);
     }
     m_entries.clear();
     m_pending.clear();
@@ -142,7 +122,7 @@ void PaintMaskStore::Remove(rhi::Device& device, PaintMaskId id) {
     const auto dropSnapshots = [&](std::vector<Snapshot>& stack) {
         for (Snapshot& snapshot : stack) {
             if (snapshot.id == id) {
-                ReleaseTexture(device, snapshot.texture);
+                device.DeferRelease(snapshot.texture);
             }
         }
         stack.erase(std::remove_if(stack.begin(), stack.end(),
@@ -152,7 +132,7 @@ void PaintMaskStore::Remove(rhi::Device& device, PaintMaskId id) {
     dropSnapshots(m_undo);
     dropSnapshots(m_redo);
 
-    ReleaseTexture(device, it->texture);
+    device.DeferRelease(it->texture);
     m_entries.erase(it);
 }
 
@@ -283,14 +263,14 @@ PaintMaskId PaintMaskStore::AddFromPixels(rhi::Device& device, uint32_t resoluti
 
     rhi::GpuBuffer staging;
     if (!device.Allocator().CreateUploadBuffer(totalBytes, L"PaintMaskStaging", staging)) {
-        ReleaseTexture(device, entry.texture);
+        device.DeferRelease(entry.texture);
         return kNoPaintMask;
     }
 
     void* mapped = nullptr;
     const D3D12_RANGE readRange = {0, 0};
     if (!MM_CHECK_HR(staging.resource->Map(0, &readRange, &mapped))) {
-        ReleaseTexture(device, entry.texture);
+        device.DeferRelease(entry.texture);
         return kNoPaintMask;
     }
     auto* destination = static_cast<uint8_t*>(mapped) + footprint.Offset;
@@ -320,7 +300,7 @@ PaintMaskId PaintMaskStore::AddFromPixels(rhi::Device& device, uint32_t resoluti
     device.Defer(staging.resource);
     device.Defer(staging.allocation);
     if (!executed) {
-        ReleaseTexture(device, entry.texture);
+        device.DeferRelease(entry.texture);
         return kNoPaintMask;
     }
 
@@ -335,7 +315,7 @@ void PaintMaskStore::Clear(rhi::Device& device) {
     ReleaseSnapshots(device, m_undo);
     ReleaseSnapshots(device, m_redo);
     for (PaintMaskEntry& entry : m_entries) {
-        ReleaseTexture(device, entry.texture);
+        device.DeferRelease(entry.texture);
     }
     m_entries.clear();
 }
@@ -373,7 +353,7 @@ void PaintMaskStore::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache&
         if (!CreateMaskTexture(device, resolution, item.texture)) {
             MM_LOG_ERROR("ペイントマスクの作り直しに失敗しました");
             for (Resized& created : resized) {
-                ReleaseTexture(device, created.texture);
+                device.DeferRelease(created.texture);
             }
             m_requestedResolution = m_resolution;
             return;
@@ -407,14 +387,14 @@ void PaintMaskStore::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache&
 
     if (!executed) {
         for (Resized& item : resized) {
-            ReleaseTexture(device, item.texture);
+            device.DeferRelease(item.texture);
         }
         m_requestedResolution = m_resolution;
         return;
     }
 
     for (Resized& item : resized) {
-        ReleaseTexture(device, item.entry->texture);
+        device.DeferRelease(item.entry->texture);
         item.entry->texture = std::move(item.texture);
     }
 
@@ -486,7 +466,7 @@ void PaintMaskStore::QueueSnapshot(rhi::Device& device, PaintMaskId id) {
     ReleaseSnapshots(device, m_redo);
 
     if (m_undo.size() > kMaxUndoSteps) {
-        ReleaseTexture(device, m_undo.front().texture);
+        device.DeferRelease(m_undo.front().texture);
         m_undo.erase(m_undo.begin());
     }
 }
@@ -530,7 +510,7 @@ void PaintMaskStore::QueueRedo(rhi::Device& device) {
 
 void PaintMaskStore::ReleaseSnapshots(rhi::Device& device, std::vector<Snapshot>& stack) {
     for (Snapshot& snapshot : stack) {
-        ReleaseTexture(device, snapshot.texture);
+        device.DeferRelease(snapshot.texture);
     }
     stack.clear();
 }
@@ -694,7 +674,7 @@ bool PaintMaskStore::Process(rhi::Device& device, rhi::PipelineCache& pipelineCa
 
     // 消費した履歴はフレーム同期後に解放する。
     for (rhi::GpuTexture& texture : releaseAfterRecord) {
-        ReleaseTexture(device, texture);
+        device.DeferRelease(texture);
     }
 
     return recorded;

@@ -1,6 +1,7 @@
 #include "compositor/TextureLibrary.h"
 
 #include "core/ImageIo.h"
+#include "core/PathUtf8.h"
 #include "core/Log.h"
 
 #include <pix3.h>
@@ -16,8 +17,6 @@
 namespace mm::compositor {
 namespace {
 
-constexpr uint32_t kGroupSize = 8;
-
 // 表示用テクスチャの一辺。一覧のサムネイル（72）だけでなく、
 // 「選択中」の拡大プレビューにも使うので、拡大に耐える大きさにしてある。
 constexpr uint32_t kPreviewSize = 512;
@@ -32,9 +31,7 @@ uint32_t MipCountFor(uint32_t width, uint32_t height) {
     return count;
 }
 
-uint32_t DispatchCount(uint32_t threads) {
-    return (threads + kGroupSize - 1) / kGroupSize;
-}
+using rhi::DispatchCount;
 
 bool IsExrPath(const std::filesystem::path& path) {
     std::string extension = path.extension().string();
@@ -55,24 +52,12 @@ std::vector<uint8_t> ConvertToHalf4(const HdrImage& image) {
     return packed;
 }
 
-void TransitionMip(ID3D12GraphicsCommandList* commandList, const rhi::GpuTexture& texture,
-                   uint32_t mip, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
-        texture.resource.Get(), before, after, texture.SubresourceIndex(mip, 0));
-    commandList->ResourceBarrier(1, &barrier);
-}
-
-void ReleaseTexture(rhi::Device& device, rhi::GpuTexture& texture) {
-    // ディスクリプタも含めてフレーム同期後に解放する。GPU 待機は不要。
-    device.DeferRelease(texture);
-}
-
 }  // namespace
 
 void TextureLibrary::Destroy(rhi::Device& device) {
     for (LibraryTexture& entry : m_entries) {
         ReleaseChannelViews(device, entry);
-        ReleaseTexture(device, entry.preview);
+        device.DeferRelease(entry.preview);
         // float は sRGB 用の SRV を別に張っていない（linear と同じものを指す）。
         // 二重解放しないよう、別に張ったときだけ返す。
         if (!entry.isFloat && entry.srgbSrvIndex != kInvalidTextureIndex) {
@@ -134,7 +119,7 @@ void TextureLibrary::Remove(rhi::Device& device, TextureId id) {
     }
 
     ReleaseChannelViews(device, *it);
-    ReleaseTexture(device, it->preview);
+    device.DeferRelease(it->preview);
     // Destroy と同じ理由で、別に張ったときだけ返す。
     if (!it->isFloat && it->srgbSrvIndex != kInvalidTextureIndex) {
         device.DeferFree(device.SrvHeap(), device.SrvHeap().At(it->srgbSrvIndex));
@@ -182,10 +167,8 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
 
     LibraryTexture entry;
     entry.path = path;
-    // 名前は UTF-8 で持つ。string() は ACP 変換で、日本語などのファイル名が
-    // プロジェクト保存（JSON の dump）で壊れる。
-    const std::u8string fileName = path.filename().u8string();
-    entry.name = std::string(fileName.begin(), fileName.end());
+    // 名前は UTF-8 で持つ（string() の ACP 変換は日本語名を壊す）。
+    entry.name = ToUtf8Display(path.filename());
     entry.isFloat = isFloat;
 
     // ここから先の失敗では、確保済みのリソースとディスクリプタを必ず返す。
@@ -400,7 +383,7 @@ bool TextureLibrary::BuildPreview(rhi::Device& device, rhi::PipelineCache& pipel
     });
 
     if (!executed) {
-        ReleaseTexture(device, entry.preview);
+        device.DeferRelease(entry.preview);
         return false;
     }
     preview.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;

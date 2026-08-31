@@ -309,10 +309,10 @@ void Application::DrawTextureLibraryPanel() {
         ui::PropertyValue("参照", "%zu か所", CountTextureUsers(selected.id));
 
         ui::PropertyLabel("場所", "プロジェクトにはここへの相対パスを記録する");
-        const std::string directory = ToUtf8(selected.path.parent_path());
+        const std::string directory = ToUtf8Display(selected.path.parent_path());
         ImGui::TextUnformatted(directory.c_str());
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", ToUtf8(selected.path).c_str());
+            ImGui::SetTooltip("%s", ToUtf8Display(selected.path).c_str());
         }
         ui::PropertyEnd();
         ui::EndPropertyTable();

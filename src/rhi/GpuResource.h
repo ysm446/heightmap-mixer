@@ -92,6 +92,25 @@ struct TextureDesc {
     const wchar_t* debugName = nullptr;
 };
 
+// --- 共通ヘルパ -----------------------------------------------------------
+// 各モジュールの匿名名前空間に重複していたものの置き場。
+// 状態遷移のロジックはバグの温床なので、必ずここの実装を使う。
+
+// コンピュートのディスパッチ数。groupSize はシェーダの numthreads と一致させること。
+inline uint32_t DispatchCount(uint32_t threads, uint32_t groupSize = 8) {
+    return (threads + groupSize - 1) / groupSize;
+}
+
+// 追跡している状態と違うときだけ、リソース全体を遷移させて状態を更新する。
+// texture.state を信頼できる場面でのみ使うこと（サブリソースが分岐中は不可）。
+void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, GpuTexture& texture,
+                        D3D12_RESOURCE_STATES newState);
+
+// ミップ mip の全スライスをまとめて遷移させる。texture.state は更新しない
+// （ミップ生成のように、サブリソース単位で状態が分岐している間に使うため）。
+void TransitionMip(ID3D12GraphicsCommandList* commandList, const GpuTexture& texture,
+                   uint32_t mip, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after);
+
 // D3D12MemoryAllocator を包み、リソース生成とディスクリプタ確保をまとめて行う。
 class ResourceAllocator {
 public:

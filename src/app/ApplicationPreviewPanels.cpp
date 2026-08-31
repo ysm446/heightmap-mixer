@@ -30,36 +30,44 @@ void Application::DrawMaterialPanel() {
     if (ImGui::Begin("プレビュー設定")) {
         if (ui::BeginPropertyTable("previewRows")) {
             static const char* const kShapeLabels[] = {"球", "平面", "キューブ"};
+            const renderer::PreviewDefaults& defaults = renderer::kPreviewDefaults;
             int shape = static_cast<int>(m_renderer.Shape());
-            if (ui::PropertyCombo("形状", &shape, kShapeLabels, IM_ARRAYSIZE(kShapeLabels), 0,
+            if (ui::PropertyCombo("形状", &shape, kShapeLabels, IM_ARRAYSIZE(kShapeLabels),
+                                  static_cast<int>(defaults.shape),
                                   "マテリアルを貼って確かめるメッシュ")) {
                 m_renderer.Shape() = static_cast<renderer::PreviewShape>(shape);
             }
 
-            ui::PropertyBool("合成結果", &m_renderer.UseMaterialTextures(), true,
+            ui::PropertyBool("合成結果", &m_renderer.UseMaterialTextures(),
+                             defaults.useMaterialTextures,
                              "オフにすると、レイヤー合成を使わず単色マテリアルで表示する");
 
             if (m_renderer.UseMaterialTextures()) {
-                ui::PropertyFloat("UV スケール", &m_renderer.MaterialUvScale(), 0.25f, 8.0f, 1.0f,
+                ui::PropertyFloat("UV スケール", &m_renderer.MaterialUvScale(), 0.25f, 8.0f,
+                                  defaults.materialUvScale,
                                   "マテリアルをメッシュ上に何回並べるか", "%.2f", 0, 0.25f);
 
-                ui::PropertyFloat("変位量", &m_renderer.DisplacementScale(), 0.0f, 0.5f, 0.0f,
+                ui::PropertyFloat("変位量", &m_renderer.DisplacementScale(), 0.0f, 0.5f,
+                                  defaults.displacementScale,
                                   "ハイトを形状に反映する量（ディスプレイスメント）。"
                                   "0 なら形は変わらない",
                                   "%.2f", 0, 0.01f);
 
-                ui::PropertyBool("テセレーション", &m_renderer.TessellationEnabled(), false,
+                ui::PropertyBool("テセレーション", &m_renderer.TessellationEnabled(),
+                                 defaults.tessellationEnabled,
                                  "画面上の辺が長いところだけメッシュを細かく割る。"
                                  "変位量を上げたときに形がなめらかになる");
                 if (m_renderer.TessellationEnabled()) {
                     ui::PropertyFloat("分割の上限", &m_renderer.TessellationFactor(), 1.0f, 16.0f,
-                                      8.0f, "1 辺をこの回数まで割る。上げるほど重くなる",
+                                      defaults.tessellationFactor,
+                                      "1 辺をこの回数まで割る。上げるほど重くなる",
                                       "%.0f", 0, 1.0f);
                 }
 
                 int resolution = ResolutionIndex(m_renderer.MaterialResolution());
                 if (ui::PropertyCombo("合成解像度", &resolution, kResolutionLabels,
-                                      IM_ARRAYSIZE(kResolutionLabels), 1,
+                                      IM_ARRAYSIZE(kResolutionLabels),
+                                      ResolutionIndex(defaults.materialResolution),
                                       "編集中のプレビュー解像度。上げるほど細部が出るが重くなる")) {
                     m_renderer.RequestMaterialResolution(kResolutionValues[resolution]);
                 }
@@ -121,7 +129,8 @@ void Application::DrawLightingPanel() {
                               kDefaultLight.illuminance,
                               "lux。晴天の直射日光がおよそ 100000 lux", "%.0f");
             ui::PropertyColor("光の色", &light.color.x, &kDefaultLight.color.x);
-            ui::PropertyBool("影", &m_renderer.ShadowEnabled(), true,
+            ui::PropertyBool("影", &m_renderer.ShadowEnabled(),
+                             renderer::kPreviewDefaults.shadowEnabled,
                              "ディレクショナルライトの影を落とす。"
                              "ディスプレイスメントで押し出した形にも落ちる");
             ui::EndPropertyTable();
@@ -164,7 +173,7 @@ void Application::DrawLightingPanel() {
             // すでに cd/m^2 で書き込んでいるので、較正するものが無い。
             if (!m_renderer.HdriPath().empty()) {
                 if (ui::PropertyFloat("空の輝度", &m_renderer.HdriSkyLuminance(), 100.0f,
-                                      100000.0f, 12000.0f,
+                                      100000.0f, renderer::kPreviewDefaults.hdriSkyLuminance,
                                       "この HDRI の空を何 cd/m2 とみなすか。"
                                       "HDRI は絶対輝度で較正されていないため、基準をここで与える。"
                                       "晴天でおよそ 4000〜15000、曇天で 1000〜3000",
@@ -172,12 +181,15 @@ void Application::DrawLightingPanel() {
                     m_renderer.RequestHdriLuminanceRebuild();
                 }
             }
-            ui::PropertyFloat("環境光の強さ", &m_renderer.IblIntensity(), 0.0f, 4.0f, 1.0f,
+            ui::PropertyFloat("環境光の強さ", &m_renderer.IblIntensity(), 0.0f, 4.0f,
+                              renderer::kPreviewDefaults.iblIntensity,
                               "物理量ではなく、見た目を整えるための倍率", "%.2f");
-            ui::PropertyBool("背景を表示", &m_renderer.ShowSkybox(), true,
+            ui::PropertyBool("背景を表示", &m_renderer.ShowSkybox(),
+                             renderer::kPreviewDefaults.showSkybox,
                              "オフにすると背景色だけになる。IBL の寄与は残る");
             ImGui::BeginDisabled(!m_renderer.ShowSkybox());
-            ui::PropertyBool("背景をぼかす", &m_renderer.SkyboxBlur(), false,
+            ui::PropertyBool("背景をぼかす", &m_renderer.SkyboxBlur(),
+                             renderer::kPreviewDefaults.skyboxBlur,
                              "背景だけを柔らかくする。素材を見比べるときに、"
                              "背景の細部が目移りの原因にならないようにする。"
                              "IBL の寄与と陰影は変わらない");
@@ -224,7 +236,7 @@ void Application::DrawLightingPanel() {
             static const char* const kTonemapLabels[] = {"なし", "Reinhard", "ACES"};
             int tonemap = static_cast<int>(m_renderer.Tonemap());
             if (ui::PropertyCombo("方式", &tonemap, kTonemapLabels, IM_ARRAYSIZE(kTonemapLabels),
-                                  static_cast<int>(renderer::TonemapMode::Aces))) {
+                                  static_cast<int>(renderer::kPreviewDefaults.tonemap))) {
                 m_renderer.Tonemap() = static_cast<renderer::TonemapMode>(tonemap);
             }
             ui::EndPropertyTable();

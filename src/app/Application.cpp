@@ -507,7 +507,7 @@ void Application::DrawStatusBar() {
             // --- 右: いま何を持っているか -----------------------------------
             const std::string project =
                 m_projectPath.empty() ? std::string("未保存のプロジェクト")
-                                      : ToUtf8(m_projectPath.filename());
+                                      : ToUtf8Display(m_projectPath.filename());
             char summary[320] = {};
             std::snprintf(summary, sizeof(summary),
                           "%s   レイヤー %zu / マテリアル %zu / テクスチャ %zu   合成 %u^2   "

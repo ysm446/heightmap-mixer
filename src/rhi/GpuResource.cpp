@@ -4,6 +4,26 @@
 
 namespace mm::rhi {
 
+void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, GpuTexture& texture,
+                        D3D12_RESOURCE_STATES newState) {
+    if (texture.state == newState) {
+        return;
+    }
+    const auto barrier =
+        CD3DX12_RESOURCE_BARRIER::Transition(texture.resource.Get(), texture.state, newState);
+    commandList->ResourceBarrier(1, &barrier);
+    texture.state = newState;
+}
+
+void TransitionMip(ID3D12GraphicsCommandList* commandList, const GpuTexture& texture,
+                   uint32_t mip, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
+    for (uint32_t slice = 0; slice < texture.arraySize; ++slice) {
+        const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+            texture.resource.Get(), before, after, texture.SubresourceIndex(mip, slice));
+        commandList->ResourceBarrier(1, &barrier);
+    }
+}
+
 ResourceAllocator::~ResourceAllocator() {
     Destroy();
 }

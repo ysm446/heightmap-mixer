@@ -95,13 +95,13 @@ void Application::DrawRecentMenu() {
         const std::filesystem::path& path = entries[i];
         ImGui::PushID(static_cast<int>(i));
 
-        const std::string name = ToUtf8(path.filename());
-        const std::string directory = ToUtf8(path.parent_path());
+        const std::string name = ToUtf8Display(path.filename());
+        const std::string directory = ToUtf8Display(path.parent_path());
         if (ImGui::MenuItem(name.c_str(), directory.c_str())) {
             m_pendingProjectOpen = path;
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", ToUtf8(path).c_str());
+            ImGui::SetTooltip("%s", ToUtf8Display(path).c_str());
         }
 
         ImGui::PopID();
@@ -159,7 +159,7 @@ void Application::HandleDroppedFiles(const std::vector<std::filesystem::path>& p
             m_pendingTexturePaths.push_back(path);
             ++images;
         } else {
-            MM_LOG_WARN("扱えない形式です: %s", ToUtf8(path.filename()).c_str());
+            MM_LOG_WARN("扱えない形式です: %s", ToUtf8Display(path.filename()).c_str());
         }
     }
     if (images > 0) {

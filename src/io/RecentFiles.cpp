@@ -1,5 +1,7 @@
 #include "io/RecentFiles.h"
 
+#include "core/PathUtf8.h"
+
 #include "core/Log.h"
 #include "io/AppSettings.h"
 
@@ -19,16 +21,6 @@ using nlohmann::json;
 
 constexpr const char* kFormat = "material-mixer.recent";
 constexpr int kVersion = 1;
-
-// JSON は UTF-8。path の narrow 変換（string()）はロケール依存なので使わない。
-std::string ToUtf8(const fs::path& path) {
-    const std::u8string text = path.generic_u8string();
-    return std::string(text.begin(), text.end());
-}
-
-fs::path FromUtf8(const std::string& text) {
-    return fs::path(std::u8string(text.begin(), text.end()));
-}
 
 // 履歴の置き場所。設定と同じフォルダへ置く。
 fs::path HistoryPath() {
@@ -131,7 +123,7 @@ bool RecentFiles::Save() const {
     document["version"] = kVersion;
     json projects = json::array();
     for (const fs::path& entry : m_entries) {
-        projects.push_back(ToUtf8(entry));
+        projects.push_back(ToUtf8Portable(entry));
     }
     document["projects"] = std::move(projects);
 

@@ -1,5 +1,7 @@
 #include "io/ProjectIo.h"
 
+#include "core/PathUtf8.h"
+
 #include "core/ImageIo.h"
 #include "core/Log.h"
 
@@ -31,16 +33,8 @@ constexpr int kFormatVersion = 2;
 
 // --- 文字列とパス ---------------------------------------------------------
 //
-// JSON は UTF-8。path の narrow 変換（string()）はロケール依存なので使わない。
-
-std::string ToUtf8(const fs::path& path) {
-    const std::u8string text = path.generic_u8string();
-    return std::string(text.begin(), text.end());
-}
-
-fs::path FromUtf8(const std::string& text) {
-    return fs::path(std::u8string(text.begin(), text.end()));
-}
+// JSON は UTF-8。変換は core/PathUtf8.h に一本化してある。
+// 保存する文字列は区切りを '/' に揃える（ToUtf8Portable）。
 
 // baseDir から見た相対パスにする。ドライブが違うなど relative が使えないときは
 // 絶対パスのまま書く。プロジェクトごと移動しても壊れないようにするため。
@@ -55,9 +49,9 @@ std::string RelativePathString(const fs::path& target, const fs::path& baseDir) 
     std::error_code relativeError;
     const fs::path relative = fs::relative(source, baseDir, relativeError);
     if (relativeError || relative.empty()) {
-        return ToUtf8(source);
+        return ToUtf8Portable(source);
     }
-    return ToUtf8(relative);
+    return ToUtf8Portable(relative);
 }
 
 // 相対パスなら baseDir から解決する。絶対パスならそのまま。
@@ -485,21 +479,30 @@ json WritePreview(renderer::PreviewRenderer& renderer, const fs::path& baseDir) 
 }
 
 void ReadPreview(const json& node, renderer::PreviewRenderer& renderer, const fs::path& baseDir) {
+    // 既定値は renderer::kPreviewDefaults の一択。数値を直接書かない。
+    // 名前は各節ローカルの defaults（LightSettings など）と衝突させない。
+    const renderer::PreviewDefaults& previewDefaults = renderer::kPreviewDefaults;
     renderer.Shape() = static_cast<renderer::PreviewShape>(
-        EnumValue(kShapeNames, node, "shape", static_cast<uint32_t>(renderer::PreviewShape::Sphere)));
+        EnumValue(kShapeNames, node, "shape", static_cast<uint32_t>(previewDefaults.shape)));
     renderer.Tonemap() = static_cast<renderer::TonemapMode>(
-        EnumValue(kTonemapNames, node, "tonemap", static_cast<uint32_t>(renderer::TonemapMode::Aces)));
-    renderer.UseMaterialTextures() = ReadBool(node, "useMaterialTextures", true);
-    renderer.MaterialUvScale() = ReadFloat(node, "materialUvScale", 1.0f);
-    renderer.DisplacementScale() = ReadFloat(node, "displacementScale", 0.0f);
-    renderer.TessellationEnabled() = ReadBool(node, "tessellation", false);
-    renderer.TessellationFactor() = ReadFloat(node, "tessellationFactor", 8.0f);
-    renderer.RequestMaterialResolution(ReadUInt(node, "materialResolution", 1024));
-    renderer.IblIntensity() = ReadFloat(node, "iblIntensity", 1.0f);
-    renderer.HdriSkyLuminance() = ReadFloat(node, "hdriSkyLuminance", 12000.0f);
-    renderer.ShowSkybox() = ReadBool(node, "showSkybox", true);
-    renderer.SkyboxBlur() = ReadBool(node, "skyboxBlur", false);
-    renderer.ShadowEnabled() = ReadBool(node, "shadow", true);
+        EnumValue(kTonemapNames, node, "tonemap", static_cast<uint32_t>(previewDefaults.tonemap)));
+    renderer.UseMaterialTextures() =
+        ReadBool(node, "useMaterialTextures", previewDefaults.useMaterialTextures);
+    renderer.MaterialUvScale() = ReadFloat(node, "materialUvScale", previewDefaults.materialUvScale);
+    renderer.DisplacementScale() =
+        ReadFloat(node, "displacementScale", previewDefaults.displacementScale);
+    renderer.TessellationEnabled() =
+        ReadBool(node, "tessellation", previewDefaults.tessellationEnabled);
+    renderer.TessellationFactor() =
+        ReadFloat(node, "tessellationFactor", previewDefaults.tessellationFactor);
+    renderer.RequestMaterialResolution(
+        ReadUInt(node, "materialResolution", previewDefaults.materialResolution));
+    renderer.IblIntensity() = ReadFloat(node, "iblIntensity", previewDefaults.iblIntensity);
+    renderer.HdriSkyLuminance() =
+        ReadFloat(node, "hdriSkyLuminance", previewDefaults.hdriSkyLuminance);
+    renderer.ShowSkybox() = ReadBool(node, "showSkybox", previewDefaults.showSkybox);
+    renderer.SkyboxBlur() = ReadBool(node, "skyboxBlur", previewDefaults.skyboxBlur);
+    renderer.ShadowEnabled() = ReadBool(node, "shadow", previewDefaults.shadowEnabled);
 
     // 節が丸ごと欠けていても既定値で埋める。file-format.md の「欠けているキーは
     // 既定値で埋める」に合わせる（節ごと飛ばすと前のプロジェクトの値が残る）。
@@ -584,14 +587,14 @@ bool WriteJsonFile(const fs::path& path, const json& document) {
     {
         std::ofstream stream(tempPath, std::ios::binary | std::ios::trunc);
         if (!stream.is_open()) {
-            MM_LOG_ERROR("ファイルを開けませんでした: %s", ToUtf8(tempPath).c_str());
+            MM_LOG_ERROR("ファイルを開けませんでした: %s", ToUtf8Portable(tempPath).c_str());
             return false;
         }
         // 人が読める形で書く。差分も取りやすい。壊れた文字列が混ざっていても
         // 例外を出さない（不正な UTF-8 は置換文字にする）。
         stream << document.dump(2, ' ', false, json::error_handler_t::replace) << '\n';
         if (!stream.good()) {
-            MM_LOG_ERROR("ファイルの書き込みに失敗しました: %s", ToUtf8(tempPath).c_str());
+            MM_LOG_ERROR("ファイルの書き込みに失敗しました: %s", ToUtf8Portable(tempPath).c_str());
             return false;
         }
     }
@@ -599,7 +602,7 @@ bool WriteJsonFile(const fs::path& path, const json& document) {
     std::error_code renameError;
     fs::rename(tempPath, path, renameError);
     if (renameError) {
-        MM_LOG_ERROR("ファイルを差し替えられませんでした: %s", ToUtf8(path).c_str());
+        MM_LOG_ERROR("ファイルを差し替えられませんでした: %s", ToUtf8Portable(path).c_str());
         std::error_code removeError;
         fs::remove(tempPath, removeError);
         return false;
@@ -610,27 +613,27 @@ bool WriteJsonFile(const fs::path& path, const json& document) {
 bool ReadJsonFile(const fs::path& path, const char* expectedFormat, json& outDocument) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream.is_open()) {
-        MM_LOG_ERROR("ファイルを開けませんでした: %s", ToUtf8(path).c_str());
+        MM_LOG_ERROR("ファイルを開けませんでした: %s", ToUtf8Portable(path).c_str());
         return false;
     }
 
     // 例外は使わない方針なので、パース失敗は discarded で受ける。
     outDocument = json::parse(stream, nullptr, false);
     if (outDocument.is_discarded() || !outDocument.is_object()) {
-        MM_LOG_ERROR("JSON として読めませんでした: %s", ToUtf8(path).c_str());
+        MM_LOG_ERROR("JSON として読めませんでした: %s", ToUtf8Portable(path).c_str());
         return false;
     }
 
     const std::string format = ReadString(outDocument, "format");
     if (format != expectedFormat) {
         MM_LOG_ERROR("形式が違います（%s ではなく %s）: %s", expectedFormat, format.c_str(),
-                     ToUtf8(path).c_str());
+                     ToUtf8Portable(path).c_str());
         return false;
     }
     const int version = ReadInt(outDocument, "version", 0);
     if (version > kFormatVersion) {
         MM_LOG_ERROR("このバージョンでは読めません（ファイル %d > 対応 %d）: %s", version,
-                     kFormatVersion, ToUtf8(path).c_str());
+                     kFormatVersion, ToUtf8Portable(path).c_str());
         return false;
     }
     return true;
@@ -798,7 +801,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
     if (!WriteJsonFile(savePath, document)) {
         return false;
     }
-    MM_LOG_INFO("プロジェクトを保存しました: %s", ToUtf8(savePath).c_str());
+    MM_LOG_INFO("プロジェクトを保存しました: %s", ToUtf8Portable(savePath).c_str());
     return true;
 }
 
@@ -837,7 +840,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
             if (id == compositor::kNoTexture) {
                 // 画像が見つからなくても、残りは読み込む。割り当ては「なし」になる。
                 MM_LOG_WARN("テクスチャを読み込めませんでした: %s",
-                            ToUtf8(texturePath).c_str());
+                            ToUtf8Portable(texturePath).c_str());
                 continue;
             }
             textureIds[index] = id;
@@ -963,7 +966,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
     ReadPreview((preview != nullptr && preview->is_object()) ? *preview : emptyPreview,
                 refs.renderer, baseDir);
 
-    MM_LOG_INFO("プロジェクトを開きました: %s", ToUtf8(path).c_str());
+    MM_LOG_INFO("プロジェクトを開きました: %s", ToUtf8Portable(path).c_str());
     return true;
 }
 
@@ -992,7 +995,7 @@ bool SaveMaterial(const std::filesystem::path& path, const compositor::MaterialA
     if (!WriteJsonFile(savePath, document)) {
         return false;
     }
-    MM_LOG_INFO("マテリアルを書き出しました: %s", ToUtf8(savePath).c_str());
+    MM_LOG_INFO("マテリアルを書き出しました: %s", ToUtf8Portable(savePath).c_str());
     return true;
 }
 
@@ -1017,7 +1020,7 @@ compositor::MaterialAssetId LoadMaterial(const std::filesystem::path& path, rhi:
         }
         const compositor::TextureId id = textures.Load(device, pipelineCache, texturePath);
         if (id == compositor::kNoTexture) {
-            MM_LOG_WARN("テクスチャを読み込めませんでした: %s", ToUtf8(texturePath).c_str());
+            MM_LOG_WARN("テクスチャを読み込めませんでした: %s", ToUtf8Portable(texturePath).c_str());
         }
         return id;
     };
@@ -1030,7 +1033,7 @@ compositor::MaterialAssetId LoadMaterial(const std::filesystem::path& path, rhi:
     ReadMaterialBody(document, *asset, readTexture);
     asset->thumbnailDirty = true;
 
-    MM_LOG_INFO("マテリアルを読み込みました: %s", ToUtf8(path).c_str());
+    MM_LOG_INFO("マテリアルを読み込みました: %s", ToUtf8Portable(path).c_str());
     return id;
 }
 

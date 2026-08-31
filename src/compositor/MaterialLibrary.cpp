@@ -9,7 +9,7 @@
 namespace mm::compositor {
 namespace {
 
-constexpr uint32_t kGroupSize = 8;
+using rhi::DispatchCount;
 // サムネイルの一辺。一覧で並べる大きさに対して十分で、VRAM も食わない。
 constexpr uint32_t kThumbnailSize = 128;
 // サムネイルの中でマップを何回並べるか。1 枚だと模様の粒が分かりにくい。
@@ -46,20 +46,11 @@ uint32_t PackMaterialChannels(const MaterialAsset& asset) {
 
 namespace {
 
-uint32_t DispatchCount(uint32_t threads) {
-    return (threads + kGroupSize - 1) / kGroupSize;
-}
-
-void ReleaseTexture(rhi::Device& device, rhi::GpuTexture& texture) {
-    // ディスクリプタも含めてフレーム同期後に解放する。GPU 待機は不要。
-    device.DeferRelease(texture);
-}
-
 }  // namespace
 
 void MaterialLibrary::Destroy(rhi::Device& device) {
     for (MaterialAsset& asset : m_entries) {
-        ReleaseTexture(device, asset.thumbnail);
+        device.DeferRelease(asset.thumbnail);
     }
     m_entries.clear();
 }
@@ -113,7 +104,7 @@ void MaterialLibrary::Remove(rhi::Device& device, MaterialAssetId id) {
     if (it == m_entries.end()) {
         return;
     }
-    ReleaseTexture(device, it->thumbnail);
+    device.DeferRelease(it->thumbnail);
     m_entries.erase(it);
 }
 
