@@ -52,6 +52,26 @@ float HeightBlendWeight(float baseHeight, float layerHeight, float mask, float r
     return saturate(cb / max(ca + cb, 1e-5f));
 }
 
+// マスクのカーブ。
+//   contrast = 1  線形（そのまま）
+//   contrast > 1  S 字を強め、0 / 1 に寄せる（境界がはっきりする）
+//   contrast < 1  中間へ寄せ、全体をなだらかにする
+float ApplyMaskCurve(float value, float contrast)
+{
+    const float x = saturate(value);
+
+    if (contrast > 1.0f)
+    {
+        const float smooth = x * x * (3.0f - 2.0f * x);
+        return saturate(lerp(x, smooth, saturate(contrast - 1.0f)));
+    }
+    if (contrast < 1.0f)
+    {
+        return saturate(lerp(x, 0.5f, saturate(1.0f - contrast)));
+    }
+    return x;
+}
+
 // マスクのレベル調整と反転。
 float ApplyMaskLevels(float value, float low, float high, bool invert)
 {

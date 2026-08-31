@@ -44,19 +44,51 @@ struct LayerTextures {
     TextureId mask = kNoTexture;              // R チャンネル
 };
 
+// ノイズの種類。シェーダの HM_NOISE_* と一致させること。
+enum class NoiseType : uint32_t {
+    Fbm = 0,     // 一般的なフラクタルノイズ
+    Ridged = 1,  // 尾根状。稜線や割れ目に向く
+    Worley = 2,  // セル状。石畳や砂利に向く
+};
+
 // フラクタルノイズのパラメータ。ハイトとマスクで共通に使う。
 struct NoiseParams {
+    NoiseType type = NoiseType::Fbm;
     float scale = 6.0f;    // UV に掛ける周波数
     float amount = 1.0f;   // 出力への寄与
     int octaves = 5;
     float offset = 0.0f;   // 同じレイヤー内で別パターンにしたいときにずらす
 };
 
-// マスク。定数を基準に、ノイズで揺らし、レベル調整と反転を掛ける。
+// マスクの出どころ。合成の中間結果に由来するものを含む。
+//
+// 「下地」とは、このレイヤーより下のレイヤーを合成した結果のこと。
+// 傾斜や曲率を使うと「急斜面にだけ岩を出す」「窪みにだけ苔を生やす」が書ける。
+enum class MaskSource : uint32_t {
+    Constant = 0,
+    Noise = 1,
+    Texture = 2,
+    Height = 3,     // 下地の高さ
+    Slope = 4,      // 下地の傾斜（0 = 平坦、1 = 急）
+    Curvature = 5,  // 下地の曲率（0.5 = 平坦、> 0.5 = 凸、< 0.5 = 凹）
+    Cavity = 6,     // 下地の窪み（簡易 AO。1 に近いほど窪んでいる）
+};
+
+// 中間結果由来かどうか。真なら評価前にマスク生成パスが要る。
+inline bool IsDerivedMaskSource(MaskSource source) {
+    return source == MaskSource::Height || source == MaskSource::Slope ||
+           source == MaskSource::Curvature || source == MaskSource::Cavity;
+}
+
+// マスク。出どころの値に定数を掛け、カーブ・レベル調整・反転を掛ける。
 struct LayerMask {
-    ValueSource source = ValueSource::Constant;
+    MaskSource source = MaskSource::Constant;
     float constant = 1.0f;
-    NoiseParams noise{4.0f, 1.0f, 4, 37.0f};
+    NoiseParams noise{NoiseType::Fbm, 4.0f, 1.0f, 4, 37.0f};
+    // 中間結果由来のマスクの強調度。傾斜や曲率の効き方を調整する。
+    float derivedScale = 1.0f;
+    // カーブ。1 で線形、> 1 で中間を締める（コントラストが上がる）。
+    float contrast = 1.0f;
     float levelsLow = 0.0f;
     float levelsHigh = 1.0f;
     bool invert = false;
@@ -78,7 +110,7 @@ struct MaterialLayer {
     // ハイト。定数を基準に、ノイズを amount ぶん足す。
     ValueSource heightSource = ValueSource::Noise;
     float heightBase = 0.0f;
-    NoiseParams heightNoise{6.0f, 1.0f, 5, 0.0f};
+    NoiseParams heightNoise{NoiseType::Fbm, 6.0f, 1.0f, 5, 0.0f};
 
     // 法線はハイトの勾配から作る。強さ 0 で平坦。
     float normalStrength = 1.0f;

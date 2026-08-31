@@ -15,9 +15,9 @@ MaterialStack::MaterialStack() {
     rock.metallic = 0.0f;
     rock.heightSource = ValueSource::Noise;
     rock.heightBase = 0.0f;
-    rock.heightNoise = NoiseParams{7.0f, 1.0f, 6, 0.0f};
+    rock.heightNoise = NoiseParams{NoiseType::Fbm, 7.0f, 1.0f, 6, 0.0f};
     rock.normalStrength = 1.0f;
-    rock.mask.source = ValueSource::Constant;
+    rock.mask.source = MaskSource::Constant;
     rock.mask.constant = 1.0f;
     rock.blendRange = 0.2f;
     m_layers.push_back(rock);
@@ -30,12 +30,31 @@ MaterialStack::MaterialStack() {
     sand.heightSource = ValueSource::Noise;
     // 砂が溜まる水位。岩の高さ（0〜1）の中央より少し下に置く。
     sand.heightBase = 0.42f;
-    sand.heightNoise = NoiseParams{26.0f, 0.05f, 4, 11.0f};
+    sand.heightNoise = NoiseParams{NoiseType::Fbm, 26.0f, 0.05f, 4, 11.0f};
     sand.normalStrength = 0.25f;
-    sand.mask.source = ValueSource::Constant;
+    sand.mask.source = MaskSource::Constant;
     sand.mask.constant = 0.5f;
     sand.blendRange = 0.05f;
     m_layers.push_back(sand);
+
+    // 中間結果由来のマスクの例。下地の窪みにだけ苔を生やす。
+    MaterialLayer moss;
+    moss.name = "苔";
+    moss.baseColor = {0.14f, 0.24f, 0.10f};
+    moss.roughness = 0.85f;
+    moss.metallic = 0.0f;
+    moss.heightSource = ValueSource::Noise;
+    moss.heightBase = 0.5f;
+    moss.heightNoise = NoiseParams{NoiseType::Worley, 40.0f, 0.06f, 3, 23.0f};
+    moss.normalStrength = 0.4f;
+    moss.mask.source = MaskSource::Cavity;
+    moss.mask.constant = 1.0f;
+    moss.mask.derivedScale = 1.0f;
+    moss.mask.contrast = 1.8f;
+    moss.mask.levelsLow = 0.54f;
+    moss.mask.levelsHigh = 0.80f;
+    moss.blendRange = 0.08f;
+    m_layers.push_back(moss);
 }
 
 MaterialLayer& MaterialStack::Add(const MaterialLayer& layer) {

@@ -61,4 +61,79 @@ float Fbm(float2 p, int octaves)
     return sum;
 }
 
+// 尾根状のノイズ。値を折り返すことで稜線が立つ。地形や岩の割れ目に向く。
+float RidgedFbm(float2 p, int octaves)
+{
+    float sum = 0.0f;
+    float amplitude = 0.5f;
+    for (int i = 0; i < octaves; ++i)
+    {
+        const float ridge = 1.0f - abs(ValueNoise(p) * 2.0f - 1.0f);
+        sum += ridge * ridge * amplitude;
+        p *= 2.0f;
+        amplitude *= 0.5f;
+    }
+    return saturate(sum);
+}
+
+float2 Hash22(float2 p)
+{
+    float3 p3 = frac(float3(p.xyx) * float3(0.1031f, 0.1030f, 0.0973f));
+    p3 += dot(p3, p3.yzx + 33.33f);
+    return frac((p3.xx + p3.yz) * p3.zy);
+}
+
+// Worley（セル）ノイズ。最近傍の特徴点までの距離を返す。
+// 石畳や砂利のような塊状のパターンに向く。
+float Worley(float2 p)
+{
+    const float2 cell = floor(p);
+    const float2 local = frac(p);
+
+    float nearest = 1e9f;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            const float2 offset = float2(x, y);
+            const float2 feature = offset + Hash22(cell + offset);
+            nearest = min(nearest, dot(local - feature, local - feature));
+        }
+    }
+    return saturate(sqrt(nearest));
+}
+
+float WorleyFbm(float2 p, int octaves)
+{
+    float sum = 0.0f;
+    float amplitude = 0.5f;
+    float weight = 0.0f;
+    for (int i = 0; i < octaves; ++i)
+    {
+        sum += Worley(p) * amplitude;
+        weight += amplitude;
+        p *= 2.0f;
+        amplitude *= 0.5f;
+    }
+    return sum / max(weight, 1e-5f);
+}
+
+// ノイズの種類。C++ 側の NoiseType と一致させること。
+#define HM_NOISE_FBM    0
+#define HM_NOISE_RIDGED 1
+#define HM_NOISE_WORLEY 2
+
+float SampleNoise(uint type, float2 p, int octaves)
+{
+    if (type == HM_NOISE_RIDGED)
+    {
+        return RidgedFbm(p, octaves);
+    }
+    if (type == HM_NOISE_WORLEY)
+    {
+        return WorleyFbm(p, octaves);
+    }
+    return Fbm(p, octaves);
+}
+
 #endif  // HM_COMMON_HLSLI

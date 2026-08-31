@@ -2,6 +2,8 @@
 
 #include "compositor/MaterialStack.h"
 #include "compositor/TextureLibrary.h"
+
+#include <vector>
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 
@@ -13,6 +15,8 @@ struct MaterialTextureSet {
     rhi::GpuTexture normal;     // R16G16_FLOAT（xy のみ、z は再構成）
     rhi::GpuTexture surface;    // R8G8B8A8_UNORM（R=Roughness, G=Metallic, B=AO）
     rhi::GpuTexture height;     // R16_FLOAT
+    // 中間結果由来マスクの計算結果。合成パスはここを読む。
+    rhi::GpuTexture maskScratch;  // R16_FLOAT
 
     bool IsValid() const { return baseColor.IsValid(); }
 };
@@ -37,10 +41,14 @@ public:
 
     bool Resize(rhi::Device& device, uint32_t resolution);
 
-    // タイル矩形ぶんを評価する。呼び出し前後の状態遷移もここで行う。
+    // 指定したタイル群を評価する。呼び出し前後の状態遷移もここで行う。
+    //
+    // ループはレイヤー優先。1 レイヤーぶんを全タイルで終えてから次へ進む。
+    // 中間結果由来のマスクは近傍を参照するため、タイル優先で回すと
+    // まだ評価されていない隣のタイルを読んでしまい、境界に継ぎ目が出る。
     void Evaluate(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                   ID3D12GraphicsCommandList* commandList, const MaterialStack& stack,
-                  const TextureLibrary& textures, const TileRect& tile);
+                  const TextureLibrary& textures, const std::vector<TileRect>& tiles);
 
     // スタックに変更があったときだけ全体を評価し直す。
     // 全体はタイルに分割して評価する。エクスポート時と同じ経路を常に通しておくことで、

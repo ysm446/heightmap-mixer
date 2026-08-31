@@ -10,6 +10,8 @@
 #define HM_SOURCE_CONSTANT 0
 #define HM_SOURCE_NOISE    1
 #define HM_SOURCE_TEXTURE  2
+// 3 以上は合成の中間結果に由来するマスク。CompositeMask パスが事前に計算する。
+#define HM_SOURCE_DERIVED  3
 
 static const uint kInvalidTextureIndex = 0xFFFFFFFFu;
 
@@ -33,7 +35,10 @@ struct LayerConstants
 
     // 参照するテクスチャの SRV インデックス。kInvalidTextureIndex なら定数を使う。
     uint4 textureIndices0;  // baseColor, normal, roughness, metallic
-    uint4 textureIndices1;  // ao, height, mask, 未使用
+    uint4 textureIndices1;  // ao, height, mask, 中間結果由来マスクの SRV
+
+    float4 maskCurve;  // contrast, derivedScale, 未使用, 未使用
+    uint4 noiseTypes;  // height, mask, 未使用, 未使用
 };
 
 ConstantBuffer<LayerConstants> g_layer : register(b1);
@@ -65,7 +70,8 @@ float SampleLayerHeight(float2 uv, float uvPerOutputTexel)
     if (source == HM_SOURCE_NOISE)
     {
         const float2 p = uv * g_layer.heightNoise.x + g_layer.heightNoise.w;
-        height += Fbm(p, int(g_layer.heightNoise.z)) * g_layer.heightNoise.y;
+        height += SampleNoise(g_layer.noiseTypes.x, p, int(g_layer.heightNoise.z)) *
+                  g_layer.heightNoise.y;
     }
     else if (source == HM_SOURCE_TEXTURE && g_layer.textureIndices1.y != kInvalidTextureIndex)
     {
@@ -77,24 +83,48 @@ float SampleLayerHeight(float2 uv, float uvPerOutputTexel)
     return height;
 }
 
-float SampleLayerMask(float2 uv, float uvPerOutputTexel)
+float SampleMaskSourceValue(float2 uv, uint2 texel, float uvPerOutputTexel)
 {
-    float mask = g_layer.maskParams.x;
-
     const uint source = uint(g_layer.maskParams.w);
+
     if (source == HM_SOURCE_NOISE)
     {
         const float2 p = uv * g_layer.maskNoise.x + g_layer.maskNoise.w;
-        mask += (Fbm(p, int(g_layer.maskNoise.z)) - 0.5f) * g_layer.maskNoise.y;
-    }
-    else if (source == HM_SOURCE_TEXTURE && g_layer.textureIndices1.z != kInvalidTextureIndex)
-    {
-        // テクスチャの場合、定数は不透明度の倍率として働く。
-        mask *= SampleLayerTexture(g_layer.textureIndices1.z, uv, uvPerOutputTexel).r;
+        const float noise = SampleNoise(g_layer.noiseTypes.y, p, int(g_layer.maskNoise.z));
+        // ノイズだけは加算。定数を基準に揺らす。
+        return g_layer.maskParams.x + (noise - 0.5f) * g_layer.maskNoise.y;
     }
 
+    if (source == HM_SOURCE_TEXTURE)
+    {
+        if (g_layer.textureIndices1.z == kInvalidTextureIndex)
+        {
+            return g_layer.maskParams.x;
+        }
+        return g_layer.maskParams.x *
+               SampleLayerTexture(g_layer.textureIndices1.z, uv, uvPerOutputTexel).r;
+    }
+
+    if (source >= HM_SOURCE_DERIVED)
+    {
+        if (g_layer.textureIndices1.w == kInvalidTextureIndex)
+        {
+            return g_layer.maskParams.x;
+        }
+        Texture2D<float> derived = ResourceDescriptorHeap[g_layer.textureIndices1.w];
+        return g_layer.maskParams.x * derived[texel];
+    }
+
+    return g_layer.maskParams.x;
+}
+
+float SampleLayerMask(float2 uv, uint2 texel, float uvPerOutputTexel)
+{
+    float mask = saturate(SampleMaskSourceValue(uv, texel, uvPerOutputTexel));
+    mask = ApplyMaskCurve(mask, g_layer.maskCurve.x);
+
     const bool invert = (g_layer.flags & HM_FLAG_MASK_INVERT) != 0u;
-    return ApplyMaskLevels(saturate(mask), g_layer.maskParams.y, g_layer.maskParams.z, invert);
+    return ApplyMaskLevels(mask, g_layer.maskParams.y, g_layer.maskParams.z, invert);
 }
 
 // 勾配（高さ / UV 単位）を法線の傾きへ変換する係数。
@@ -188,7 +218,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     float weight = 1.0f;
     if (!isBaseLayer)
     {
-        const float mask = SampleLayerMask(uv, uvPerOutputTexel);
+        const float mask = SampleLayerMask(uv, texel, uvPerOutputTexel);
         const float destinationHeight = heightTarget[texel];
         weight = HeightBlendWeight(destinationHeight, layerHeight, mask, g_layer.blendParams.x);
     }

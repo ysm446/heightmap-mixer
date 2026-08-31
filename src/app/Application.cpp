@@ -76,6 +76,17 @@ void SetDefaultWindowRect(bool apply, float relativeX, float relativeY, float re
 
 }  // namespace
 
+// ノイズの種類を選ぶコンボ。
+static bool DrawNoiseTypeCombo(const char* label, compositor::NoiseType& type) {
+    static const char* const kLabels[] = {"fBm", "尾根状", "セル状"};
+    int selected = static_cast<int>(type);
+    if (ImGui::Combo(label, &selected, kLabels, IM_ARRAYSIZE(kLabels))) {
+        type = static_cast<compositor::NoiseType>(selected);
+        return true;
+    }
+    return false;
+}
+
 // テクスチャスロットの選択 UI。ライブラリの一覧からコンボで選ぶ。
 static bool DrawTextureSlot(const char* label, compositor::TextureId& slot,
                             const compositor::TextureLibrary& library) {
@@ -546,6 +557,7 @@ void Application::DrawLayerPanel(bool applyLayout) {
     }
     changed |= ImGui::SliderFloat("基準の高さ", &layer.heightBase, -2.0f, 2.0f);
     if (layer.heightSource == compositor::ValueSource::Noise) {
+        changed |= DrawNoiseTypeCombo("ノイズの種類##h", layer.heightNoise.type);
         changed |= ImGui::SliderFloat("周波数##h", &layer.heightNoise.scale, 0.5f, 64.0f);
         changed |= ImGui::SliderFloat("量##h", &layer.heightNoise.amount, 0.0f, 3.0f);
         changed |= ImGui::SliderInt("オクターブ##h", &layer.heightNoise.octaves, 1, 8);
@@ -554,18 +566,47 @@ void Application::DrawLayerPanel(bool applyLayout) {
     changed |= ImGui::SliderFloat("法線の強さ", &layer.normalStrength, 0.0f, 4.0f);
 
     ImGui::SeparatorText("マスク");
+    static const char* const kMaskSourceLabels[] = {
+        "定数", "ノイズ", "テクスチャ", "下地の高さ", "下地の傾斜", "下地の曲率", "下地の窪み",
+    };
     int maskSource = static_cast<int>(layer.mask.source);
-    if (ImGui::Combo("マスクの出どころ", &maskSource, kSourceLabels, IM_ARRAYSIZE(kSourceLabels))) {
-        layer.mask.source = static_cast<compositor::ValueSource>(maskSource);
+    if (ImGui::Combo("マスクの出どころ", &maskSource, kMaskSourceLabels,
+                     IM_ARRAYSIZE(kMaskSourceLabels))) {
+        layer.mask.source = static_cast<compositor::MaskSource>(maskSource);
         changed = true;
     }
+    if (m_selectedLayer == 0) {
+        ImGui::TextDisabled("一番下のレイヤーは下地なのでマスクは効かない");
+    }
+
     changed |= ImGui::SliderFloat("定数##m", &layer.mask.constant, 0.0f, 1.0f);
-    if (layer.mask.source == compositor::ValueSource::Noise) {
+
+    if (layer.mask.source == compositor::MaskSource::Noise) {
+        changed |= DrawNoiseTypeCombo("ノイズの種類##m", layer.mask.noise.type);
         changed |= ImGui::SliderFloat("周波数##m", &layer.mask.noise.scale, 0.5f, 64.0f);
         changed |= ImGui::SliderFloat("量##m", &layer.mask.noise.amount, 0.0f, 2.0f);
         changed |= ImGui::SliderInt("オクターブ##m", &layer.mask.noise.octaves, 1, 8);
         changed |= ImGui::SliderFloat("オフセット##m", &layer.mask.noise.offset, 0.0f, 64.0f);
     }
+    if (compositor::IsDerivedMaskSource(layer.mask.source)) {
+        changed |= ImGui::SliderFloat("強調##m", &layer.mask.derivedScale, 0.0f, 8.0f);
+        switch (layer.mask.source) {
+            case compositor::MaskSource::Slope:
+                ImGui::TextDisabled("急な面ほど 1 に近づく");
+                break;
+            case compositor::MaskSource::Curvature:
+                ImGui::TextDisabled("0.5 が平坦。凸で大、凹で小");
+                break;
+            case compositor::MaskSource::Cavity:
+                ImGui::TextDisabled("窪んでいるほど 1 に近づく");
+                break;
+            default:
+                ImGui::TextDisabled("下地が高いほど 1 に近づく");
+                break;
+        }
+    }
+
+    changed |= ImGui::SliderFloat("カーブ", &layer.mask.contrast, 0.0f, 4.0f);
     changed |= ImGui::SliderFloat("レベル下限", &layer.mask.levelsLow, 0.0f, 1.0f);
     changed |= ImGui::SliderFloat("レベル上限", &layer.mask.levelsHigh, 0.0f, 1.0f);
     changed |= ImGui::Checkbox("反転", &layer.mask.invert);
