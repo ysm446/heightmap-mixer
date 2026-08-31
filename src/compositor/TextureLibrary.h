@@ -21,6 +21,14 @@ struct LibraryTexture {
     uint32_t srgbSrvIndex = kInvalidTextureIndex;
     // 16bit float（EXR 由来）かどうか。破棄のときに SRV を二重解放しないためにも使う。
     bool isFloat = false;
+    // 一覧に出すための表示用テクスチャ。**リニアなテクスチャのときだけ作る。**
+    // ImGui は値をそのまま描くので、リニアのまま渡すと極端に暗く見える。
+    rhi::GpuTexture preview;
+
+    // 一覧に描くハンドル。表示用が無ければ元のテクスチャ（中身が sRGB）を使う。
+    D3D12_GPU_DESCRIPTOR_HANDLE PreviewHandle() const {
+        return preview.IsValid() ? preview.srv.gpu : texture.srv.gpu;
+    }
 };
 
 // 読み込んだテクスチャを保持し、bindless インデックスを払い出す。
@@ -35,20 +43,31 @@ public:
     void Destroy(rhi::Device& device);
 
     // 画像を読み込んでライブラリに追加する。失敗したら kNoTexture を返す。
+    // すでに同じパスを読み込んでいれば、読み直さずにその ID を返す。
     TextureId Load(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                    const std::filesystem::path& path);
 
     void Remove(rhi::Device& device, TextureId id);
+    // すべて破棄する。プロジェクトを開く前に呼ぶ。フレームの外で呼ぶこと。
+    void Clear(rhi::Device& device);
 
     const std::vector<LibraryTexture>& Entries() const { return m_entries; }
 
     // シェーダへ渡すインデックス。id が無効なら kInvalidTextureIndex。
     uint32_t SrvIndex(TextureId id, bool srgb) const;
     const LibraryTexture* Find(TextureId id) const;
+    // 名前を変えるなど、一覧から中身を書き換えるとき用。
+    LibraryTexture* FindMutable(TextureId id);
+    // 読み込み済みの中から同じ画像を探す。無ければ kNoTexture。
+    // プロジェクトやマテリアルの読み込みで、同じ画像を二重に持たないために使う。
+    TextureId FindByPath(const std::filesystem::path& path) const;
 
 private:
     bool GenerateMips(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                       rhi::GpuTexture& texture);
+    // リニアなテクスチャを sRGB へ直した表示用テクスチャを作る。
+    bool BuildPreview(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                      LibraryTexture& entry);
 
     std::vector<LibraryTexture> m_entries;
     TextureId m_nextId = 1;

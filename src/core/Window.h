@@ -3,7 +3,9 @@
 #include <Windows.h>
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
+#include <vector>
 
 namespace mm {
 
@@ -13,6 +15,8 @@ public:
     // 追加のメッセージ処理。true を返すとそのメッセージはウィンドウ側で処理しない。
     using MessageHook = std::function<bool(HWND, UINT, WPARAM, LPARAM)>;
     using ResizeCallback = std::function<void(uint32_t, uint32_t)>;
+    // エクスプローラからファイルを落とされたときに呼ばれる。
+    using DropCallback = std::function<void(const std::vector<std::filesystem::path>&)>;
 
     Window() = default;
     ~Window();
@@ -28,11 +32,16 @@ public:
     // メニューなどからアプリを閉じる。
     void RequestClose() { m_shouldClose = true; }
 
+    // タイトルバーの文字列を差し替える。開いているプロジェクト名を出すのに使う。
+    void SetTitle(const wchar_t* title);
+
     // 溜まっているメッセージを処理する。終了要求が来ていたら false を返す。
     bool PumpMessages();
 
     void SetMessageHook(MessageHook hook) { m_messageHook = std::move(hook); }
     void SetResizeCallback(ResizeCallback callback) { m_resizeCallback = std::move(callback); }
+    // ファイルのドロップを受け取る。呼ばれるのはメッセージ処理の中（フレームの外）。
+    void SetDropCallback(DropCallback callback) { m_dropCallback = std::move(callback); }
 
     HWND Handle() const { return m_hwnd; }
     uint32_t Width() const { return m_width; }
@@ -50,6 +59,7 @@ private:
     bool m_minimized = false;
     MessageHook m_messageHook;
     ResizeCallback m_resizeCallback;
+    DropCallback m_dropCallback;
 };
 
 }  // namespace mm

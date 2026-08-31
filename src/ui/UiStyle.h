@@ -65,6 +65,11 @@ void PropertyValue(const char* label, const char* format, ...);
 // 値列いっぱいに広げないボタン。幅は kButtonWidth / kWideButtonWidth のどちらか。
 bool Button(const char* label, float width = kButtonWidth);
 
+// 通知の意味色。ステータスバーで警告とエラーを区別するためだけに使う。
+// グレー基調を崩さないよう彩度は低く抑えてある。配色の一部なので UiStyle.cpp に置く。
+ImU32 WarnColor();
+ImU32 ErrorColor();
+
 // 補助テキスト。操作の説明や単位の目安を 1 行で添えるときに使う。
 void HintText(const char* format, ...);
 

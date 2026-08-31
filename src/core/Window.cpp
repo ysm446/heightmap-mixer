@@ -2,6 +2,8 @@
 
 #include "core/Log.h"
 
+#include <shellapi.h>
+
 namespace mm {
 namespace {
 
@@ -72,9 +74,18 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
     m_width = static_cast<uint32_t>(client.right - client.left);
     m_height = static_cast<uint32_t>(client.bottom - client.top);
 
+    // エクスプローラからのドロップを受け付ける（WM_DROPFILES）。
+    ::DragAcceptFiles(m_hwnd, TRUE);
+
     ::ShowWindow(m_hwnd, SW_SHOWDEFAULT);
     ::UpdateWindow(m_hwnd);
     return true;
+}
+
+void Window::SetTitle(const wchar_t* title) {
+    if (m_hwnd != nullptr && title != nullptr) {
+        ::SetWindowTextW(m_hwnd, title);
+    }
 }
 
 void Window::Destroy() {
@@ -130,6 +141,30 @@ LRESULT Window::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 if (m_resizeCallback) {
                     m_resizeCallback(m_width, m_height);
                 }
+            }
+            return 0;
+        }
+        case WM_DROPFILES: {
+            // 落とされたパスを集めて呼び出し側へ渡す。ここでは読み込まない
+            // （読み込みは GPU 待機を伴うので、フレームの外の保留処理で行う）。
+            const auto drop = reinterpret_cast<HDROP>(wparam);
+            const UINT count = ::DragQueryFileW(drop, 0xFFFFFFFFu, nullptr, 0);
+            std::vector<std::filesystem::path> paths;
+            paths.reserve(count);
+            for (UINT i = 0; i < count; ++i) {
+                // 返る長さは終端を含まない。バッファには終端のぶんを足して渡す。
+                const UINT length = ::DragQueryFileW(drop, i, nullptr, 0);
+                if (length == 0) {
+                    continue;
+                }
+                std::wstring buffer(length, L' ');
+                if (::DragQueryFileW(drop, i, buffer.data(), length + 1) != 0) {
+                    paths.emplace_back(buffer);
+                }
+            }
+            ::DragFinish(drop);
+            if (!paths.empty() && m_dropCallback) {
+                m_dropCallback(paths);
             }
             return 0;
         }

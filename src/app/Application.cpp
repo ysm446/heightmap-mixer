@@ -2,6 +2,7 @@
 
 #include "core/FileDialog.h"
 #include "core/Log.h"
+#include "io/ProjectIo.h"
 #include "ui/UiStyle.h"
 
 #include <imgui.h>
@@ -47,6 +48,16 @@ std::filesystem::path ResolveShaderRoot() {
     return std::filesystem::path(MM_SHADER_DIR);
 }
 
+// ImGui へ渡す文字列は UTF-8。path::string() はロケール依存なので使わない。
+std::string ToUtf8(const std::filesystem::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string(text.begin(), text.end());
+}
+
+std::filesystem::path FromUtf8(const std::string& text) {
+    return std::filesystem::path(std::u8string(text.begin(), text.end()));
+}
+
 float RadiansToDegrees(float radians) {
     return radians * (180.0f / 3.14159265358979323846f);
 }
@@ -79,6 +90,16 @@ constexpr uint32_t kResolutionValues[] = {512, 1024, 2048};
 
 // レイヤー一覧のドラッグ＆ドロップで使うペイロードの種別。
 constexpr const char* kLayerDragDropType = "MM_LAYER";
+// テクスチャ一覧からマップ欄へのドラッグ＆ドロップで使うペイロードの種別。
+constexpr const char* kTextureDragDropType = "MM_TEXTURE";
+
+// テクスチャの一覧に出すフォーマット名。DXGI の名前は長いので短く言い換える。
+const char* TextureFormatLabel(const compositor::LibraryTexture& entry) {
+    return entry.isFloat ? "RGBA16F (リニア)" : "RGBA8 (sRGB / リニア)";
+}
+
+// ステータスバーの通知を残す時間（秒）。情報だけが時間で消える。
+constexpr float kStatusHoldSeconds = 6.0f;
 
 // ビューポートの背景色の既定値。Application のメンバ初期化と揃えること。
 constexpr float kDefaultClearColor[3] = {0.09f, 0.09f, 0.11f};
@@ -182,6 +203,17 @@ bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
             ImGui::PopID();
         }
         ImGui::EndCombo();
+    }
+
+    // テクスチャ一覧からドラッグしてきた画像を受ける。
+    // ドラッグ中にコンボは開けないので、直前のアイテムは必ずコンボ本体になる。
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kTextureDragDropType);
+            payload != nullptr) {
+            slot = *static_cast<const compositor::TextureId*>(payload->Data);
+            changed = true;
+        }
+        ImGui::EndDragDropTarget();
     }
     return changed;
 }
@@ -344,18 +376,34 @@ bool Application::Initialize(const StartupOptions& options) {
     m_window.SetResizeCallback([this](uint32_t width, uint32_t height) {
         m_device.Resize(width, height);
     });
+    // エクスプローラからのドロップ。拡張子で行き先を振り分ける。
+    m_window.SetDropCallback([this](const std::vector<std::filesystem::path>& paths) {
+        HandleDroppedFiles(paths);
+    });
 
     m_pendingTexturePaths = options.texturePaths;
 
     if (!options.hdriPath.empty()) {
         m_renderer.RequestHdrLoad(options.hdriPath);
     }
+    // 読み込みは GPU 待機を伴うので、ここでは要求だけ積む。
+    // 最初のフレームの前に ProcessPendingFileWork が処理する。
+    if (!options.projectPath.empty()) {
+        m_pendingProjectOpen = options.projectPath;
+    }
+    UpdateWindowTitle();
+
+    // ログをステータスバーへ流す。以降の警告やエラーは画面上でも見える。
+    SetLogSink([this](LogLevel level, const char* text) { PushStatus(level, text); });
 
     MM_LOG_INFO("material-mixer %s を起動しました", MM_APP_VERSION);
     return true;
 }
 
 void Application::Shutdown() {
+    // シンクは this を掴んでいる。破棄より先に必ず外す。
+    SetLogSink({});
+
     m_device.WaitForGpu();
     m_paintMasks.Destroy(m_device);
     m_materialLibrary.Destroy(m_device);
@@ -397,6 +445,19 @@ int Application::Run() {
 
 
 
+        // プロジェクトとマテリアルの読み書きも GPU 待機を伴うため、フレームの外で。
+        // 他の保留処理より先に行う（読み込みが中身を丸ごと入れ替えるため）。
+        ProcessPendingFileWork();
+
+        // 開発用: 数フレーム描いてからプロジェクトを保存して終了する。
+        // 対話せずに保存と読み込みを確かめるために使う。
+        if (!m_options.saveProjectPath.empty() && m_frameCounter >= m_options.screenshotFrame) {
+            const io::ProjectRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary,
+                                       m_paintMasks, m_renderer};
+            io::SaveProject(m_options.saveProjectPath, m_device, refs);
+            break;
+        }
+
         // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
         // フレームの外で処理する。
         m_renderer.ProcessPendingWork(m_device, m_pipelineCache);
@@ -409,8 +470,16 @@ int Application::Run() {
             paths.swap(m_pendingTexturePaths);
             bool loaded = false;
             for (const std::filesystem::path& path : paths) {
-                loaded |= (m_textureLibrary.Load(m_device, m_pipelineCache, path) !=
-                           compositor::kNoTexture);
+                const compositor::TextureId id =
+                    m_textureLibrary.Load(m_device, m_pipelineCache, path);
+                if (id == compositor::kNoTexture) {
+                    continue;
+                }
+                loaded = true;
+                // 読み込んだものを選択して一覧に見せる。
+                m_selectedTexture =
+                    static_cast<int>(m_textureLibrary.Entries().size()) - 1;
+                m_scrollToSelectedTexture = true;
             }
             if (loaded) {
                 // 読み込んだ画像を参照しているサムネイルを作り直す。
@@ -482,10 +551,7 @@ void Application::DrawUi() {
     // メニューバーを先に作ることで、メインビューポートの作業領域が
     // メニューバー分を差し引いた状態になる。既定のパネル配置がこれに依存する。
     if (ImGui::BeginMainMenuBar()) {
-        if (ImGui::BeginMenu("ファイル")) {
-            ImGui::MenuItem("終了", nullptr, false, false);
-            ImGui::EndMenu();
-        }
+        DrawFileMenu();
         if (ImGui::BeginMenu("表示")) {
             if (ImGui::MenuItem("レイアウトをリセット")) {
                 m_rebuildLayout = true;
@@ -502,7 +568,10 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v2");
+    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v3");
+
+    // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
+    DrawStatusBar();
 
     // ini にドックの配置が無ければ既定レイアウトを組む。
     // DockSpaceOverViewport がノードを作る前に判定すること。
@@ -518,8 +587,12 @@ void Application::DrawUi() {
     ImGui::DockSpaceOverViewport(dockspaceId, ImGui::GetMainViewport());
 
     DrawViewportPanel();
+    // タブが重なる枠では、**最初に submit したパネルが前面のタブになり、
+    // タブは submit した順に並ぶ**（ini に配置が無いとき）。
+    // 作業の起点はレイヤーなので、同じ枠のマテリアル・テクスチャより先に描く。
     DrawLayerPanel();
     DrawMaterialLibraryPanel();
+    DrawTextureLibraryPanel();
     DrawMaterialPanel();
     DrawLightingPanel();
     DrawInfoPanel();
@@ -627,6 +700,9 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     // マテリアルはレイヤーと同じ枠にタブで並べる。
     // どちらも「何を積むか」を決める作業で、同時には見ない。
     ImGui::DockBuilderDockWindow("マテリアル", left);
+    // テクスチャも同じ枠。マテリアルへマップを割り当てるときの入口であり、
+    // レイヤーと同時に見るものではない。
+    ImGui::DockBuilderDockWindow("テクスチャ", left);
     ImGui::DockBuilderDockWindow("ビューポート", center);
     ImGui::DockBuilderDockWindow("プレビュー設定", rightTop);
     ImGui::DockBuilderDockWindow("ライティングと露出", right);
@@ -1247,16 +1323,28 @@ void Application::DrawMaterialLibraryPanel() {
         m_selectedMaterial = std::max(0, m_selectedMaterial - 1);
     }
 
-    if (ui::Button("画像を読み込む…", ui::kWideButtonWidth)) {
-        std::vector<std::filesystem::path> paths =
-            ShowOpenFilesDialog(L"テクスチャを開く", ImageFileFilters());
-        if (!paths.empty()) {
-            m_pendingTexturePaths.insert(m_pendingTexturePaths.end(), paths.begin(), paths.end());
+    // マテリアル単体のファイル (.mmmat)。プロジェクト間で持ち回るために使う。
+    // プロジェクトにはマテリアルの構造ごと埋め込まれるので、保存には要らない。
+    if (ui::Button("読み込み…", ui::kWideButtonWidth)) {
+        const std::filesystem::path path =
+            ShowOpenFileDialog(L"マテリアルを読み込む", MaterialFileFilters());
+        if (!path.empty()) {
+            m_pendingMaterialImport = path;
         }
     }
     ImGui::SameLine();
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("(%zu 枚)", m_textureLibrary.Entries().size());
+    ImGui::BeginDisabled(assetCount == 0);
+    if (ui::Button("書き出し…", ui::kWideButtonWidth)) {
+        const compositor::MaterialAsset& target =
+            assets[static_cast<size_t>(m_selectedMaterial)];
+        const std::filesystem::path path = ShowSaveFileDialog(
+            L"マテリアルを書き出す", MaterialFileFilters(), L"mmmat", FromUtf8(target.name));
+        if (!path.empty()) {
+            m_pendingMaterialExport = path;
+            m_pendingExportMaterial = target.id;
+        }
+    }
+    ImGui::EndDisabled();
 
     // サムネイルの一覧。パネルの幅に入るだけ横に並べる。
     const float thumbnailSize = ui::Scaled(84.0f);
@@ -1374,6 +1462,433 @@ void Application::DrawMaterialLibraryPanel() {
     }
 
     ImGui::End();
+}
+
+// ファイルメニュー。ここでは要求を積むだけで、実際の読み書きは
+// ProcessPendingFileWork がフレームの外で行う（GPU 待機を伴うため）。
+void Application::DrawFileMenu() {
+    if (!ImGui::BeginMenu("ファイル")) {
+        return;
+    }
+
+    if (ImGui::MenuItem("新規")) {
+        m_pendingProjectNew = true;
+    }
+    if (ImGui::MenuItem("開く…")) {
+        const std::filesystem::path path =
+            ShowOpenFileDialog(L"プロジェクトを開く", ProjectFileFilters());
+        if (!path.empty()) {
+            m_pendingProjectOpen = path;
+        }
+    }
+    if (ImGui::MenuItem("保存")) {
+        if (m_projectPath.empty()) {
+            // 一度も保存していないので、保存先を聞く。
+            const std::filesystem::path path = ShowSaveFileDialog(
+                L"プロジェクトを保存", ProjectFileFilters(), L"mmproj", m_projectPath);
+            if (!path.empty()) {
+                m_pendingProjectSave = path;
+            }
+        } else {
+            m_pendingProjectSave = m_projectPath;
+        }
+    }
+    if (ImGui::MenuItem("名前を付けて保存…")) {
+        const std::filesystem::path path = ShowSaveFileDialog(
+            L"プロジェクトを保存", ProjectFileFilters(), L"mmproj", m_projectPath);
+        if (!path.empty()) {
+            m_pendingProjectSave = path;
+        }
+    }
+
+    ImGui::Separator();
+    if (ImGui::MenuItem("終了")) {
+        m_window.RequestClose();
+    }
+    ImGui::EndMenu();
+}
+
+void Application::PushStatus(LogLevel level, const char* text) {
+    if (text == nullptr) {
+        return;
+    }
+    m_status.text = text;
+    m_status.level = level;
+    m_status.time = std::chrono::steady_clock::now();
+    m_status.valid = true;
+}
+
+// 画面下端のステータスバー。左に直近の通知、右にいま何を持っているか。
+//
+// メニューバーと同じ仕組み（BeginViewportSideBar）で作業領域を狭めるので、
+// **ドックスペースより前に呼ぶこと。** 後だとドックがバーの下へはみ出す。
+void Application::DrawStatusBar() {
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoScrollbar |
+                                        ImGuiWindowFlags_NoSavedSettings |
+                                        ImGuiWindowFlags_MenuBar;
+
+    if (ImGui::BeginViewportSideBar("##statusBar", viewport, ImGuiDir_Down,
+                                    ImGui::GetFrameHeight(), kFlags)) {
+        if (ImGui::BeginMenuBar()) {
+            // --- 左: いまのモードと直近の通知 -------------------------------
+            // モードでビューポートの操作が変わるので、常に見える場所へ出す。
+            if (const compositor::MaterialLayer* paintLayer = CurrentPaintLayer();
+                paintLayer != nullptr) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_CheckMark));
+                ImGui::Text("ペイント中: %s", paintLayer->name.c_str());
+                ImGui::PopStyleColor();
+                ImGui::TextDisabled("|");
+            }
+
+            if (m_status.valid) {
+                const auto age = std::chrono::duration<float>(
+                                     std::chrono::steady_clock::now() - m_status.time)
+                                     .count();
+                // 情報は流れて消える。警告とエラーは次の通知まで残す。
+                const bool keep = (m_status.level != LogLevel::Info) || (age < kStatusHoldSeconds);
+                if (keep) {
+                    ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                    if (m_status.level == LogLevel::Warn) {
+                        color = ui::WarnColor();
+                    } else if (m_status.level == LogLevel::Error) {
+                        color = ui::ErrorColor();
+                    }
+                    ImGui::PushStyleColor(ImGuiCol_Text, color);
+                    ImGui::TextUnformatted(m_status.text.c_str());
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) {
+                        // 長い通知（パスなど）は切れるので、全文はここで読む。
+                        ImGui::SetTooltip("%s", m_status.text.c_str());
+                    }
+                }
+            }
+
+            // --- 右: いま何を持っているか -----------------------------------
+            const std::string project =
+                m_projectPath.empty() ? std::string("未保存のプロジェクト")
+                                      : ToUtf8(m_projectPath.filename());
+            char summary[320] = {};
+            std::snprintf(summary, sizeof(summary),
+                          "%s   レイヤー %zu / マテリアル %zu / テクスチャ %zu   合成 %u^2   "
+                          "%.0f FPS",
+                          project.c_str(), m_materialStack.Layers().size(),
+                          m_materialLibrary.Entries().size(), m_textureLibrary.Entries().size(),
+                          m_renderer.MaterialResolution(), ImGui::GetIO().Framerate);
+
+            const float summaryWidth = ImGui::CalcTextSize(summary).x;
+            const float right = ImGui::GetWindowWidth() - summaryWidth -
+                                ImGui::GetStyle().ItemSpacing.x * 2.0f;
+            // 通知が長いときは重ねない。右寄せできる余白があるときだけ出す。
+            if (right > ImGui::GetCursorPosX()) {
+                ImGui::SetCursorPosX(right);
+                ImGui::TextDisabled("%s", summary);
+            }
+
+            ImGui::EndMenuBar();
+        }
+    }
+    ImGui::End();
+}
+
+size_t Application::CountTextureUsers(compositor::TextureId id) const {
+    if (id == compositor::kNoTexture) {
+        return 0;
+    }
+    size_t users = 0;
+    for (const compositor::MaterialAsset& asset : m_materialLibrary.Entries()) {
+        users += (asset.baseColor == id) ? 1 : 0;
+        users += (asset.normal == id) ? 1 : 0;
+        users += (asset.roughness.texture == id) ? 1 : 0;
+        users += (asset.metallic.texture == id) ? 1 : 0;
+        users += (asset.ambientOcclusion.texture == id) ? 1 : 0;
+        users += (asset.height.texture == id) ? 1 : 0;
+    }
+    for (const compositor::MaterialLayer& layer : m_materialStack.Layers()) {
+        users += (layer.mask.texture.texture == id) ? 1 : 0;
+    }
+    return users;
+}
+
+// 読み込んだ画像の一覧。マテリアルのマップはここから割り当てる。
+void Application::DrawTextureLibraryPanel() {
+    if (!ImGui::Begin("テクスチャ")) {
+        ImGui::End();
+        return;
+    }
+
+    const std::vector<compositor::LibraryTexture>& entries = m_textureLibrary.Entries();
+    const auto textureCount = static_cast<int>(entries.size());
+    m_selectedTexture = std::clamp(m_selectedTexture, 0, (textureCount > 0) ? textureCount - 1 : 0);
+
+    if (ui::Button("読み込む…", ui::kWideButtonWidth)) {
+        std::vector<std::filesystem::path> paths =
+            ShowOpenFilesDialog(L"テクスチャを開く", ImageFileFilters());
+        if (!paths.empty()) {
+            m_pendingTexturePaths.insert(m_pendingTexturePaths.end(), paths.begin(), paths.end());
+        }
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(textureCount == 0);
+    if (ui::Button("削除")) {
+        // 破棄はディスクリプタを返すので、フレームの外で処理する。
+        m_pendingTextureRemove = entries[static_cast<size_t>(m_selectedTexture)].id;
+    }
+    ImGui::EndDisabled();
+
+    // サムネイルの一覧。パネルの幅に入るだけ横に並べる。
+    // 読み込み時にミップを作ってあるので、元の画像をそのまま縮小して出せる。
+    const float thumbnailSize = ui::Scaled(72.0f);
+    if (ImGui::BeginChild("textureGrid", ImVec2(0.0f, ui::Scaled(180.0f)),
+                          ImGuiChildFlags_Borders)) {
+        const float step = thumbnailSize + ImGui::GetStyle().ItemSpacing.x;
+        const auto columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / step));
+
+        for (int i = 0; i < textureCount; ++i) {
+            const compositor::LibraryTexture& entry = entries[static_cast<size_t>(i)];
+            ImGui::PushID(static_cast<int>(entry.id));
+
+            ImGui::BeginGroup();
+            if (m_selectedTexture == i) {
+                // 選択枠。サムネイルの上に重ねず、背景として敷く。
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    ImGui::GetCursorScreenPos(),
+                    ImVec2(ImGui::GetCursorScreenPos().x + thumbnailSize,
+                           ImGui::GetCursorScreenPos().y + thumbnailSize),
+                    ImGui::GetColorU32(ImGuiCol_HeaderActive));
+            }
+            // リニアなテクスチャ（EXR）は表示用に焼き直したものを描く。
+            // 元のまま描くと極端に暗く、一覧で見分けられない。
+            ImGui::Image(static_cast<ImTextureID>(entry.PreviewHandle().ptr),
+                         ImVec2(thumbnailSize, thumbnailSize));
+            if (ImGui::IsItemClicked()) {
+                m_selectedTexture = i;
+            }
+            // 読み込んだ直後のものは枠内へ送る。一覧はスクロールするので、
+            // 追加しただけでは見えない位置に入ることがある。
+            if (m_selectedTexture == i && m_scrollToSelectedTexture) {
+                m_scrollToSelectedTexture = false;
+                ImGui::SetScrollHereY(1.0f);
+            }
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoHoldToOpenOthers)) {
+                // マテリアルのマップ欄へ落とすと、そのスロットに割り当たる。
+                ImGui::SetDragDropPayload(kTextureDragDropType, &entry.id,
+                                          sizeof(compositor::TextureId));
+                ImGui::TextUnformatted(entry.name.c_str());
+                ImGui::EndDragDropSource();
+            } else if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", entry.name.c_str());
+            }
+            ImGui::EndGroup();
+
+            ImGui::PopID();
+            if (((i + 1) % columns) != 0 && (i + 1) < textureCount) {
+                ImGui::SameLine();
+            }
+        }
+    }
+    ImGui::EndChild();
+
+    if (textureCount == 0) {
+        ui::HintText("「読み込む…」で画像を読み込む（PNG / JPG / TGA / EXR）");
+        ImGui::End();
+        return;
+    }
+
+    const compositor::LibraryTexture& selected = entries[static_cast<size_t>(m_selectedTexture)];
+    ui::SectionHeader("選択中");
+    if (ui::BeginPropertyTable("textureRows")) {
+        char nameBuffer[128] = {};
+        std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", selected.name.c_str());
+        if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer),
+                                  "一覧とマップ欄に出る名前。画像ファイルの名前は変わらない")) {
+            if (compositor::LibraryTexture* mutableEntry =
+                    m_textureLibrary.FindMutable(selected.id);
+                mutableEntry != nullptr) {
+                mutableEntry->name = nameBuffer;
+            }
+        }
+        ui::PropertyValue("解像度", "%u x %u", selected.texture.width, selected.texture.height);
+        ui::PropertyValue("ミップ", "%u 段", selected.texture.mipLevels);
+        ui::PropertyValue("形式", "%s", TextureFormatLabel(selected));
+        ui::PropertyValue("参照", "%zu か所", CountTextureUsers(selected.id));
+
+        ui::PropertyLabel("場所", "プロジェクトにはここへの相対パスを記録する");
+        const std::string directory = ToUtf8(selected.path.parent_path());
+        ImGui::TextUnformatted(directory.c_str());
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", ToUtf8(selected.path).c_str());
+        }
+        ui::PropertyEnd();
+        ui::EndPropertyTable();
+    }
+    ui::HintText("サムネイルをマテリアルのマップ欄へドラッグすると割り当てられる");
+
+    ImGui::End();
+}
+
+void Application::HandleDroppedFiles(const std::vector<std::filesystem::path>& paths) {
+    size_t images = 0;
+    for (const std::filesystem::path& path : paths) {
+        std::string extension = path.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        // 拡張子で行き先を決める。読み込み自体はどれも保留し、フレームの外で処理する。
+        if (extension == ".mmproj") {
+            m_pendingProjectOpen = path;
+        } else if (extension == ".mmmat") {
+            m_pendingMaterialImport = path;
+        } else if (extension == ".hdr") {
+            m_renderer.RequestHdrLoad(path);
+        } else if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
+                   extension == ".tga" || extension == ".bmp" || extension == ".exr") {
+            m_pendingTexturePaths.push_back(path);
+            ++images;
+        } else {
+            MM_LOG_WARN("扱えない形式です: %s", ToUtf8(path.filename()).c_str());
+        }
+    }
+    if (images > 0) {
+        MM_LOG_INFO("%zu 枚の画像を読み込みます", images);
+    }
+}
+
+void Application::ResetProject() {
+    // どれも GPU 待機を伴う。フレームの外から呼ぶこと。
+    m_paintMasks.Clear(m_device);
+    m_materialLibrary.Clear(m_device);
+    m_textureLibrary.Clear(m_device);
+
+    // 既定のスタックへ戻す。MaterialStack を代入で作り直すと revision も 1 へ戻り、
+    // 評価器が「変わっていない」と判断してしまうので、中身だけ入れ替える。
+    const compositor::MaterialStack defaults;
+    m_materialStack.Layers() = defaults.Layers();
+    m_materialStack.MarkDirty();
+
+    m_selectedLayer = 0;
+    m_selectedMaterial = 0;
+    m_selectedTexture = 0;
+    m_ordTexture = compositor::kNoTexture;
+    m_paintMode = false;
+    m_strokeActive = false;
+}
+
+void Application::UpdateWindowTitle() {
+    std::wstring title;
+    if (!m_projectPath.empty()) {
+        title = m_projectPath.filename().wstring() + L" - ";
+    }
+    title += L"Material Mixer";
+    m_window.SetTitle(title.c_str());
+}
+
+void Application::ProcessPendingFileWork() {
+    // どれもリソースの生成・破棄と GPU 待機を伴う。フレームの外で処理すること。
+
+    if (m_pendingProjectNew) {
+        m_pendingProjectNew = false;
+        ResetProject();
+        m_projectPath.clear();
+        UpdateWindowTitle();
+    }
+
+    if (!m_pendingProjectOpen.empty()) {
+        const std::filesystem::path path = m_pendingProjectOpen;
+        m_pendingProjectOpen.clear();
+
+        io::ProjectRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary, m_paintMasks,
+                             m_renderer};
+        if (io::LoadProject(path, m_device, m_pipelineCache, refs)) {
+            m_projectPath = path;
+            m_selectedLayer = 0;
+            m_selectedMaterial = 0;
+            m_selectedTexture = 0;
+            m_ordTexture = compositor::kNoTexture;
+            m_paintMode = false;
+            m_strokeActive = false;
+            UpdateWindowTitle();
+        }
+    }
+
+    if (!m_pendingProjectSave.empty()) {
+        const std::filesystem::path path = m_pendingProjectSave;
+        m_pendingProjectSave.clear();
+
+        io::ProjectRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary, m_paintMasks,
+                             m_renderer};
+        if (io::SaveProject(path, m_device, refs)) {
+            m_projectPath = path;
+            UpdateWindowTitle();
+        }
+    }
+
+    if (!m_pendingMaterialExport.empty()) {
+        const std::filesystem::path path = m_pendingMaterialExport;
+        const compositor::MaterialAssetId id = m_pendingExportMaterial;
+        m_pendingMaterialExport.clear();
+        m_pendingExportMaterial = compositor::kNoMaterialAsset;
+
+        if (const compositor::MaterialAsset* asset = m_materialLibrary.Find(id);
+            asset != nullptr) {
+            io::SaveMaterial(path, *asset, m_textureLibrary);
+        }
+    }
+
+    if (!m_pendingMaterialImport.empty()) {
+        const std::filesystem::path path = m_pendingMaterialImport;
+        m_pendingMaterialImport.clear();
+
+        const compositor::MaterialAssetId id = io::LoadMaterial(
+            path, m_device, m_pipelineCache, m_textureLibrary, m_materialLibrary);
+        if (id != compositor::kNoMaterialAsset) {
+            m_selectedMaterial = static_cast<int>(m_materialLibrary.Entries().size()) - 1;
+        }
+    }
+
+    if (m_pendingTextureRemove != compositor::kNoTexture) {
+        const compositor::TextureId removed = m_pendingTextureRemove;
+        m_pendingTextureRemove = compositor::kNoTexture;
+
+        // 参照を先に外す。無効な ID を残すと、次に同じ番号が払い出されたときに
+        // 別の画像が割り当たってしまう。
+        const auto clearSlot = [removed](compositor::TextureId& slot) {
+            const bool hit = (slot == removed);
+            if (hit) {
+                slot = compositor::kNoTexture;
+            }
+            return hit;
+        };
+        const auto clearMap = [removed](compositor::MapSlot& slot) {
+            const bool hit = (slot.texture == removed);
+            if (hit) {
+                slot = compositor::MapSlot{};
+            }
+            return hit;
+        };
+
+        for (const compositor::MaterialAsset& entry : m_materialLibrary.Entries()) {
+            compositor::MaterialAsset* asset = m_materialLibrary.FindMutable(entry.id);
+            bool hit = clearSlot(asset->baseColor);
+            hit |= clearSlot(asset->normal);
+            hit |= clearMap(asset->roughness);
+            hit |= clearMap(asset->metallic);
+            hit |= clearMap(asset->ambientOcclusion);
+            hit |= clearMap(asset->height);
+            if (hit) {
+                asset->thumbnailDirty = true;
+            }
+        }
+        for (compositor::MaterialLayer& layer : m_materialStack.Layers()) {
+            clearMap(layer.mask.texture);
+        }
+        clearSlot(m_ordTexture);
+
+        // ディスクリプタを返すので、GPU が読み終わるまで待つ。
+        m_device.WaitForGpu();
+        m_textureLibrary.Remove(m_device, removed);
+        m_materialStack.MarkDirty();
+    }
 }
 
 void Application::DrawInfoPanel() {

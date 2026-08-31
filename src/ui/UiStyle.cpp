@@ -37,6 +37,11 @@ constexpr ImVec4 kTextDisabled = Gray(0.455f);  // #747474
 // わずかに青へ寄せた明るい灰にとどめる。選択・チェック・つまみの強調にだけ使う。
 constexpr ImVec4 kAccent = ImVec4(0.588f, 0.639f, 0.678f, 1.0f);  // #96A3AD
 
+// 通知の意味色。座標軸ギズモの X/Y/Z と同じく「意味を持つ色」で、
+// テーマのグレーとは別枠。彩度を上げるとグレー基調が崩れるので低めに抑える。
+constexpr ImVec4 kWarn = ImVec4(0.749f, 0.627f, 0.416f, 1.0f);   // #BFA06A
+constexpr ImVec4 kError = ImVec4(0.784f, 0.482f, 0.447f, 1.0f);  // #C87B72
+
 // ツールチップの折り返し幅（フォントサイズ比）。
 constexpr float kTooltipWrapRatio = 22.0f;
 
@@ -100,6 +105,14 @@ float ValueWidth(float minWidth, float maxWidth) {
 }
 
 }  // namespace
+
+ImU32 WarnColor() {
+    return ImGui::GetColorU32(kWarn);
+}
+
+ImU32 ErrorColor() {
+    return ImGui::GetColorU32(kError);
+}
 
 float Scaled(float value) {
     return value * g_dpiScale;

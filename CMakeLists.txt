@@ -100,6 +100,8 @@ set(mm_sources
     src/core/ImageIo.h
     src/core/Window.cpp
     src/core/Window.h
+    src/io/ProjectIo.cpp
+    src/io/ProjectIo.h
     src/rhi/Common.cpp
     src/rhi/Common.h
     src/rhi/DeletionQueue.cpp

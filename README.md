@@ -29,10 +29,17 @@ Quixel Mixer 相当のマテリアルオーサリングツール。
 - **PBR プレビュー**: GGX 直接光 + IBL（分割和近似）。球 / 平面 / キューブ。
 - **物理カメラの露出**: 絞り・シャッター・ISO から EV100 を求める方式と、EV 直接指定。
   トーンマップは ACES / Reinhard / なし。
+- **ペイントマスク**: ビューポート上でブラシを引いてマスクを直接描ける。アンドゥ / リドゥ付き。
 - **環境**: 手続き的な空、または Radiance HDR (.hdr) の読み込み。背景表示。
+- **ステータスバー**: 画面下端に直近の通知（保存した、読み込めなかった など）と、
+  いま何を持っているか（プロジェクト名 / 各一覧の数 / 合成解像度 / FPS）を出す。
+- **保存**: プロジェクト (`.mmproj`) にレイヤー・マテリアル・テクスチャの参照・
+  ペイントマスク・プレビュー設定をまとめて保存できる。
+  マテリアルは単体ファイル (`.mmmat`) として書き出し、別のプロジェクトへ持ち込める。
+  形式は [docs/reference/file-format.md](docs/reference/file-format.md) を参照。
 
-未実装: ペイントマスク、プロジェクトの保存、
-フル解像度エクスポート、地形。詳細は [docs/plan/plan.md](docs/plan/plan.md) を参照。
+未実装: フル解像度エクスポート、地形。
+詳細は [docs/plan/plan.md](docs/plan/plan.md) を参照。
 
 ## 必要なもの
 
@@ -84,13 +91,16 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe)
 ### コマンドライン
 
 ```
-material_mixer.exe [--hdri <path>] [--texture <path>]...
+material_mixer.exe [--project <path>] [--save-project <path>]
+                    [--hdri <path>] [--texture <path>]...
                     [--screenshot <path>] [--screenshot-ui <path>]
                     [--screenshot-frame <n>]
 ```
 
 | オプション | 内容 |
 | --- | --- |
+| `--project <path>` | 起動時にプロジェクト (.mmproj) を開く |
+| `--save-project <path>` | 指定フレームまで描いてプロジェクトを保存し、終了する（開発用） |
 | `--hdri <path>` | 起動時に Radiance HDR (.hdr) を環境マップとして読み込む |
 | `--texture <path>` | 起動時にテクスチャライブラリへ読み込む（繰り返し指定可） |
 | `--screenshot <path>` | 指定フレームまで描いてビューポートを PNG に書き出し、終了する |
@@ -109,8 +119,19 @@ material_mixer.exe [--hdri <path>] [--texture <path>]...
 | ビューポートでホイール | ズーム |
 | パネルのタブをドラッグ | パネルの移動 / ドッキング |
 | レイヤー一覧をドラッグ | レイヤーの並べ替え |
+| テクスチャ一覧からマップ欄へドラッグ | そのマップにテクスチャを割り当て |
+| エクスプローラからファイルをドロップ | 拡張子で振り分けて読み込む（下表） |
 | スライダーを Ctrl + クリック | 数値を直接入力 |
 | 行の右端の点をクリック | その値を既定値に戻す |
+
+ウィンドウへ落とせるファイル。
+
+| 拡張子 | 行き先 |
+| --- | --- |
+| `.png` / `.jpg` / `.tga` / `.bmp` / `.exr` | テクスチャ一覧 |
+| `.mmproj` | プロジェクトとして開く |
+| `.mmmat` | マテリアルとして読み込む |
+| `.hdr` | 環境マップ（IBL） |
 
 ペイントモード中はビューポートのドラッグがブラシに変わる。
 
@@ -125,16 +146,23 @@ material_mixer.exe [--hdri <path>] [--texture <path>]...
 - **レイヤー**（左）— レイヤーの追加 / 複製 / 削除と、選択中レイヤーの編集。
   一覧は上が最前面で、ドラッグして並べ替える。
 - **マテリアル**（左・タブ）— PBR のマップ一式に名前を付けたもの。
-  サムネイルの一覧から選び、レイヤーに割り当てる。テクスチャの読み込みもここから。
+  サムネイルの一覧から選び、レイヤーに割り当てる。
   ラフネス / メタルネス / AO / ハイトは「テクスチャ + 読むチャンネル」で指定するので、
   Megascans の `_ORD` のように 1 枚へ詰めたテクスチャをそのまま使える
   （`ORD` 行から AO=R / ラフネス=G / ハイト=B へ一括割り当て）。
+  単体ファイル (`.mmmat`) への書き出しと読み込みもここから。
+- **テクスチャ**（左・タブ）— 読み込んだ画像の一覧。PNG / JPG / TGA / EXR。
+  解像度・ミップ数・形式・参照数・置き場所を確認でき、名前の変更と削除ができる。
+  **サムネイルをマテリアルのマップ欄へドラッグすると割り当たる。**
+  EXR はリニアなので、一覧には sRGB へ直した表示用の絵を出す。
 - **ビューポート**（中央）— 合成結果を貼ったプレビュー。
   左下の座標軸ギズモは右手系 Y-up（X = 赤 / Y = 緑 / Z = 青）。
 - **プレビュー設定**（右上）— 形状、合成結果の使用可否、UV スケール、合成解像度。
 - **ライティングと露出**（右中）— ライト、露出、環境（IBL）、トーンマップ。
 - **情報**（右下）— フレームレート、解像度、合成のレイヤー数とタイル数、
   ペイントマスクの枚数と履歴の段数、PSO キャッシュ数。
+- **ステータスバー**（下端）— 左に直近の通知とモード、右にプロジェクト名と
+  レイヤー / マテリアル / テクスチャの数、合成解像度、FPS。
 
 配置を崩してしまったら `表示 > レイアウトをリセット` で既定へ戻せる。
 
@@ -157,8 +185,9 @@ material_mixer.exe [--hdri <path>] [--texture <path>]...
 CMakeLists.txt / CMakePresets.json / vcpkg.json
 src/
   app/          アプリ本体、エントリポイント、UI パネル
-  compositor/   レイヤースタックの定義、GPU 評価器、テクスチャ / ペイントマスク
+  compositor/   レイヤースタックの定義、GPU 評価器、テクスチャ / マテリアル / ペイントマスク
   core/         ログ、Win32 ウィンドウ、画像入出力、ファイル選択ダイアログ
+  io/           プロジェクト (.mmproj) とマテリアル (.mmmat) の読み書き
   renderer/     PBR プレビュー描画、カメラ、メッシュ、IBL 環境
   rhi/          DX12 ラッパ（device, descriptor, PSO, resource, shader）
   ui/           Dear ImGui の統合、テーマとプロパティ行
@@ -180,5 +209,6 @@ docs/
 | [docs/design/rendering.md](docs/design/rendering.md) | 描画の流れ、露出とトーンマップ、IBL、行列の規約 |
 | [docs/design/compositing.md](docs/design/compositing.md) | チャンネル定義、ハイトブレンド、RNM、マスク生成、ペイント、タイル評価 |
 | [docs/design/design-guide.md](docs/design/design-guide.md) | UI のレイアウト、配色、プロパティ行 |
+| [docs/reference/file-format.md](docs/reference/file-format.md) | `.mmproj` / `.mmmat` のファイル形式 |
 | [docs/changelog.md](docs/changelog.md) | 変更履歴 |
 | [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | 作業ルール |

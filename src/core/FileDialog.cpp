@@ -81,6 +81,13 @@ std::vector<FileFilter> ProjectFileFilters() {
     };
 }
 
+std::vector<FileFilter> MaterialFileFilters() {
+    return {
+        {L"material-mixer マテリアル (*.mmmat)", L"*.mmmat"},
+        {L"すべてのファイル (*.*)", L"*.*"},
+    };
+}
+
 std::filesystem::path ShowOpenFileDialog(const wchar_t* title,
                                          const std::vector<FileFilter>& filters) {
     ComPtr<IFileDialog> dialog = CreateFileDialog(CLSID_FileOpenDialog, title, filters);

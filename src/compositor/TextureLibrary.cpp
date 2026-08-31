@@ -18,6 +18,9 @@ namespace {
 
 constexpr uint32_t kGroupSize = 8;
 
+// 一覧に出す表示用テクスチャの一辺。サムネイルの表示サイズに対して十分な大きさ。
+constexpr uint32_t kPreviewSize = 128;
+
 uint32_t MipCountFor(uint32_t width, uint32_t height) {
     uint32_t size = std::max(width, height);
     uint32_t count = 1;
@@ -58,10 +61,21 @@ void TransitionMip(ID3D12GraphicsCommandList* commandList, const rhi::GpuTexture
     commandList->ResourceBarrier(1, &barrier);
 }
 
+void ReleaseTexture(rhi::Device& device, rhi::GpuTexture& texture) {
+    if (!texture.IsValid()) {
+        return;
+    }
+    device.Allocator().ReleaseDescriptors(texture);
+    device.Defer(texture.resource);
+    device.Defer(texture.allocation);
+    texture = rhi::GpuTexture{};
+}
+
 }  // namespace
 
 void TextureLibrary::Destroy(rhi::Device& device) {
     for (LibraryTexture& entry : m_entries) {
+        ReleaseTexture(device, entry.preview);
         // float は sRGB 用の SRV を別に張っていない（linear と同じものを指す）。
         // 二重解放しないよう、別に張ったときだけ返す。
         if (!entry.isFloat && entry.srgbSrvIndex != kInvalidTextureIndex) {
@@ -83,6 +97,34 @@ const LibraryTexture* TextureLibrary::Find(TextureId id) const {
     return (it != m_entries.end()) ? &(*it) : nullptr;
 }
 
+LibraryTexture* TextureLibrary::FindMutable(TextureId id) {
+    return const_cast<LibraryTexture*>(Find(id));
+}
+
+TextureId TextureLibrary::FindByPath(const std::filesystem::path& path) const {
+    // 同じ画像を別の書き方（相対 / 絶対、大文字小文字）で指していても 1 枚に寄せる。
+    std::error_code error;
+    const std::filesystem::path normalized = std::filesystem::weakly_canonical(path, error);
+    const std::filesystem::path& key = error ? path : normalized;
+
+    for (const LibraryTexture& entry : m_entries) {
+        std::error_code entryError;
+        const std::filesystem::path entryNormalized =
+            std::filesystem::weakly_canonical(entry.path, entryError);
+        const std::filesystem::path& entryKey = entryError ? entry.path : entryNormalized;
+        if (_wcsicmp(entryKey.c_str(), key.c_str()) == 0) {
+            return entry.id;
+        }
+    }
+    return kNoTexture;
+}
+
+void TextureLibrary::Clear(rhi::Device& device) {
+    // ディスクリプタを解放するので、GPU が読み終わるまで待つ。
+    device.WaitForGpu();
+    Destroy(device);
+}
+
 uint32_t TextureLibrary::SrvIndex(TextureId id, bool srgb) const {
     const LibraryTexture* entry = Find(id);
     if (entry == nullptr) {
@@ -98,6 +140,7 @@ void TextureLibrary::Remove(rhi::Device& device, TextureId id) {
         return;
     }
 
+    ReleaseTexture(device, it->preview);
     // Destroy と同じ理由で、別に張ったときだけ返す。
     if (!it->isFloat && it->srgbSrvIndex != kInvalidTextureIndex) {
         device.SrvHeap().Free(device.SrvHeap().At(it->srgbSrvIndex));
@@ -110,6 +153,12 @@ void TextureLibrary::Remove(rhi::Device& device, TextureId id) {
 
 TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                const std::filesystem::path& path) {
+    // 同じ画像を二重に持たない。プロジェクトやマテリアルの読み込みでは、
+    // 複数のマップが同じファイル（Megascans の _ORD など）を指すのが普通。
+    if (const TextureId existing = FindByPath(path); existing != kNoTexture) {
+        return existing;
+    }
+
     // EXR は 16bit float のまま持つ。8bit へ落とすとハイトに階段が出る。
     // それ以外（PNG / TGA / JPG）は 8bit で読む。
     const bool isFloat = IsExrPath(path);
@@ -233,9 +282,75 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
         return kNoTexture;
     }
 
+    // リニアなテクスチャは、そのまま一覧へ出すと極端に暗い。表示用に焼き直す。
+    if (isFloat) {
+        BuildPreview(device, pipelineCache, entry);
+    }
+
     entry.id = m_nextId++;
     m_entries.push_back(std::move(entry));
     return m_entries.back().id;
+}
+
+bool TextureLibrary::BuildPreview(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                  LibraryTexture& entry) {
+    ID3D12PipelineState* pipeline = pipelineCache.GetCompute(L"TexturePreview.hlsl", L"CsMain");
+    if (pipeline == nullptr) {
+        return false;
+    }
+
+    rhi::TextureDesc desc;
+    desc.width = kPreviewSize;
+    desc.height = kPreviewSize;
+    desc.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.allowUnorderedAccess = true;
+    desc.createSrv = true;
+    desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    desc.debugName = L"TexturePreview";
+    if (!device.Allocator().CreateTexture2D(desc, entry.preview)) {
+        return false;
+    }
+
+    // 縮小率に見合ったミップを読む。ミップ 0 のままだとサムネイルがざらつく。
+    const uint32_t longest = std::max(entry.texture.width, entry.texture.height);
+    float sourceMip = 0.0f;
+    for (uint32_t size = longest; size > kPreviewSize; size >>= 1) {
+        sourceMip += 1.0f;
+    }
+    sourceMip = std::min(sourceMip, static_cast<float>(entry.texture.mipLevels - 1));
+
+    struct PreviewConstants {
+        uint32_t sourceIndex;
+        uint32_t outputIndex;
+        uint32_t size;
+        float sourceMip;
+    };
+    const PreviewConstants constants{entry.linearSrvIndex, entry.preview.UavIndex(), kPreviewSize,
+                                     sourceMip};
+
+    rhi::GpuTexture& preview = entry.preview;
+    const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+        PIXBeginEvent(commandList, PIX_COLOR(160, 200, 120), "TexturePreview");
+        commandList->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
+        commandList->SetPipelineState(pipeline);
+        commandList->SetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t),
+                                                  &constants, 0);
+        commandList->Dispatch(DispatchCount(kPreviewSize), DispatchCount(kPreviewSize), 1);
+
+        // ImGui から SRV として読むので、ピクセルシェーダ可視の状態へ移す。
+        const auto toRead = CD3DX12_RESOURCE_BARRIER::Transition(
+            preview.resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        commandList->ResourceBarrier(1, &toRead);
+        PIXEndEvent(commandList);
+    });
+
+    if (!executed) {
+        ReleaseTexture(device, entry.preview);
+        return false;
+    }
+    preview.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    return true;
 }
 
 bool TextureLibrary::GenerateMips(rhi::Device& device, rhi::PipelineCache& pipelineCache,

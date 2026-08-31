@@ -4,6 +4,7 @@
 #include "compositor/MaterialStack.h"
 #include "compositor/PaintMask.h"
 #include "compositor/TextureLibrary.h"
+#include "core/Log.h"
 #include "core/Window.h"
 #include "renderer/PreviewRenderer.h"
 #include "rhi/Device.h"
@@ -13,7 +14,9 @@
 
 #include <imgui.h>
 
+#include <chrono>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 namespace mm {
@@ -24,6 +27,11 @@ struct StartupOptions {
     std::filesystem::path hdriPath;
     // 起動時にテクスチャライブラリへ読み込む画像。--texture を繰り返し指定できる。
     std::vector<std::filesystem::path> texturePaths;
+    // 起動時に開くプロジェクト (.mmproj)。空なら既定のスタックで始める。
+    std::filesystem::path projectPath;
+    // 指定すると、数フレーム描いてからプロジェクトを保存して終了する。
+    // 保存と読み込みを対話なしで確かめるための開発用オプション。
+    std::filesystem::path saveProjectPath;
     // 指定すると、数フレーム描いてからビューポートを PNG に書き出して終了する。
     // 画面キャプチャに頼らず描画結果を確認するための開発用オプション。
     std::filesystem::path screenshotPath;
@@ -51,6 +59,25 @@ private:
     void DrawInfoPanel();
     void DrawLayerPanel();
     void DrawMaterialLibraryPanel();
+    void DrawTextureLibraryPanel();
+    // ファイルメニュー。要求を積むだけで、読み書きはフレームの外で行う。
+    void DrawFileMenu();
+    // 画面下端のステータスバー。直近の通知と、いま何を持っているかを出す。
+    // ドックスペースより前に呼ぶこと（作業領域をバーのぶん狭める）。
+    void DrawStatusBar();
+    // ログをステータスバーへ流す。Initialize で SetLogSink に登録する。
+    void PushStatus(LogLevel level, const char* text);
+    // エクスプローラから落とされたファイルを、拡張子で行き先へ振り分ける。
+    void HandleDroppedFiles(const std::vector<std::filesystem::path>& paths);
+    // プロジェクトとマテリアルの読み書き、テクスチャの追加と削除。
+    // どれも GPU 待機を伴うため、フレームの外（Run のフレーム前）で呼ぶ。
+    void ProcessPendingFileWork();
+    // 中身を空にして作り直す。プロジェクトを開く前と「新規」で使う。
+    void ResetProject();
+    // ウィンドウタイトルを「プロジェクト名 - Material Mixer」に揃える。
+    void UpdateWindowTitle();
+    // このテクスチャを参照しているマテリアルとマスクの数。一覧に出す。
+    size_t CountTextureUsers(compositor::TextureId id) const;
     // レイヤー一覧。ドラッグで並べ替える。
     void DrawLayerList();
     // ペイントの対象になるレイヤー。ペイントモードで、選択中のレイヤーが
@@ -82,8 +109,34 @@ private:
     float m_strokeLastX = 0.0f;
     float m_strokeLastY = 0.0f;
     int m_selectedLayer = 0;
+    int m_selectedTexture = 0;
+    // 読み込んだ直後のテクスチャを一覧に見せるための要求。
+    // 一覧はスクロールするので、追加しただけでは枠外に入って気づけない。
+    bool m_scrollToSelectedTexture = false;
+
+    // ステータスバーに出す直近の通知。ログから受け取る。
+    // 時刻は ImGui に依存させない（ログはコンテキストが無い時期にも来る）。
+    struct StatusMessage {
+        std::string text;
+        LogLevel level = LogLevel::Info;
+        std::chrono::steady_clock::time_point time{};
+        bool valid = false;
+    };
+    StatusMessage m_status;
     // 読み込みは GPU 待機を伴うため、フレームの外で処理する。
     std::vector<std::filesystem::path> m_pendingTexturePaths;
+
+    // --- ファイル操作の保留 -------------------------------------------------
+    // ダイアログはフレームの中で出すが、読み書きは GPU 待機を伴うので、
+    // 選ばれたパスをここへ積んでおき、次のフレームの頭で処理する。
+    std::filesystem::path m_projectPath;  // 現在のプロジェクト。未保存なら空
+    std::filesystem::path m_pendingProjectSave;
+    std::filesystem::path m_pendingProjectOpen;
+    std::filesystem::path m_pendingMaterialExport;
+    std::filesystem::path m_pendingMaterialImport;
+    compositor::MaterialAssetId m_pendingExportMaterial = compositor::kNoMaterialAsset;
+    compositor::TextureId m_pendingTextureRemove = compositor::kNoTexture;
+    bool m_pendingProjectNew = false;
     ImGuiLayer m_imgui;
 
     // ビューポートの表示サイズ。UI 側で決まり、次のフレーム頭で反映する。

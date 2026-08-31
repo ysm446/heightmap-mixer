@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-08-31 18:04
+更新日時: 2026-08-31 15:12
 
 進捗管理の入口。実装の詳細な設計は [docs/design/](../design/) に置く。
 
@@ -9,6 +9,7 @@
 - [design/rendering.md](../design/rendering.md) — 描画の流れ、露出とトーンマップ、IBL、行列の規約
 - [design/compositing.md](../design/compositing.md) — チャンネル定義、ハイトブレンド、RNM、タイル評価
 - [design/design-guide.md](../design/design-guide.md) — UI のレイアウト、配色、プロパティ行
+- [reference/file-format.md](../reference/file-format.md) — `.mmproj` / `.mmmat` の形式
 
 ## 決定済みの技術選定
 
@@ -24,8 +25,7 @@
 
 導入済みの依存: DirectX-Headers, DirectX-Agility-SDK, D3D12MemoryAllocator,
 WinPixEventRuntime, DirectXShaderCompiler, stb, Dear ImGui。
-導入済み（M5a 時点）: tinyexr（EXR 読み込み）、
-nlohmann-json（プロジェクト保存に使う。M5b で本格利用）。
+導入済み（M5a 時点）: tinyexr（EXR 読み込み）、nlohmann-json（プロジェクトの保存）。
 
 ## ディレクトリ構成
 
@@ -34,7 +34,8 @@ CMakeLists.txt / CMakePresets.json / vcpkg.json
 src/
   app/          アプリ本体、エントリポイント、UI パネル
   compositor/   レイヤースタック、GPU 評価器、テクスチャ / マテリアル / ペイントマスク
-  core/         ログ、Win32 ウィンドウ、画像入出力
+  core/         ログ、Win32 ウィンドウ、画像入出力、ファイル選択ダイアログ
+  io/           プロジェクト (.mmproj) とマテリアル (.mmmat) の読み書き
   renderer/     PBR プレビュー描画、カメラ、メッシュ、IBL 環境
   rhi/          DX12 ラッパ
   ui/           Dear ImGui の統合、テーマとプロパティ行
@@ -88,9 +89,12 @@ DXC によるシェーダコンパイルとホットリロード、bindless の�
 - **M5a**（完了）: マテリアルライブラリ。PBR のマップ一式に名前を付けて持ち、
   レイヤーはマテリアルを 1 つ参照する。サムネイル、ファイル選択ダイアログ。
   チャンネルパック（Megascans の ORD）と EXR の読み込み。
-- **M5b**（次）: プロジェクトの保存と読み込み（JSON + 参照アセット）。
-  ペイントマスクは手続きで再現できないので、画像として一緒に保存する。
-- **M5c**: フル解像度エクスポート
+- **M5b**（完了）: テクスチャパネル、プロジェクトの保存と読み込み、
+  マテリアル単体の書き出し / 読み込み。形式は
+  [reference/file-format.md](../reference/file-format.md) にまとめた。
+  プロジェクトにはマテリアルの構造を丸ごと埋め込み、画像は相対パスの参照で持つ。
+  ペイントマスクは手続きで再現できないので、サイドカーへ PNG で書き出す。
+- **M5c**（次）: フル解像度エクスポート
   （タイル評価 + チャンネルパッキング設定 + 出力プリセット）。
 - **M5d**: 配布形態（シェーダの同梱方法）の見直し。
 
@@ -101,12 +105,16 @@ DXC によるシェーダコンパイルとホットリロード、bindless の�
 ## 開発用のコマンドライン
 
 ```
-material_mixer.exe [--hdri <path>] [--texture <path>]...
+material_mixer.exe [--project <path>] [--save-project <path>]
+                    [--hdri <path>] [--texture <path>]...
                     [--screenshot <path>] [--screenshot-ui <path>]
                     [--screenshot-frame <n>]
 ```
 
 `--texture` は繰り返し指定でき、起動時にテクスチャライブラリへ読み込む。
+
+`--project` は起動時にプロジェクトを開く。`--save-project` は数フレーム描いてから
+プロジェクトを保存して終了する。対話せずに保存と読み込みを往復させて確かめるための開発用。
 
 `--screenshot` はビューポートの内容を、`--screenshot-ui` は UI 込みの
 ウィンドウ全体を PNG に書き出して終了する。

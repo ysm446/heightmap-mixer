@@ -15,6 +15,7 @@ struct FileFilter {
 std::vector<FileFilter> ImageFileFilters();
 std::vector<FileFilter> HdriFileFilters();
 std::vector<FileFilter> ProjectFileFilters();
+std::vector<FileFilter> MaterialFileFilters();
 
 // ファイルを 1 つ選ぶ。取り消したら空のパスを返す。
 //
