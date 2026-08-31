@@ -45,6 +45,8 @@ private:
 // プリミティブ生成。マテリアルの見え方を確かめるための最小限。
 MeshData MakeSphere(uint32_t segments, uint32_t rings, float radius);
 MeshData MakePlane(float size, uint32_t subdivisions);
-MeshData MakeCube(float size);
+// subdivisions は 1 面あたりの分割数。ディスプレイスメントを効かせるには
+// 頂点が要るので、プレビューでは細かく割る。
+MeshData MakeCube(float size, uint32_t subdivisions = 1);
 
 }  // namespace mm::renderer

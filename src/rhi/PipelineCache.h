@@ -35,6 +35,8 @@ struct GraphicsPipelineDesc {
     DXGI_FORMAT dsvFormat = DXGI_FORMAT_UNKNOWN;
     VertexLayout layout = VertexLayout::None;
     D3D12_CULL_MODE cullMode = D3D12_CULL_MODE_BACK;
+    // ワイヤーフレーム表示で使う。既定は塗りつぶし。
+    D3D12_FILL_MODE fillMode = D3D12_FILL_MODE_SOLID;
     bool depthTest = true;
     bool depthWrite = true;
 

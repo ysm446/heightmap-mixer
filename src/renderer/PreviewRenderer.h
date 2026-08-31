@@ -33,6 +33,8 @@ enum class DebugView : uint32_t {
     Metallic = 5,
     AmbientOcclusion = 6,
     Height = 7,
+    // 形だけを見る表示。ラスタライザをワイヤーフレームにする。
+    Wireframe = 8,
 };
 
 enum class TonemapMode : uint32_t {
@@ -113,6 +115,9 @@ public:
     bool& ShowSkybox() { return m_showSkybox; }
     bool& UseMaterialTextures() { return m_useMaterialTextures; }
     float& MaterialUvScale() { return m_materialUvScale; }
+    // ハイトを形状に反映する量（0 で反映しない）。頂点シェーダで押し出す。
+    float& DisplacementScale() { return m_displacementScale; }
+    float DisplacementScale() const { return m_displacementScale; }
     const compositor::MaterialEvaluator& Evaluator() const { return m_evaluator; }
     uint32_t MaterialResolution() const { return m_materialResolution; }
     void RequestMaterialResolution(uint32_t resolution) { m_requestedMaterialResolution = resolution; }
@@ -152,6 +157,7 @@ private:
     DebugView m_debugView = DebugView::Shaded;
     float m_iblIntensity = 1.0f;
     float m_materialUvScale = 1.0f;
+    float m_displacementScale = 0.0f;
     uint32_t m_materialResolution = 1024;
     uint32_t m_requestedMaterialResolution = 1024;
     bool m_useMaterialTextures = true;

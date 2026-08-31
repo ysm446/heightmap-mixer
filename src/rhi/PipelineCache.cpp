@@ -55,6 +55,8 @@ std::wstring GraphicsPipelineDesc::MakeKey() const {
     key += std::to_wstring(static_cast<int>(layout));
     key += L"#";
     key += std::to_wstring(static_cast<int>(cullMode));
+    key += L"#";
+    key += std::to_wstring(static_cast<int>(fillMode));
     key += depthTest ? L"#t" : L"#f";
     key += depthWrite ? L"t" : L"f";
     return key;
@@ -211,6 +213,7 @@ ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc
 
     psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
     psoDesc.RasterizerState.CullMode = desc.cullMode;
+    psoDesc.RasterizerState.FillMode = desc.fillMode;
     // 右手系なので、外向きの面は画面上で反時計回りに見える。
     // 詳細は docs/design/rendering.md の「座標系」を参照。
     psoDesc.RasterizerState.FrontCounterClockwise = TRUE;

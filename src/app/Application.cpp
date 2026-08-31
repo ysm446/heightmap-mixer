@@ -103,6 +103,7 @@ const char* const kChannelLabels[] = {"BaseColor", "Normal", "Surface", "Height"
 const char* const kDebugViewLabels[] = {
     "シェーディング", "ベースカラー", "法線（接空間）", "法線（ワールド）",
     "ラフネス",       "メタルネス",   "AO",             "ハイト",
+    "ワイヤーフレーム",
 };
 const char* const kResolutionLabels[] = {"512", "1024", "2048"};
 constexpr uint32_t kResolutionValues[] = {512, 1024, 2048};
@@ -616,18 +617,6 @@ void Application::DrawUi() {
             if (ImGui::MenuItem("レイアウトをリセット")) {
                 m_rebuildLayout = true;
             }
-            // ビューポートに何を出すか。合成したチャンネルをそのまま覗ける。
-            if (ImGui::BeginMenu("ビューポートに表示")) {
-                renderer::DebugView& current = m_renderer.Debug();
-                for (int i = 0; i < IM_ARRAYSIZE(kDebugViewLabels); ++i) {
-                    const auto view = static_cast<renderer::DebugView>(i);
-                    if (ImGui::MenuItem(kDebugViewLabels[i], nullptr, current == view)) {
-                        current = view;
-                    }
-                }
-                ImGui::EndMenu();
-            }
-
             ImGui::Separator();
             ImGui::MenuItem("設定", nullptr, &m_showSettings);
             ImGui::MenuItem("ImGui デモ", nullptr, &m_showDemoWindow);
@@ -641,7 +630,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v3");
+    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v4");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -675,6 +664,10 @@ void Application::DrawUi() {
     if (m_showDemoWindow) {
         ImGui::ShowDemoWindow(&m_showDemoWindow);
     }
+
+    if (m_focusDefaultTabs > 0) {
+        --m_focusDefaultTabs;
+    }
 }
 
 compositor::MaterialLayer* Application::CurrentPaintLayer() {
@@ -693,6 +686,45 @@ compositor::MaterialLayer* Application::CurrentPaintLayer() {
         return nullptr;
     }
     return &layer;
+}
+
+// ビューポートに重ねる操作。いまは表示モードの切り替えだけ。
+//
+// トップメニューではなくビューポートの中に置く。見ている場所から目を離さずに
+// 切り替えられ、いまどの表示なのかも常に見える。
+void Application::DrawViewportOverlay(const ImVec2& viewportMin) {
+    const float margin = ui::Scaled(10.0f);
+    ImGui::SetCursorScreenPos(ImVec2(viewportMin.x + margin, viewportMin.y + margin));
+
+    renderer::DebugView& current = m_renderer.Debug();
+    const char* label = kDebugViewLabels[static_cast<size_t>(current)];
+
+    // 既定以外の表示は見落としやすいので、ボタンの文字を強調する。
+    const bool highlighted = (current != renderer::DebugView::Shaded);
+    if (highlighted) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
+    }
+    char buttonLabel[96] = {};
+    std::snprintf(buttonLabel, sizeof(buttonLabel), "%s  v", label);
+    if (ImGui::Button(buttonLabel)) {
+        ImGui::OpenPopup("##viewportViewMenu");
+    }
+    if (highlighted) {
+        ImGui::PopStyleColor();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("ビューポートに何を表示するか");
+    }
+
+    if (ImGui::BeginPopup("##viewportViewMenu")) {
+        for (int i = 0; i < IM_ARRAYSIZE(kDebugViewLabels); ++i) {
+            const auto view = static_cast<renderer::DebugView>(i);
+            if (ImGui::Selectable(kDebugViewLabels[i], current == view)) {
+                current = view;
+            }
+        }
+        ImGui::EndPopup();
+    }
 }
 
 // L + 左ドラッグでライトの向きを変える。
@@ -838,7 +870,10 @@ void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewpo
                   RadiansToDegrees(light.azimuth), RadiansToDegrees(light.elevation));
     const ImVec2 textSize = ImGui::CalcTextSize(text);
     const ImVec2 padding(ui::Scaled(8.0f), ui::Scaled(5.0f));
-    const ImVec2 textMin(viewportMin.x + ui::Scaled(14.0f), viewportMin.y + ui::Scaled(14.0f));
+    // 左上には表示モードのボタンがあるので、その下へ置く。
+    const ImVec2 textMin(viewportMin.x + ui::Scaled(10.0f),
+                         viewportMin.y + ui::Scaled(10.0f) + ImGui::GetFrameHeight() +
+                             ui::Scaled(6.0f));
     const ImVec2 textMax(textMin.x + textSize.x + padding.x * 2.0f,
                          textMin.y + textSize.y + padding.y * 2.0f);
     drawList->AddRectFilled(textMin, textMax, color(8, 10, 12, 190), ui::Scaled(4.0f));
@@ -919,10 +954,6 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     // 残り幅に対する比率。全体では 0.27 ぶんになる。
     ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.355f, &right, &center);
 
-    ImGuiID rightBottom = 0;
-    ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.28f, &rightBottom, &right);
-    ImGuiID rightTop = 0;
-    ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, 0.36f, &rightTop, &right);
 
     ImGui::DockBuilderDockWindow("レイヤー", left);
     // マテリアルはレイヤーと同じ枠にタブで並べる。
@@ -932,11 +963,17 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     // レイヤーと同時に見るものではない。
     ImGui::DockBuilderDockWindow("テクスチャ", left);
     ImGui::DockBuilderDockWindow("ビューポート", center);
-    ImGui::DockBuilderDockWindow("プレビュー設定", rightTop);
+    // 右カラムは 3 枚をタブで重ねる。縦に積むと 1 枚あたりが短くなり、
+    // どれもスクロールしないと全体が見えなくなる。
+    ImGui::DockBuilderDockWindow("プレビュー設定", right);
     ImGui::DockBuilderDockWindow("ライティングと露出", right);
-    ImGui::DockBuilderDockWindow("情報", rightBottom);
+    ImGui::DockBuilderDockWindow("情報", right);
 
     ImGui::DockBuilderFinish(dockspaceId);
+
+    // 前面のタブは「レイヤー」と「プレビュー設定」にする。
+    // この時点ではまだウィンドウが無いので、実際の指定は各パネルの Begin 直前で行う。
+    m_focusDefaultTabs = 3;
 }
 
 void Application::DrawViewportPanel() {
@@ -968,6 +1005,8 @@ void Application::DrawViewportPanel() {
             // 「ウィンドウの余白のドラッグ」と解釈されてパネルごと動いてしまう。
             // 同じ矩形に不可視ボタンを重ねてドラッグを受け止める。
             ImGui::SetCursorScreenPos(imageOrigin);
+            // ビューポート内に重ねるボタン（表示モード）へ入力を譲る。
+            ImGui::SetNextItemAllowOverlap();
             ImGui::InvisibleButton("##viewportInput", available,
                                    ImGuiButtonFlags_MouseButtonLeft |
                                        ImGuiButtonFlags_MouseButtonMiddle |
@@ -1010,6 +1049,9 @@ void Application::DrawViewportPanel() {
             DrawAxisGizmo(camera, imageOrigin, imageMax);
             DrawLightGizmo(imageOrigin, imageMax);
 
+            // ビューポートに重ねる操作。左上に表示モードの切り替えを置く。
+            DrawViewportOverlay(imageOrigin);
+
             // ブラシの当たる範囲を円で示す。半径はビューポートのピクセル単位なので、
             // 表示倍率で割って ImGui の座標へ戻す。
             if (brushEnabled && itemHovered && available.x > 0.0f) {
@@ -1026,6 +1068,9 @@ void Application::DrawViewportPanel() {
 }
 
 void Application::DrawMaterialPanel() {
+    if (m_focusDefaultTabs > 0) {
+        ImGui::SetNextWindowFocus();
+    }
     if (ImGui::Begin("プレビュー設定")) {
         if (ui::BeginPropertyTable("previewRows")) {
             static const char* const kShapeLabels[] = {"球", "平面", "キューブ"};
@@ -1041,6 +1086,11 @@ void Application::DrawMaterialPanel() {
             if (m_renderer.UseMaterialTextures()) {
                 ui::PropertyFloat("UV スケール", &m_renderer.MaterialUvScale(), 0.25f, 8.0f, 1.0f,
                                   "マテリアルをメッシュ上に何回並べるか", "%.2f", 0, 0.25f);
+
+                ui::PropertyFloat("変位量", &m_renderer.DisplacementScale(), 0.0f, 0.5f, 0.0f,
+                                  "ハイトを形状に反映する量（ディスプレイスメント）。"
+                                  "0 なら形は変わらない",
+                                  "%.2f", 0, 0.01f);
 
                 int resolution = ResolutionIndex(m_renderer.MaterialResolution());
                 if (ui::PropertyCombo("合成解像度", &resolution, kResolutionLabels,
@@ -1247,6 +1297,9 @@ void Application::DrawLayerList() {
 }
 
 void Application::DrawLayerPanel() {
+    if (m_focusDefaultTabs > 0) {
+        ImGui::SetNextWindowFocus();
+    }
     if (!ImGui::Begin("レイヤー")) {
         ImGui::End();
         return;
@@ -1834,15 +1887,6 @@ void Application::DrawStatusBar() {
                 paintLayer != nullptr) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_CheckMark));
                 ImGui::Text("ペイント中: %s", paintLayer->name.c_str());
-                ImGui::PopStyleColor();
-                ImGui::TextDisabled("|");
-            }
-
-            // 既定以外の表示になっていることは見落としやすいので、常に出す。
-            if (m_renderer.Debug() != renderer::DebugView::Shaded) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
-                ImGui::Text("表示: %s",
-                            kDebugViewLabels[static_cast<size_t>(m_renderer.Debug())]);
                 ImGui::PopStyleColor();
                 ImGui::TextDisabled("|");
             }

@@ -405,6 +405,7 @@ json WritePreview(renderer::PreviewRenderer& renderer, const fs::path& baseDir) 
     node["tonemap"] = EnumName(kTonemapNames, static_cast<uint32_t>(renderer.Tonemap()));
     node["useMaterialTextures"] = renderer.UseMaterialTextures();
     node["materialUvScale"] = renderer.MaterialUvScale();
+    node["displacementScale"] = renderer.DisplacementScale();
     node["materialResolution"] = renderer.MaterialResolution();
     node["iblIntensity"] = renderer.IblIntensity();
     node["showSkybox"] = renderer.ShowSkybox();
@@ -463,6 +464,7 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer, const fs
         EnumValue(kTonemapNames, node, "tonemap", static_cast<uint32_t>(renderer::TonemapMode::Aces)));
     renderer.UseMaterialTextures() = ReadBool(node, "useMaterialTextures", true);
     renderer.MaterialUvScale() = ReadFloat(node, "materialUvScale", 1.0f);
+    renderer.DisplacementScale() = ReadFloat(node, "displacementScale", 0.0f);
     renderer.RequestMaterialResolution(ReadUInt(node, "materialResolution", 1024));
     renderer.IblIntensity() = ReadFloat(node, "iblIntensity", 1.0f);
     renderer.ShowSkybox() = ReadBool(node, "showSkybox", true);

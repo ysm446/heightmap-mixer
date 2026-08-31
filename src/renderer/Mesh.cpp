@@ -179,9 +179,10 @@ MeshData MakePlane(float size, uint32_t subdivisions) {
     return data;
 }
 
-MeshData MakeCube(float size) {
+MeshData MakeCube(float size, uint32_t subdivisions) {
     MeshData data;
     const float half = size * 0.5f;
+    const uint32_t count = (subdivisions < 1) ? 1 : subdivisions;
 
     struct Face {
         XMFLOAT3 normal;
@@ -201,25 +202,39 @@ MeshData MakeCube(float size) {
         const XMVECTOR tangent = XMLoadFloat3(&face.tangent);
         const XMVECTOR bitangent = XMVector3Cross(normal, tangent);
 
+        // 面を格子に割る。分割しないとディスプレイスメントが効かない。
         const uint32_t base = static_cast<uint32_t>(data.vertices.size());
-        const float corners[4][2] = {{-1.0f, -1.0f}, {1.0f, -1.0f}, {1.0f, 1.0f}, {-1.0f, 1.0f}};
-        for (const auto& corner : corners) {
-            const XMVECTOR position =
-                XMVectorScale(XMVectorAdd(XMVectorAdd(XMVectorScale(tangent, corner[0]),
-                                                      XMVectorScale(bitangent, corner[1])),
-                                          normal),
-                              half);
+        for (uint32_t y = 0; y <= count; ++y) {
+            const float ty = static_cast<float>(y) / static_cast<float>(count);
+            for (uint32_t x = 0; x <= count; ++x) {
+                const float tx = static_cast<float>(x) / static_cast<float>(count);
+                const float u = tx * 2.0f - 1.0f;
+                const float v = ty * 2.0f - 1.0f;
+                const XMVECTOR position = XMVectorScale(
+                    XMVectorAdd(XMVectorAdd(XMVectorScale(tangent, u),
+                                            XMVectorScale(bitangent, v)),
+                                normal),
+                    half);
 
-            MeshVertex vertex;
-            XMStoreFloat3(&vertex.position, position);
-            vertex.normal = face.normal;
-            vertex.tangent = XMFLOAT4{face.tangent.x, face.tangent.y, face.tangent.z, 1.0f};
-            vertex.uv = XMFLOAT2{corner[0] * 0.5f + 0.5f, corner[1] * 0.5f + 0.5f};
-            data.vertices.push_back(vertex);
+                MeshVertex vertex;
+                XMStoreFloat3(&vertex.position, position);
+                vertex.normal = face.normal;
+                vertex.tangent = XMFLOAT4{face.tangent.x, face.tangent.y, face.tangent.z, 1.0f};
+                vertex.uv = XMFLOAT2{tx, ty};
+                data.vertices.push_back(vertex);
+            }
         }
 
-        data.indices.insert(data.indices.end(),
-                            {base, base + 1, base + 2, base, base + 2, base + 3});
+        const uint32_t stride = count + 1;
+        for (uint32_t y = 0; y < count; ++y) {
+            for (uint32_t x = 0; x < count; ++x) {
+                const uint32_t i0 = base + y * stride + x;
+                const uint32_t i1 = i0 + 1;
+                const uint32_t i2 = i0 + stride + 1;
+                const uint32_t i3 = i0 + stride;
+                data.indices.insert(data.indices.end(), {i0, i1, i2, i0, i2, i3});
+            }
+        }
     }
     return data;
 }

@@ -55,7 +55,8 @@ struct MeshConstants {
 
     float materialUvScale;
     uint32_t debugView;
-    float pad4[2];
+    float displacementScale;
+    float pad4;
 };
 
 // GPU 側の SkyboxConstants と一致させること。
@@ -114,13 +115,15 @@ XMFLOAT3 LightSettings::Direction() const {
 }
 
 bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache) {
-    if (!m_sphere.Create(device, MakeSphere(64, 32, 1.0f), L"SphereMesh")) {
+    // ディスプレイスメントを頂点で押し出すので、プレビューのメッシュは細かく割る。
+    // 数万頂点はプレビュー 1 個ぶんとしては軽い。
+    if (!m_sphere.Create(device, MakeSphere(256, 128, 1.0f), L"SphereMesh")) {
         return false;
     }
-    if (!m_plane.Create(device, MakePlane(2.0f, 32), L"PlaneMesh")) {
+    if (!m_plane.Create(device, MakePlane(2.0f, 256), L"PlaneMesh")) {
         return false;
     }
-    if (!m_cube.Create(device, MakeCube(1.4f), L"CubeMesh")) {
+    if (!m_cube.Create(device, MakeCube(1.4f, 96), L"CubeMesh")) {
         return false;
     }
     if (!m_environment.Initialize(device, pipelineCache)) {
@@ -358,6 +361,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     meshPipelineDesc.dsvFormat = kDepthFormat;
     meshPipelineDesc.layout = rhi::VertexLayout::MeshStandard;
     meshPipelineDesc.cullMode = D3D12_CULL_MODE_BACK;
+    // ワイヤーフレーム表示のときだけラスタライザを切り替える。
+    if (m_debugView == DebugView::Wireframe) {
+        meshPipelineDesc.fillMode = D3D12_FILL_MODE_WIREFRAME;
+    }
 
     ID3D12PipelineState* meshPipeline = pipelineCache.GetGraphics(meshPipelineDesc);
     ID3D12PipelineState* tonemapPipeline =
@@ -432,6 +439,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.materialHeightIndex = materialTextures.height.SrvIndex();
     constants.materialUvScale = m_materialUvScale;
     constants.debugView = static_cast<uint32_t>(m_debugView);
+    constants.displacementScale = m_displacementScale;
 
     const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(MeshConstants), 256);
     if (!cb.IsValid()) {

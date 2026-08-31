@@ -46,7 +46,9 @@ struct MeshConstants
     float materialUvScale;
     // ビューポートに何を出すか（0 = シェーディング結果）。MM_VIEW_* と一致させる。
     uint debugView;
-    float2 pad4;
+    // ハイトを形状に反映する量。0 なら押し出さない。
+    float displacementScale;
+    float pad4;
 };
 
 // ビューポートの表示モード。C++ 側の renderer::DebugView と一致させること。
@@ -58,6 +60,7 @@ struct MeshConstants
 #define MM_VIEW_METALLIC        5
 #define MM_VIEW_AO              6
 #define MM_VIEW_HEIGHT          7
+#define MM_VIEW_WIREFRAME       8
 
 ConstantBuffer<MeshConstants> g_mesh : register(b1);
 
@@ -83,7 +86,20 @@ VsOutput VsMain(VsInput input)
 {
     VsOutput output;
 
-    const float4 worldPosition = mul(g_mesh.model, float4(input.position, 1.0f));
+    // --- ディスプレイスメント ---------------------------------------------
+    // 合成した Height を頂点で読み、法線方向へ押し引きする。
+    // 頂点シェーダには微分が無いので SampleLevel を使う。
+    float3 localPosition = input.position;
+    if (g_mesh.useMaterialTextures != 0u && g_mesh.displacementScale != 0.0f)
+    {
+        Texture2D<float> heightMap = ResourceDescriptorHeap[g_mesh.materialHeightIndex];
+        const float height =
+            heightMap.SampleLevel(g_samplerLinearWrap, input.uv * g_mesh.materialUvScale, 0.0f);
+        // 高さの中央（0.5）を基準にする。全体が膨らまないようにするため。
+        localPosition += input.normal * ((height - 0.5f) * g_mesh.displacementScale);
+    }
+
+    const float4 worldPosition = mul(g_mesh.model, float4(localPosition, 1.0f));
     output.worldPosition = worldPosition.xyz;
     output.clipPosition = mul(g_mesh.viewProjection, worldPosition);
     output.worldNormal = mul((float3x3)g_mesh.normalMatrix, input.normal);
@@ -175,6 +191,11 @@ PsOutput PsMain(VsOutput input)
         else if (g_mesh.debugView == MM_VIEW_AO)
         {
             debugColor = ambientOcclusion.xxx;
+        }
+        else if (g_mesh.debugView == MM_VIEW_WIREFRAME)
+        {
+            // 線だけを見る表示。塗りではないので単色で描く。
+            debugColor = float3(0.66f, 0.72f, 0.78f);
         }
         else if (g_mesh.debugView == MM_VIEW_HEIGHT)
         {

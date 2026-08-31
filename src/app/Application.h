@@ -104,6 +104,8 @@ private:
     compositor::MaterialLayer* CurrentPaintLayer();
     // レイヤーパネルのマスク欄に出すペイント関連の UI。
     bool DrawPaintSection(compositor::MaterialLayer& layer);
+    // ビューポートに重ねる操作（表示モードの切り替え）。画像の描画より後に呼ぶ。
+    void DrawViewportOverlay(const ImVec2& viewportMin);
     // ビューポート上の L + 左ドラッグでライトの向きを変える。
     // 掴んでいる間は true を返す（軌道やブラシへ渡さない）。
     bool HandleLightDrag(bool itemActive);
@@ -182,6 +184,9 @@ private:
     // ドックレイアウトの初期化。ini に配置が無ければ既定レイアウトを組む。
     bool m_layoutChecked = false;
     bool m_rebuildLayout = false;
+    // 既定レイアウトを組んだ直後に、前面へ出したいタブを押さえるための残りフレーム数。
+    // ini に無いウィンドウは作られた順で前面が決まってしまうため、明示的に上書きする。
+    int m_focusDefaultTabs = 0;
     bool m_hotReloadEnabled = true;
     uint32_t m_frameCounter = 0;
 };
