@@ -49,6 +49,9 @@ public:
     void Destroy(rhi::Device& device);
 
     MaterialAssetId Add(const std::string& name);
+    // ID を保ったまま作り直す。**アンドゥで削除を取り消すときに使う。**
+    // Add で作ると新しい ID が振られ、レイヤーからの参照が切れてしまう。
+    MaterialAsset& RestoreAsset(MaterialAssetId id, const std::string& name);
     MaterialAssetId Duplicate(const MaterialAsset& source);
     void Remove(rhi::Device& device, MaterialAssetId id);
     void Clear(rhi::Device& device);

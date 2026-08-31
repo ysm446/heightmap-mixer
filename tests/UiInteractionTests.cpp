@@ -11,6 +11,8 @@
 
 #include "ui/UiStyle.h"
 
+#include "TestSupport.h"
+
 #include "imgui.h"
 #include "imgui_internal.h"
 
@@ -26,14 +28,8 @@ const ImVec2 kSourcePos(50.0f, 50.0f);
 const ImVec2 kTargetPos(50.0f, 300.0f);
 constexpr float kThumbnailSize = 72.0f;
 
-int g_failures = 0;
-
-void Check(bool condition, const char* name) {
-    std::printf("  %-58s %s\n", name, condition ? "OK" : "*** NG ***");
-    if (!condition) {
-        ++g_failures;
-    }
-}
+using mm::tests::Check;
+using mm::tests::Section;
 
 void Frame(float x, float y, bool down) {
     ImGuiIO& io = ImGui::GetIO();
@@ -152,7 +148,7 @@ Result RunHover(bool withTooltip) {
 
 }  // namespace
 
-int main() {
+void RunUiInteractionTests() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
 
@@ -168,9 +164,9 @@ int main() {
     io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
     io.Fonts->SetTexID(static_cast<ImTextureID>(1));
 
-    std::printf("ImGui %s\n\n", IMGUI_VERSION);
+    std::printf("ImGui %s\n", IMGUI_VERSION);
 
-    std::printf("ドラッグ&ドロップ\n");
+    Section("ドラッグ&ドロップ");
     const Result helper = RunDrag(true);
     Check(helper.sourceStarted, "ui::ThumbnailButton はドラッグ元になる");
     Check(helper.dropped, "サムネイルからマップ欄へ割り当てられる");
@@ -178,14 +174,11 @@ int main() {
     const Result withoutTooltip = RunDrag(false);
     Check(withoutTooltip.dropped, "ツールチップの有無で割り当ての成否が変わらない");
 
-    std::printf("\nツールチップ\n");
+    Section("ツールチップ");
     const Result hoverOn = RunHover(true);
     Check(hoverOn.tooltipShown, "マップ欄をホバーするとツールチップが出る");
     const Result hoverOff = RunHover(false);
     Check(!hoverOff.tooltipShown, "ツールチップを積まなければ出ない（対照）");
 
     ImGui::DestroyContext();
-
-    std::printf("\n%s\n", (g_failures == 0) ? "すべて成功" : "失敗あり");
-    return (g_failures == 0) ? 0 : 1;
 }

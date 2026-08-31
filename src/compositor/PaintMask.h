@@ -76,6 +76,8 @@ public:
     // シェーダへ渡す SRV インデックス。無効なら kInvalidTextureIndex。
     uint32_t SrvIndex(PaintMaskId id) const;
     size_t Count() const { return m_entries.size(); }
+    // 持っているマスクの ID。参照されなくなったものを掃除するのに使う。
+    std::vector<PaintMaskId> Ids() const;
     uint32_t Resolution() const { return m_resolution; }
 
     // 解像度の変更要求。作り直しは GPU 待機を伴うため、フレームの外で処理する。

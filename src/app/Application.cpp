@@ -473,6 +473,9 @@ bool Application::Initialize(const StartupOptions& options) {
     // ログをステータスバーへ流す。以降の警告やエラーは画面上でも見える。
     SetLogSink([this](LogLevel level, const char* text) { PushStatus(level, text); });
 
+    // アンドゥの起点。ここを取り忘れると、最初の 1 回が空の文書へ戻ってしまう。
+    m_committed = CaptureDocument();
+
     MM_LOG_INFO("material-mixer %s を起動しました", MM_APP_VERSION);
     return true;
 }
@@ -635,6 +638,17 @@ void Application::DrawUi() {
     // メニューバー分を差し引いた状態になる。既定のパネル配置がこれに依存する。
     if (ImGui::BeginMainMenuBar()) {
         DrawFileMenu();
+        if (ImGui::BeginMenu("編集")) {
+            if (ImGui::MenuItem("元に戻す", "Ctrl+Z", false, m_undoHistory.CanUndo())) {
+                m_pendingHistoryStep = -1;
+            }
+            if (ImGui::MenuItem("やり直す", "Ctrl+Y", false, m_undoHistory.CanRedo())) {
+                m_pendingHistoryStep = 1;
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled("対象はレイヤーとマテリアル");
+            ImGui::EndMenu();
+        }
         if (ImGui::BeginMenu("表示")) {
             if (ImGui::MenuItem("レイアウトをリセット")) {
                 m_rebuildLayout = true;
@@ -689,6 +703,25 @@ void Application::DrawUi() {
 
     if (m_focusDefaultTabs > 0) {
         --m_focusDefaultTabs;
+    }
+
+    // --- アンドゥの段を畳む -------------------------------------------------
+    // パネルは変更を見つけると m_documentDirty を立てるだけにしておき、
+    // ここで 1 フレームぶんをまとめて 1 段にする。
+    //
+    // 変更後に気づく作りなので、積むのは「1 つ前に確定した状態」。
+    // 掴んでいるウィジェットの ID を渡すことで、スライダーのドラッグが
+    // 1 段に収まる（毎フレーム変更が来ても ID は変わらない）。
+    if (m_documentDirty) {
+        m_documentDirty = false;
+        m_undoHistory.Push(m_committed, static_cast<uint32_t>(ImGui::GetActiveID()));
+        m_committed = CaptureDocument();
+        // 古い段が押し出されると、そこでしか参照されていなかったマスクが浮く。
+        m_pendingPaintSweep = true;
+    }
+    // 掴んでいたものが離れたら、次の編集は別の段にする。
+    if (ImGui::GetActiveID() == 0) {
+        m_undoHistory.EndEdit();
     }
 }
 
@@ -1327,14 +1360,10 @@ void Application::RemoveLayer(int index) {
         return;
     }
 
-    // レイヤーが持っていたペイントマスクも破棄する。残すと参照されないまま
-    // VRAM を占めたうえ、保存時にも書き出されない。
-    if (const compositor::PaintMaskId paint = layers[static_cast<size_t>(index)].mask.paint;
-        paint != compositor::kNoPaintMask) {
-        m_paintMasks.Remove(m_device, paint);
-    }
-
+    // **ペイントマスクはここでは捨てない。** アンドゥで戻したときに描いた内容が
+    // 失われるため、履歴からも参照されなくなってから SweepPaintMasks() が回収する。
     m_materialStack.Remove(static_cast<size_t>(index));
+    MarkDocumentChanged();
 
     // 消した行より後ろを選んでいたら 1 つ手前へ詰める。
     if (m_selectedLayer > index) {
@@ -1360,7 +1389,7 @@ void Application::DrawLayerList() {
             ImGui::PushID(i);
 
             if (ImGui::Checkbox("##enabled", &layer.enabled)) {
-                m_materialStack.MarkDirty();
+                MarkDocumentChanged();
             }
             ImGui::SameLine();
 
@@ -1412,6 +1441,7 @@ void Application::DrawLayerList() {
     if (dropFrom >= 0 && dropTo >= 0 && dropFrom != dropTo) {
         m_materialStack.MoveTo(static_cast<size_t>(dropFrom), static_cast<size_t>(dropTo));
         m_selectedLayer = dropTo;
+        MarkDocumentChanged();
     }
     if (deleteIndex >= 0) {
         RemoveLayer(deleteIndex);
@@ -1436,6 +1466,7 @@ void Application::DrawLayerPanel() {
         layer.name = "レイヤー " + std::to_string(layers.size() + 1);
         m_materialStack.Add(layer);
         m_selectedLayer = static_cast<int>(layers.size()) - 1;
+        MarkDocumentChanged();
     }
     ImGui::SameLine();
     if (ui::Button("複製") && layerCount > 0) {
@@ -1448,6 +1479,7 @@ void Application::DrawLayerPanel() {
         }
         m_materialStack.Add(copy);
         m_selectedLayer = static_cast<int>(layers.size()) - 1;
+        MarkDocumentChanged();
     }
     ImGui::SameLine();
     ImGui::BeginDisabled(layerCount <= 1);
@@ -1623,7 +1655,7 @@ void Application::DrawLayerPanel() {
     }
 
     if (changed) {
-        m_materialStack.MarkDirty();
+        MarkDocumentChanged();
     }
 
     ImGui::End();
@@ -1721,11 +1753,13 @@ void Application::DrawMaterialLibraryPanel() {
     if (ui::Button("追加")) {
         m_materialLibrary.Add("マテリアル " + std::to_string(assets.size() + 1));
         m_selectedMaterial = static_cast<int>(assets.size()) - 1;
+        MarkDocumentChanged();
     }
     ImGui::SameLine();
     if (ui::Button("複製") && assetCount > 0) {
         m_materialLibrary.Duplicate(assets[static_cast<size_t>(m_selectedMaterial)]);
         m_selectedMaterial = static_cast<int>(assets.size()) - 1;
+        MarkDocumentChanged();
     }
     ImGui::SameLine();
     if (ui::Button("削除") && assetCount > 0) {
@@ -1738,8 +1772,8 @@ void Application::DrawMaterialLibraryPanel() {
                 layer.material = compositor::kNoMaterialAsset;
             }
         }
-        m_materialStack.MarkDirty();
         m_selectedMaterial = std::max(0, m_selectedMaterial - 1);
+        MarkDocumentChanged();
     }
 
     // マテリアル単体のファイル (.mmmat)。プロジェクト間で持ち回るために使う。
@@ -1874,7 +1908,7 @@ void Application::DrawMaterialLibraryPanel() {
     if (changed) {
         // サムネイルと合成の両方を作り直す。
         m_materialLibrary.MarkThumbnailDirty(asset.id);
-        m_materialStack.MarkDirty();
+        MarkDocumentChanged();
     }
 
     ImGui::End();
@@ -1920,6 +1954,17 @@ void Application::HandleShortcuts() {
     } else if (ImGui::IsKeyPressed(ImGuiKey_S, false)) {
         // Ctrl + Shift + S は「名前を付けて保存」。
         RequestSaveProject(io.KeyShift);
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+        // Ctrl + Shift + Z も「やり直す」。Ctrl + Y と同じ。
+        if (io.KeyShift) {
+            if (m_undoHistory.CanRedo()) {
+                m_pendingHistoryStep = 1;
+            }
+        } else if (m_undoHistory.CanUndo()) {
+            m_pendingHistoryStep = -1;
+        }
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Y, false) && m_undoHistory.CanRedo()) {
+        m_pendingHistoryStep = 1;
     }
 }
 
@@ -2061,6 +2106,138 @@ void Application::DrawStatusBar() {
         }
     }
     ImGui::End();
+}
+
+compositor::TextureId Application::ValidTexture(compositor::TextureId id) const {
+    return (m_textureLibrary.Find(id) != nullptr) ? id : compositor::kNoTexture;
+}
+
+DocumentSnapshot Application::CaptureDocument() const {
+    DocumentSnapshot snapshot;
+    snapshot.layers = m_materialStack.Layers();
+    snapshot.selectedLayer = m_selectedLayer;
+    snapshot.selectedMaterial = m_selectedMaterial;
+
+    snapshot.materials.reserve(m_materialLibrary.Entries().size());
+    for (const compositor::MaterialAsset& asset : m_materialLibrary.Entries()) {
+        MaterialSnapshot material;
+        material.id = asset.id;
+        material.name = asset.name;
+        material.baseColor = asset.baseColor;
+        material.normal = asset.normal;
+        material.roughness = asset.roughness;
+        material.metallic = asset.metallic;
+        material.ambientOcclusion = asset.ambientOcclusion;
+        material.height = asset.height;
+        material.baseColorTint = asset.baseColorTint;
+        material.roughnessValue = asset.roughnessValue;
+        material.metallicValue = asset.metallicValue;
+        material.ambientOcclusionValue = asset.ambientOcclusionValue;
+        snapshot.materials.push_back(std::move(material));
+    }
+    return snapshot;
+}
+
+// 写し取った文書を書き戻す。
+//
+// **参照している ID は、いま実在するものだけ残す。** テクスチャとペイントマスクは
+// 履歴の対象外なので、写し取った後に消えていることがある。
+// 宙に浮いた ID を残すと、次に同じ番号が払い出されたとき別の画像が現れる。
+void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
+    // --- マテリアル ---------------------------------------------------------
+    // 写し取った時点に無かったものを消す。破棄は GPU 待機を伴う。
+    std::vector<compositor::MaterialAssetId> removed;
+    for (const compositor::MaterialAsset& asset : m_materialLibrary.Entries()) {
+        const bool kept = std::any_of(
+            snapshot.materials.begin(), snapshot.materials.end(),
+            [&asset](const MaterialSnapshot& m) { return m.id == asset.id; });
+        if (!kept) {
+            removed.push_back(asset.id);
+        }
+    }
+    for (const compositor::MaterialAssetId id : removed) {
+        m_materialLibrary.Remove(m_device, id);
+    }
+
+    for (const MaterialSnapshot& material : snapshot.materials) {
+        // 消えていれば ID を保ったまま作り直す。残っていれば中身を上書きする。
+        compositor::MaterialAsset& asset =
+            m_materialLibrary.RestoreAsset(material.id, material.name);
+        asset.name = material.name;
+        asset.baseColor = ValidTexture(material.baseColor);
+        asset.normal = ValidTexture(material.normal);
+        asset.roughness = material.roughness;
+        asset.metallic = material.metallic;
+        asset.ambientOcclusion = material.ambientOcclusion;
+        asset.height = material.height;
+        asset.roughness.texture = ValidTexture(asset.roughness.texture);
+        asset.metallic.texture = ValidTexture(asset.metallic.texture);
+        asset.ambientOcclusion.texture = ValidTexture(asset.ambientOcclusion.texture);
+        asset.height.texture = ValidTexture(asset.height.texture);
+        asset.baseColorTint = material.baseColorTint;
+        asset.roughnessValue = material.roughnessValue;
+        asset.metallicValue = material.metallicValue;
+        asset.ambientOcclusionValue = material.ambientOcclusionValue;
+        asset.thumbnailDirty = true;
+    }
+
+    // --- レイヤー -----------------------------------------------------------
+    std::vector<compositor::MaterialLayer>& layers = m_materialStack.Layers();
+    layers = snapshot.layers;
+    for (compositor::MaterialLayer& layer : layers) {
+        if (m_materialLibrary.Find(layer.material) == nullptr) {
+            layer.material = compositor::kNoMaterialAsset;
+        }
+        layer.mask.texture.texture = ValidTexture(layer.mask.texture.texture);
+        if (m_paintMasks.Find(layer.mask.paint) == nullptr) {
+            layer.mask.paint = compositor::kNoPaintMask;
+        }
+    }
+    m_materialStack.MarkDirty();
+
+    const auto layerCount = static_cast<int>(layers.size());
+    m_selectedLayer = std::clamp(snapshot.selectedLayer, 0, std::max(0, layerCount - 1));
+    const auto materialCount = static_cast<int>(m_materialLibrary.Entries().size());
+    m_selectedMaterial = std::clamp(snapshot.selectedMaterial, 0, std::max(0, materialCount - 1));
+}
+
+void Application::MarkDocumentChanged() {
+    m_documentDirty = true;
+    m_materialStack.MarkDirty();
+}
+
+// 文書からも履歴からも参照されなくなったペイントマスクを破棄する。
+//
+// レイヤーを消したときにすぐ捨ててしまうと、アンドゥで戻したときに
+// 描いた内容が失われる。参照が完全に無くなるまで持っておき、ここで回収する。
+void Application::SweepPaintMasks() {
+    if (m_paintMasks.Count() == 0) {
+        return;
+    }
+
+    std::vector<compositor::PaintMaskId> referenced;
+    const auto collect = [&referenced](const std::vector<compositor::MaterialLayer>& layers) {
+        for (const compositor::MaterialLayer& layer : layers) {
+            if (layer.mask.paint != compositor::kNoPaintMask) {
+                referenced.push_back(layer.mask.paint);
+            }
+        }
+    };
+
+    collect(m_materialStack.Layers());
+    collect(m_committed.layers);
+    for (const DocumentSnapshot& snapshot : m_undoHistory.UndoStack()) {
+        collect(snapshot.layers);
+    }
+    for (const DocumentSnapshot& snapshot : m_undoHistory.RedoStack()) {
+        collect(snapshot.layers);
+    }
+
+    for (const compositor::PaintMaskId id : m_paintMasks.Ids()) {
+        if (std::find(referenced.begin(), referenced.end(), id) == referenced.end()) {
+            m_paintMasks.Remove(m_device, id);
+        }
+    }
 }
 
 // このテクスチャを使っている場所を、人が読める形で並べる。
@@ -2365,6 +2542,12 @@ void Application::ResetProject() {
     m_ordTexture = compositor::kNoTexture;
     m_paintMode = false;
     m_strokeActive = false;
+
+    // 別の文書になるので履歴は捨てる。戻せてしまうと中身が混ざる。
+    m_undoHistory.Clear();
+    m_documentDirty = false;
+    m_pendingHistoryStep = 0;
+    m_committed = CaptureDocument();
 }
 
 void Application::UpdateWindowTitle() {
@@ -2378,6 +2561,26 @@ void Application::UpdateWindowTitle() {
 
 void Application::ProcessPendingFileWork() {
     // どれもリソースの生成・破棄と GPU 待機を伴う。フレームの外で処理すること。
+
+    // アンドゥ / リドゥ。マテリアルの破棄を伴うのでここで処理する。
+    if (m_pendingHistoryStep != 0) {
+        const int step = m_pendingHistoryStep;
+        m_pendingHistoryStep = 0;
+
+        const DocumentSnapshot current = CaptureDocument();
+        if (step < 0 && m_undoHistory.CanUndo()) {
+            ApplyDocument(m_undoHistory.Undo(current));
+        } else if (step > 0 && m_undoHistory.CanRedo()) {
+            ApplyDocument(m_undoHistory.Redo(current));
+        }
+        m_committed = CaptureDocument();
+        m_pendingPaintSweep = true;
+    }
+
+    if (m_pendingPaintSweep) {
+        m_pendingPaintSweep = false;
+        SweepPaintMasks();
+    }
 
     if (m_pendingProjectNew) {
         m_pendingProjectNew = false;
@@ -2401,6 +2604,11 @@ void Application::ProcessPendingFileWork() {
             m_ordTexture = compositor::kNoTexture;
             m_paintMode = false;
             m_strokeActive = false;
+            // 読み込んだ文書が新しい起点になる。前の文書の履歴は捨てる。
+            m_undoHistory.Clear();
+            m_documentDirty = false;
+            m_pendingHistoryStep = 0;
+            m_committed = CaptureDocument();
             UpdateWindowTitle();
         } else {
             // 消えた / 壊れたプロジェクトを履歴に残しても、選べるだけで意味がない。
@@ -2623,6 +2831,8 @@ void Application::DrawInfoPanel() {
                               m_renderer.Evaluator().EvaluatedTileCount());
             ui::PropertyValue("ペイント", "%zu 枚 / %u^2 / 履歴 %zu 段", m_paintMasks.Count(),
                               m_paintMasks.Resolution(), m_paintMasks.UndoCount());
+            ui::PropertyValue("アンドゥ", "%zu 段 / やり直し %zu 段",
+                              m_undoHistory.UndoCount(), m_undoHistory.RedoCount());
             ui::PropertyValue("PSO", "%zu 件", m_pipelineCache.PipelineCount());
             ui::PropertyValue("解放待ち", "%zu 件", m_device.PendingDeletionCount());
             ui::PropertyValue("アップロード", "%llu / %llu KB",

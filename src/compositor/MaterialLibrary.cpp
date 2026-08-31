@@ -82,6 +82,26 @@ MaterialAssetId MaterialLibrary::Add(const std::string& name) {
     return m_entries.back().id;
 }
 
+MaterialAsset& MaterialLibrary::RestoreAsset(MaterialAssetId id, const std::string& name) {
+    if (MaterialAsset* existing = FindMutable(id); existing != nullptr) {
+        return *existing;
+    }
+
+    MaterialAsset asset;
+    asset.id = id;
+    asset.name = name;
+    m_entries.push_back(std::move(asset));
+
+    // 次に払い出す ID を戻した ID より先へ進めておく。
+    // そうしないと、この後の Add が同じ番号を配って衝突する。
+    m_nextId = std::max(m_nextId, id + 1);
+
+    // 並びは ID 順に保つ。一覧の見え方が undo のたびに入れ替わらないようにする。
+    std::sort(m_entries.begin(), m_entries.end(),
+              [](const MaterialAsset& a, const MaterialAsset& b) { return a.id < b.id; });
+    return *FindMutable(id);
+}
+
 MaterialAssetId MaterialLibrary::Duplicate(const MaterialAsset& source) {
     MaterialAsset asset = source;
     asset.id = m_nextId++;

@@ -6,6 +6,7 @@
 #include "compositor/TextureLibrary.h"
 #include "core/Log.h"
 #include "core/Window.h"
+#include "app/UndoHistory.h"
 #include "io/AppSettings.h"
 #include "io/RecentFiles.h"
 #include "renderer/PreviewRenderer.h"
@@ -105,6 +106,24 @@ private:
     void DrawLayerList();
     // レイヤーを 1 枚消す。ツールバーのボタンと一覧の削除アイコンの共通の入口。
     void RemoveLayer(int index);
+
+    // --- アンドゥ -----------------------------------------------------------
+    // 対象はレイヤーとマテリアル。テクスチャの読み込みと削除、ペイントの筆致、
+    // プレビュー設定は含めない（前者 2 つは GPU リソースそのもの、
+    // ペイントは PaintMaskStore が別の履歴を持つ）。
+    //
+    // いまの文書を写し取る。
+    DocumentSnapshot CaptureDocument() const;
+    // 写し取った文書を書き戻す。**マテリアルの破棄を伴うのでフレームの外で呼ぶ。**
+    void ApplyDocument(const DocumentSnapshot& snapshot);
+    // レイヤーかマテリアルを変えたときに呼ぶ。フレームの終わりに 1 段積まれる。
+    void MarkDocumentChanged();
+    // 文書からも履歴からも参照されなくなったペイントマスクを破棄する。
+    // レイヤーを消してもすぐには捨てないため、ここで回収する。
+    void SweepPaintMasks();
+    // 存在しないテクスチャ ID を「なし」に落とす。
+    // テクスチャは履歴の外で消えるため、書き戻した参照が宙に浮くことがある。
+    compositor::TextureId ValidTexture(compositor::TextureId id) const;
     // ペイントの対象になるレイヤー。ペイントモードで、選択中のレイヤーが
     // ペイントマスクを持つときだけ返す。
     compositor::MaterialLayer* CurrentPaintLayer();
@@ -181,6 +200,18 @@ private:
     compositor::TextureId m_textureRemoveCandidate = compositor::kNoTexture;
     std::vector<std::string> m_textureRemoveUsers;
     bool m_pendingProjectNew = false;
+
+    // --- アンドゥの状態 -----------------------------------------------------
+    UndoHistory m_undoHistory;
+    // 直近に確定した文書。変更を見つけたとき、これを「変更前」として積む。
+    DocumentSnapshot m_committed;
+    // このフレームでレイヤーかマテリアルが変わったか。フレームの終わりに畳む。
+    bool m_documentDirty = false;
+    // -1 でアンドゥ、+1 でリドゥ。マテリアルの破棄を伴うのでフレームの外で処理する。
+    int m_pendingHistoryStep = 0;
+    // 参照が切れたペイントマスクの回収を予約する。破棄は GPU 待機を伴う。
+    bool m_pendingPaintSweep = false;
+
     ImGuiLayer m_imgui;
 
     // ビューポートの表示サイズ。UI 側で決まり、次のフレーム頭で反映する。

@@ -81,6 +81,8 @@ set(mm_sources
     src/app/Main.cpp
     src/app/Application.cpp
     src/app/Application.h
+    src/app/UndoHistory.cpp
+    src/app/UndoHistory.h
     src/core/Log.cpp
     src/core/Log.h
     src/compositor/MaterialEvaluator.cpp
@@ -219,7 +221,12 @@ add_custom_command(TARGET material_mixer POST_BUILD
 enable_testing()
 
 add_executable(material_mixer_tests
+    tests/TestMain.cpp
+    tests/TestSupport.h
     tests/UiInteractionTests.cpp
+    tests/UndoHistoryTests.cpp
+    src/app/UndoHistory.cpp
+    src/app/UndoHistory.h
     src/ui/UiStyle.cpp
     src/ui/UiStyle.h
 )

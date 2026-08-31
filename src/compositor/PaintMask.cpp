@@ -163,6 +163,15 @@ void PaintMaskStore::Remove(rhi::Device& device, PaintMaskId id) {
     m_entries.erase(it);
 }
 
+std::vector<PaintMaskId> PaintMaskStore::Ids() const {
+    std::vector<PaintMaskId> ids;
+    ids.reserve(m_entries.size());
+    for (const PaintMaskEntry& entry : m_entries) {
+        ids.push_back(entry.id);
+    }
+    return ids;
+}
+
 const PaintMaskEntry* PaintMaskStore::Find(PaintMaskId id) const {
     if (id == kNoPaintMask) {
         return nullptr;
