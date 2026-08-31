@@ -1,5 +1,6 @@
 #pragma once
 
+#include "compositor/MaterialLibrary.h"
 #include "compositor/MaterialStack.h"
 #include "compositor/PaintMask.h"
 #include "compositor/TextureLibrary.h"
@@ -49,6 +50,7 @@ private:
     void DrawLightingPanel();
     void DrawInfoPanel();
     void DrawLayerPanel();
+    void DrawMaterialLibraryPanel();
     // レイヤー一覧。ドラッグで並べ替える。
     void DrawLayerList();
     // ペイントの対象になるレイヤー。ペイントモードで、選択中のレイヤーが
@@ -67,7 +69,9 @@ private:
     renderer::PreviewRenderer m_renderer;
     compositor::MaterialStack m_materialStack;
     compositor::TextureLibrary m_textureLibrary;
+    compositor::MaterialLibrary m_materialLibrary;
     compositor::PaintMaskStore m_paintMasks;
+    int m_selectedMaterial = 0;
     compositor::BrushSettings m_brush;
     // ペイントモード中はビューポートの左ドラッグがブラシになる。
     bool m_paintMode = false;
@@ -76,17 +80,13 @@ private:
     float m_strokeLastX = 0.0f;
     float m_strokeLastY = 0.0f;
     int m_selectedLayer = 0;
-    // テクスチャ読み込みの入力欄と、フレーム外で処理するための保留パス。
-    char m_texturePathBuffer[512] = {};
-    std::filesystem::path m_pendingTexturePath;
+    // 読み込みは GPU 待機を伴うため、フレームの外で処理する。
+    std::vector<std::filesystem::path> m_pendingTexturePaths;
     ImGuiLayer m_imgui;
 
     // ビューポートの表示サイズ。UI 側で決まり、次のフレーム頭で反映する。
     uint32_t m_requestedViewportWidth = 512;
     uint32_t m_requestedViewportHeight = 512;
-
-    // HDRI の読み込み先パス（UI 入力用）。
-    char m_hdrPathBuffer[512] = {};
 
     StartupOptions m_options;
 

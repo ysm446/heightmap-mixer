@@ -74,6 +74,7 @@ find_package(imgui CONFIG REQUIRED)
 find_package(D3D12MemoryAllocator CONFIG REQUIRED)
 find_package(directx-dxc CONFIG REQUIRED)
 find_package(Stb REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 set(hm_sources
     src/app/Main.cpp
@@ -84,12 +85,16 @@ set(hm_sources
     src/compositor/MaterialEvaluator.cpp
     src/compositor/MaterialEvaluator.h
     src/compositor/MaterialLayer.h
+    src/compositor/MaterialLibrary.cpp
+    src/compositor/MaterialLibrary.h
     src/compositor/MaterialStack.cpp
     src/compositor/MaterialStack.h
     src/compositor/PaintMask.cpp
     src/compositor/PaintMask.h
     src/compositor/TextureLibrary.cpp
     src/compositor/TextureLibrary.h
+    src/core/FileDialog.cpp
+    src/core/FileDialog.h
     src/core/ImageIo.cpp
     src/core/ImageIo.h
     src/core/Window.cpp
@@ -162,10 +167,13 @@ target_link_libraries(heightmap_mixer PRIVATE
     Microsoft::DirectXShaderCompiler
     GPUOpen::D3D12MemoryAllocator
     imgui::imgui
+    nlohmann_json::nlohmann_json
     d3d12
     dxgi
     dxguid
     shell32
+    # IFileDialog（ファイル選択ダイアログ）に必要。
+    ole32
 )
 
 # --- Agility SDK の DLL を実行ファイル横の D3D12/ に配置する ---------------

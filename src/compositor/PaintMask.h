@@ -4,6 +4,7 @@
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 
+#include <cstdint>
 #include <vector>
 
 namespace hm::compositor {
@@ -55,6 +56,19 @@ public:
     PaintMaskId Add(rhi::Device& device, float initialValue);
     // 中身ごと複製する。レイヤーの複製で共有状態にならないようにするため。
     PaintMaskId Duplicate(rhi::Device& device, PaintMaskId source);
+
+    // --- プロジェクトの保存と読み込み ---------------------------------------
+    // ペイントマスクは手続きで再現できないので、画像として持ち出す必要がある。
+    // どちらもフレームの外で呼ぶこと（GPU 待機を伴う）。
+
+    // 中身を 1 バイト / テクセルで読み戻す。失敗したら空を返す。
+    std::vector<uint8_t> ReadPixels(rhi::Device& device, PaintMaskId id) const;
+    // 画像から新しいペイントマスクを作る。pixels は resolution^2 の 1 チャンネル。
+    // 空のストアなら解像度もこの画像に合わせる。
+    PaintMaskId AddFromPixels(rhi::Device& device, uint32_t resolution,
+                              const std::vector<uint8_t>& pixels);
+    // すべて破棄する。プロジェクトを開く前に呼ぶ。
+    void Clear(rhi::Device& device);
     // 破棄する。フレームの外で呼ぶこと（GPU 待機を伴う）。
     void Remove(rhi::Device& device, PaintMaskId id);
 

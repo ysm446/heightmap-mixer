@@ -25,6 +25,9 @@ public:
     bool Create(const wchar_t* title, uint32_t width, uint32_t height);
     void Destroy();
 
+    // メニューなどからアプリを閉じる。
+    void RequestClose() { m_shouldClose = true; }
+
     // 溜まっているメッセージを処理する。終了要求が来ていたら false を返す。
     bool PumpMessages();
 

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace hm::compositor {
 namespace {
@@ -181,6 +182,161 @@ PaintMaskEntry* PaintMaskStore::FindMutable(PaintMaskId id) {
 uint32_t PaintMaskStore::SrvIndex(PaintMaskId id) const {
     const PaintMaskEntry* entry = Find(id);
     return (entry != nullptr) ? entry->texture.SrvIndex() : kInvalidTextureIndex;
+}
+
+std::vector<uint8_t> PaintMaskStore::ReadPixels(rhi::Device& device, PaintMaskId id) const {
+    const PaintMaskEntry* entry = Find(id);
+    if (entry == nullptr) {
+        return {};
+    }
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT rowCount = 0;
+    UINT64 rowSizeInBytes = 0;
+    UINT64 totalBytes = 0;
+    const D3D12_RESOURCE_DESC desc = entry->texture.resource->GetDesc();
+    device.GetDevice()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, &rowCount,
+                                              &rowSizeInBytes, &totalBytes);
+
+    rhi::GpuBuffer readback;
+    if (!device.Allocator().CreateReadbackBuffer(totalBytes, L"PaintMaskReadback", readback)) {
+        return {};
+    }
+
+    // 状態は entry 側で追っているが、この関数は const なので書き戻さない。
+    // 読み出しの前後で必ず元の状態へ戻す。
+    const D3D12_RESOURCE_STATES previousState = entry->texture.state;
+    const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+        PIXBeginEvent(commandList, PIX_COLOR(200, 120, 200), "PaintMaskReadback");
+        if (previousState != D3D12_RESOURCE_STATE_COPY_SOURCE) {
+            const auto toCopySource = CD3DX12_RESOURCE_BARRIER::Transition(
+                entry->texture.resource.Get(), previousState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            commandList->ResourceBarrier(1, &toCopySource);
+        }
+
+        const CD3DX12_TEXTURE_COPY_LOCATION destination(readback.resource.Get(), footprint);
+        const CD3DX12_TEXTURE_COPY_LOCATION source(entry->texture.resource.Get(), 0);
+        commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+
+        if (previousState != D3D12_RESOURCE_STATE_COPY_SOURCE) {
+            const auto restore = CD3DX12_RESOURCE_BARRIER::Transition(
+                entry->texture.resource.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, previousState);
+            commandList->ResourceBarrier(1, &restore);
+        }
+        PIXEndEvent(commandList);
+    });
+
+    std::vector<uint8_t> pixels;
+    if (executed) {
+        void* mapped = nullptr;
+        const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(totalBytes)};
+        if (HM_CHECK_HR(readback.resource->Map(0, &readRange, &mapped))) {
+            const auto* source = static_cast<const uint8_t*>(mapped) + footprint.Offset;
+            // 行ピッチは 256 バイト境界へ揃えられているので、詰め直して返す。
+            pixels.resize(static_cast<size_t>(m_resolution) * m_resolution);
+            for (uint32_t row = 0; row < m_resolution; ++row) {
+                std::memcpy(pixels.data() + static_cast<size_t>(row) * m_resolution,
+                            source + static_cast<size_t>(row) * footprint.Footprint.RowPitch,
+                            m_resolution);
+            }
+            const D3D12_RANGE writtenRange = {0, 0};
+            readback.resource->Unmap(0, &writtenRange);
+        }
+    }
+
+    device.Defer(readback.resource);
+    device.Defer(readback.allocation);
+    return pixels;
+}
+
+PaintMaskId PaintMaskStore::AddFromPixels(rhi::Device& device, uint32_t resolution,
+                                          const std::vector<uint8_t>& pixels) {
+    if (resolution == 0 ||
+        pixels.size() < static_cast<size_t>(resolution) * resolution) {
+        return kNoPaintMask;
+    }
+    // 解像度はストア全体で共通。空のときだけ画像に合わせる。
+    if (m_entries.empty()) {
+        m_resolution = resolution;
+        m_requestedResolution = resolution;
+    }
+    if (resolution != m_resolution) {
+        HM_LOG_ERROR("ペイントマスクの解像度が揃っていません (%u != %u)", resolution,
+                     m_resolution);
+        return kNoPaintMask;
+    }
+
+    PaintMaskEntry entry;
+    if (!CreateMaskTexture(device, m_resolution, entry.texture)) {
+        return kNoPaintMask;
+    }
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT rowCount = 0;
+    UINT64 rowSizeInBytes = 0;
+    UINT64 totalBytes = 0;
+    const D3D12_RESOURCE_DESC desc = entry.texture.resource->GetDesc();
+    device.GetDevice()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, &rowCount,
+                                              &rowSizeInBytes, &totalBytes);
+
+    rhi::GpuBuffer staging;
+    if (!device.Allocator().CreateUploadBuffer(totalBytes, L"PaintMaskStaging", staging)) {
+        ReleaseTexture(device, entry.texture);
+        return kNoPaintMask;
+    }
+
+    void* mapped = nullptr;
+    const D3D12_RANGE readRange = {0, 0};
+    if (!HM_CHECK_HR(staging.resource->Map(0, &readRange, &mapped))) {
+        ReleaseTexture(device, entry.texture);
+        return kNoPaintMask;
+    }
+    auto* destination = static_cast<uint8_t*>(mapped) + footprint.Offset;
+    for (uint32_t row = 0; row < m_resolution; ++row) {
+        std::memcpy(destination + static_cast<size_t>(row) * footprint.Footprint.RowPitch,
+                    pixels.data() + static_cast<size_t>(row) * m_resolution, m_resolution);
+    }
+    staging.resource->Unmap(0, nullptr);
+
+    const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+        PIXBeginEvent(commandList, PIX_COLOR(200, 120, 200), "PaintMaskUpload");
+        const auto toCopyDest = CD3DX12_RESOURCE_BARRIER::Transition(
+            entry.texture.resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+            D3D12_RESOURCE_STATE_COPY_DEST);
+        commandList->ResourceBarrier(1, &toCopyDest);
+
+        const CD3DX12_TEXTURE_COPY_LOCATION destinationLocation(entry.texture.resource.Get(), 0);
+        const CD3DX12_TEXTURE_COPY_LOCATION sourceLocation(staging.resource.Get(), footprint);
+        commandList->CopyTextureRegion(&destinationLocation, 0, 0, 0, &sourceLocation, nullptr);
+
+        const auto toRead = CD3DX12_RESOURCE_BARRIER::Transition(
+            entry.texture.resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kReadState);
+        commandList->ResourceBarrier(1, &toRead);
+        PIXEndEvent(commandList);
+    });
+
+    device.Defer(staging.resource);
+    device.Defer(staging.allocation);
+    if (!executed) {
+        ReleaseTexture(device, entry.texture);
+        return kNoPaintMask;
+    }
+
+    entry.texture.state = kReadState;
+    entry.id = m_nextId++;
+    m_entries.push_back(std::move(entry));
+    return m_entries.back().id;
+}
+
+void PaintMaskStore::Clear(rhi::Device& device) {
+    device.WaitForGpu();
+    m_pending.clear();
+    ReleaseSnapshots(device, m_undo);
+    ReleaseSnapshots(device, m_redo);
+    for (PaintMaskEntry& entry : m_entries) {
+        ReleaseTexture(device, entry.texture);
+    }
+    m_entries.clear();
 }
 
 void PaintMaskStore::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache& pipelineCache) {

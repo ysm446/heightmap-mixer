@@ -37,19 +37,12 @@ inline constexpr TextureId kNoTexture = 0;
 using PaintMaskId = uint32_t;
 inline constexpr PaintMaskId kNoPaintMask = 0;
 
+// マテリアルの ID。0 は「なし」。MaterialLibrary が払い出す。
+using MaterialAssetId = uint32_t;
+inline constexpr MaterialAssetId kNoMaterialAsset = 0;
+
 // シェーダへ渡す「参照しない」を表すインデックス。
 inline constexpr uint32_t kInvalidTextureIndex = 0xFFFFFFFFu;
-
-// レイヤーが参照するテクスチャ。0 のスロットは定数値を使う。
-struct LayerTextures {
-    TextureId baseColor = kNoTexture;         // sRGB として読む
-    TextureId normal = kNoTexture;            // タンジェント空間法線（リニア）
-    TextureId roughness = kNoTexture;         // R チャンネル
-    TextureId metallic = kNoTexture;          // R チャンネル
-    TextureId ambientOcclusion = kNoTexture;  // R チャンネル
-    TextureId height = kNoTexture;            // R チャンネル
-    TextureId mask = kNoTexture;              // R チャンネル
-};
 
 // ノイズの種類。シェーダの HM_NOISE_* と一致させること。
 enum class NoiseType : uint32_t {
@@ -102,6 +95,9 @@ struct LayerMask {
     bool invert = false;
     // ペイントマスク。source が Paint のときだけ参照する。
     PaintMaskId paint = kNoPaintMask;
+    // マスク用テクスチャ。source が Texture のときだけ参照する。
+    // マテリアルのマップとは用途が別なので、レイヤー側で持つ。
+    TextureId texture = kNoTexture;
 };
 
 // 1 レイヤーぶんの設定。
@@ -127,7 +123,9 @@ struct MaterialLayer {
 
     LayerMask mask;
 
-    LayerTextures textures;
+    // このレイヤーが使うマテリアル（PBR のマップ一式）。
+    // kNoMaterialAsset なら下の定数値だけで塗る。
+    MaterialAssetId material = kNoMaterialAsset;
 
     // ハイトブレンドの境界の柔らかさ。0 に近いほど硬い置き換えになる。
     float blendRange = 0.15f;

@@ -74,6 +74,7 @@ public:
     void Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                 ID3D12GraphicsCommandList* commandList, const compositor::MaterialStack& stack,
                 const compositor::TextureLibrary& textures,
+                const compositor::MaterialLibrary& materials,
                 const compositor::PaintMaskStore& paintMasks);
 
     // ペイントのブラシパスが UV バッファを読むための準備をする。
@@ -88,6 +89,8 @@ public:
     TonemapMode& Tonemap() { return m_tonemap; }
     SkySettings& Sky() { return m_sky; }
     const Environment& GetEnvironment() const { return m_environment; }
+    // 読み込み済みの HDRI のパス。手続き的な空を使っているときは空。
+    const std::filesystem::path& HdriPath() const { return m_hdriPath; }
     float& IblIntensity() { return m_iblIntensity; }
     bool& ShowSkybox() { return m_showSkybox; }
     bool& UseMaterialTextures() { return m_useMaterialTextures; }
@@ -136,6 +139,7 @@ private:
     bool m_showSkybox = true;
     bool m_skyRebuildRequested = false;
     std::filesystem::path m_pendingHdrPath;
+    std::filesystem::path m_hdriPath;
 
     uint32_t m_width = 0;
     uint32_t m_height = 0;

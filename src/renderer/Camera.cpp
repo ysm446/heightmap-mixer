@@ -46,6 +46,18 @@ void Camera::Reset() {
     m_pitch = 0.35f;
 }
 
+CameraState Camera::State() const {
+    return CameraState{m_target, m_distance, m_yaw, m_pitch, m_fovY};
+}
+
+void Camera::SetState(const CameraState& state) {
+    m_target = state.target;
+    m_distance = std::clamp(state.distance, 0.1f, 100.0f);
+    m_yaw = state.yaw;
+    m_pitch = std::clamp(state.pitch, -kPitchLimit, kPitchLimit);
+    m_fovY = std::clamp(state.fovY, 0.2f, 1.5f);
+}
+
 void Camera::SetViewportSize(uint32_t width, uint32_t height) {
     m_width = (width > 0) ? width : 1;
     m_height = (height > 0) ? height : 1;

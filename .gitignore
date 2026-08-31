@@ -10,3 +10,6 @@ vcpkg_installed/
 
 # ImGui がリポジトリのルートへ吐くレイアウト保存。環境ごとに違うのでコミットしない。
 *_imgui.ini
+
+# 動作確認用に置いたテクスチャ。数百 MB になるためコミットしない。
+assets/textures/

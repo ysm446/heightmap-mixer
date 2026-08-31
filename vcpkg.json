@@ -11,6 +11,7 @@
     "d3d12-memory-allocator",
     "directx-dxc",
     "stb",
+    "nlohmann-json",
     {
       "name": "imgui",
       "features": [

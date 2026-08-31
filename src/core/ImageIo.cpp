@@ -77,4 +77,23 @@ bool SaveRgba8Png(const std::filesystem::path& path, uint32_t width, uint32_t he
     return true;
 }
 
+bool SaveGray8Png(const std::filesystem::path& path, uint32_t width, uint32_t height,
+                  uint32_t rowPitch, const uint8_t* pixels) {
+    if (pixels == nullptr || width == 0 || height == 0) {
+        return false;
+    }
+
+    const std::string utf8Path = path.string();
+    const int result = ::stbi_write_png(utf8Path.c_str(), static_cast<int>(width),
+                                        static_cast<int>(height), 1, pixels,
+                                        static_cast<int>(rowPitch));
+    if (result == 0) {
+        HM_LOG_ERROR("PNG を書き出せません: %s", utf8Path.c_str());
+        return false;
+    }
+
+    HM_LOG_INFO("PNG を書き出しました: %s (%u x %u, 1 ch)", utf8Path.c_str(), width, height);
+    return true;
+}
+
 }  // namespace hm

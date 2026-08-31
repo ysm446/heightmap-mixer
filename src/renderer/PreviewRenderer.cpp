@@ -152,10 +152,13 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
     if (!m_pendingHdrPath.empty()) {
         const std::filesystem::path path = m_pendingHdrPath;
         m_pendingHdrPath.clear();
-        if (!m_environment.BuildFromHdrFile(device, pipelineCache, path)) {
+        if (m_environment.BuildFromHdrFile(device, pipelineCache, path)) {
+            m_hdriPath = path;
+        } else {
             // 読み込みに失敗したら手続き的な空へ戻す。
             HM_LOG_WARN("HDRI の読み込みに失敗したため、手続き的な空に戻します");
             m_environment.BuildFromSky(device, pipelineCache, m_sky);
+            m_hdriPath.clear();
         }
         m_skyRebuildRequested = false;
         return;
@@ -164,6 +167,7 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
     if (m_skyRebuildRequested) {
         m_skyRebuildRequested = false;
         m_environment.BuildFromSky(device, pipelineCache, m_sky);
+        m_hdriPath.clear();
     }
 }
 
@@ -332,13 +336,15 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
                              ID3D12GraphicsCommandList* commandList,
                              const compositor::MaterialStack& stack,
                              const compositor::TextureLibrary& textures,
+                             const compositor::MaterialLibrary& materials,
                              const compositor::PaintMaskStore& paintMasks) {
     if (!m_sceneColor.IsValid() || !m_output.IsValid()) {
         return;
     }
 
     // レイヤースタックに変更があれば、メッシュを描く前に評価し直す。
-    m_evaluator.EvaluateIfDirty(device, pipelineCache, commandList, stack, textures, paintMasks);
+    m_evaluator.EvaluateIfDirty(device, pipelineCache, commandList, stack, textures, materials,
+                                paintMasks);
 
     rhi::GraphicsPipelineDesc meshPipelineDesc;
     meshPipelineDesc.shaderPath = L"MeshPbr.hlsl";

@@ -14,6 +14,15 @@ struct CameraBasis {
     DirectX::XMFLOAT3 forward;  // 画面の奥
 };
 
+// カメラの状態。プロジェクトの保存と読み込みで丸ごと出し入れする。
+struct CameraState {
+    DirectX::XMFLOAT3 target = {0.0f, 0.0f, 0.0f};
+    float distance = 3.2f;
+    float yaw = 0.6f;
+    float pitch = 0.35f;
+    float fovY = 0.7853981634f;
+};
+
 // 注視点を中心に回る軌道カメラ。マテリアルプレビューではこれで十分。
 //
 // 座標系は**右手系 Y-up**。X が右、Y が上、Z が手前（画面から見て奥が -Z）。
@@ -32,6 +41,9 @@ public:
     DirectX::XMMATRIX ProjectionMatrix() const;
     DirectX::XMFLOAT3 Position() const;
     CameraBasis Basis() const;
+
+    CameraState State() const;
+    void SetState(const CameraState& state);
 
     float& FovY() { return m_fovY; }
     float& Distance() { return m_distance; }

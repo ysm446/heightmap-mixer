@@ -142,6 +142,7 @@ bool MaterialEvaluator::Resize(rhi::Device& device, uint32_t resolution) {
 void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                  ID3D12GraphicsCommandList* commandList,
                                  const MaterialStack& stack, const TextureLibrary& textures,
+                                 const MaterialLibrary& materials,
                                  const PaintMaskStore& paintMasks,
                                  const std::vector<TileRect>& tiles) {
     if (!m_textures.IsValid() || tiles.empty()) {
@@ -256,13 +257,24 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 constants.flags |= kFlagBaseLayer;
             }
 
-            constants.baseColor[0] = layer.baseColor.x;
-            constants.baseColor[1] = layer.baseColor.y;
-            constants.baseColor[2] = layer.baseColor.z;
+            // マップはレイヤーが参照するマテリアルから引く。
+            const MaterialAsset* material = materials.Find(layer.material);
 
-            constants.surfaceParams[0] = layer.roughness;
-            constants.surfaceParams[1] = layer.metallic;
-            constants.surfaceParams[2] = layer.ambientOcclusion;
+            // 定数もマテリアルが持っているほうを優先する。
+            // マテリアル側とレイヤー側の両方が掛かると、どちらが効いているか分からない。
+            const DirectX::XMFLOAT3 baseColor =
+                (material != nullptr) ? material->baseColorTint : layer.baseColor;
+            constants.baseColor[0] = baseColor.x;
+            constants.baseColor[1] = baseColor.y;
+            constants.baseColor[2] = baseColor.z;
+
+            constants.surfaceParams[0] =
+                (material != nullptr) ? material->roughnessValue : layer.roughness;
+            constants.surfaceParams[1] =
+                (material != nullptr) ? material->metallicValue : layer.metallic;
+            constants.surfaceParams[2] = (material != nullptr)
+                                             ? material->ambientOcclusionValue
+                                             : layer.ambientOcclusion;
             constants.surfaceParams[3] = layer.heightBase;
 
             constants.blendParams[0] = layer.blendRange;
@@ -286,14 +298,26 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             constants.maskNoise[3] = layer.mask.noise.offset;
 
             // ベースカラーだけ sRGB として読む。それ以外はリニア。
-            constants.textureIndices0[0] = textures.SrvIndex(layer.textures.baseColor, true);
-            constants.textureIndices0[1] = textures.SrvIndex(layer.textures.normal, false);
-            constants.textureIndices0[2] = textures.SrvIndex(layer.textures.roughness, false);
-            constants.textureIndices0[3] = textures.SrvIndex(layer.textures.metallic, false);
+            constants.textureIndices0[0] =
+                (material != nullptr) ? textures.SrvIndex(material->baseColor, true)
+                                      : kInvalidTextureIndex;
+            constants.textureIndices0[1] =
+                (material != nullptr) ? textures.SrvIndex(material->normal, false)
+                                      : kInvalidTextureIndex;
+            constants.textureIndices0[2] =
+                (material != nullptr) ? textures.SrvIndex(material->roughness, false)
+                                      : kInvalidTextureIndex;
+            constants.textureIndices0[3] =
+                (material != nullptr) ? textures.SrvIndex(material->metallic, false)
+                                      : kInvalidTextureIndex;
             constants.textureIndices1[0] =
-                textures.SrvIndex(layer.textures.ambientOcclusion, false);
-            constants.textureIndices1[1] = textures.SrvIndex(layer.textures.height, false);
-            constants.textureIndices1[2] = textures.SrvIndex(layer.textures.mask, false);
+                (material != nullptr) ? textures.SrvIndex(material->ambientOcclusion, false)
+                                      : kInvalidTextureIndex;
+            constants.textureIndices1[1] =
+                (material != nullptr) ? textures.SrvIndex(material->height, false)
+                                      : kInvalidTextureIndex;
+            // マスク用テクスチャはレイヤー固有。マテリアルのマップとは用途が別。
+            constants.textureIndices1[2] = textures.SrvIndex(layer.mask.texture, false);
             constants.textureIndices1[3] =
                 useDerivedMask ? m_textures.maskScratch.SrvIndex() : kInvalidTextureIndex;
 
@@ -344,6 +368,7 @@ void MaterialEvaluator::EvaluateIfDirty(rhi::Device& device, rhi::PipelineCache&
                                         ID3D12GraphicsCommandList* commandList,
                                         const MaterialStack& stack,
                                         const TextureLibrary& textures,
+                                        const MaterialLibrary& materials,
                                         const PaintMaskStore& paintMasks) {
     if (m_evaluatedRevision == stack.Revision()) {
         return;
@@ -361,7 +386,7 @@ void MaterialEvaluator::EvaluateIfDirty(rhi::Device& device, rhi::PipelineCache&
         }
     }
 
-    Evaluate(device, pipelineCache, commandList, stack, textures, paintMasks, tiles);
+    Evaluate(device, pipelineCache, commandList, stack, textures, materials, paintMasks, tiles);
     m_evaluatedRevision = stack.Revision();
 }
 

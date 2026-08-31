@@ -1,5 +1,6 @@
 #include "app/Application.h"
 
+#include "core/FileDialog.h"
 #include "core/Log.h"
 #include "ui/UiStyle.h"
 
@@ -119,6 +120,44 @@ bool DrawNoiseRows(compositor::NoiseParams& noise, const compositor::NoiseParams
     return changed;
 }
 
+// マテリアルを選ぶ行。サムネイル付きの一覧から選ぶ。
+bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& slot,
+                         const compositor::MaterialLibrary& library) {
+    ui::PropertyLabel(label, "「なし」ならレイヤーの定数値だけで塗る");
+
+    std::string preview = "なし";
+    if (const compositor::MaterialAsset* current = library.Find(slot); current != nullptr) {
+        preview = current->name;
+    }
+
+    const float thumbnailSize = ImGui::GetFrameHeight();
+    bool changed = false;
+    ImGui::SetNextItemWidth(
+        std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x));
+    if (ImGui::BeginCombo("##value", preview.c_str())) {
+        if (ImGui::Selectable("なし", slot == compositor::kNoMaterialAsset)) {
+            slot = compositor::kNoMaterialAsset;
+            changed = true;
+        }
+        for (const compositor::MaterialAsset& asset : library.Entries()) {
+            ImGui::PushID(static_cast<int>(asset.id));
+            if (asset.thumbnail.IsValid()) {
+                ImGui::Image(static_cast<ImTextureID>(asset.thumbnail.srv.gpu.ptr),
+                             ImVec2(thumbnailSize, thumbnailSize));
+                ImGui::SameLine();
+            }
+            if (ImGui::Selectable(asset.name.c_str(), slot == asset.id)) {
+                slot = asset.id;
+                changed = true;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ui::PropertyEnd();
+    return changed;
+}
+
 // テクスチャスロットを選ぶ行。ライブラリの一覧から選ぶ。
 bool DrawTextureSlotRow(const char* label, compositor::TextureId& slot,
                         const compositor::TextureLibrary& library) {
@@ -224,6 +263,11 @@ void DrawAxisGizmo(const renderer::Camera& camera, const ImVec2& viewportMin,
 bool Application::Initialize(const StartupOptions& options) {
     m_options = options;
 
+    // ファイル選択ダイアログ（IFileDialog）が COM を使う。
+    if (FAILED(::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE))) {
+        HM_LOG_WARN("COM を初期化できませんでした。ファイル選択ダイアログは使えません");
+    }
+
     // ウィンドウ生成より前に済ませる必要がある。
     ImGuiLayer::EnableDpiAwareness();
 
@@ -263,12 +307,7 @@ bool Application::Initialize(const StartupOptions& options) {
         m_device.Resize(width, height);
     });
 
-    for (const std::filesystem::path& texturePath : options.texturePaths) {
-        m_textureLibrary.Load(m_device, m_pipelineCache, texturePath);
-    }
-    if (!options.texturePaths.empty()) {
-        m_materialStack.MarkDirty();
-    }
+    m_pendingTexturePaths = options.texturePaths;
 
     if (!options.hdriPath.empty()) {
         m_renderer.RequestHdrLoad(options.hdriPath);
@@ -281,6 +320,7 @@ bool Application::Initialize(const StartupOptions& options) {
 void Application::Shutdown() {
     m_device.WaitForGpu();
     m_paintMasks.Destroy(m_device);
+    m_materialLibrary.Destroy(m_device);
     m_textureLibrary.Destroy(m_device);
     m_renderer.Shutdown(m_device);
     m_imgui.Shutdown();
@@ -288,6 +328,7 @@ void Application::Shutdown() {
     m_shaderCompiler.Destroy();
     m_device.Shutdown();
     m_window.Destroy();
+    ::CoUninitialize();
 }
 
 void Application::PollShaderHotReload() {
@@ -316,6 +357,7 @@ int Application::Run() {
 
         PollShaderHotReload();
 
+
         // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
         // フレームの外で処理する。
         m_renderer.ProcessPendingWork(m_device, m_pipelineCache);
@@ -323,14 +365,25 @@ int Application::Run() {
         m_paintMasks.ProcessPendingWork(m_device, m_pipelineCache);
 
         // テクスチャ読み込みも GPU 待機を伴うため、フレームの外で処理する。
-        if (!m_pendingTexturePath.empty()) {
-            const std::filesystem::path path = m_pendingTexturePath;
-            m_pendingTexturePath.clear();
-            if (m_textureLibrary.Load(m_device, m_pipelineCache, path) !=
-                compositor::kNoTexture) {
+        if (!m_pendingTexturePaths.empty()) {
+            std::vector<std::filesystem::path> paths;
+            paths.swap(m_pendingTexturePaths);
+            bool loaded = false;
+            for (const std::filesystem::path& path : paths) {
+                loaded |= (m_textureLibrary.Load(m_device, m_pipelineCache, path) !=
+                           compositor::kNoTexture);
+            }
+            if (loaded) {
+                // 読み込んだ画像を参照しているサムネイルを作り直す。
+                for (const compositor::MaterialAsset& asset : m_materialLibrary.Entries()) {
+                    m_materialLibrary.MarkThumbnailDirty(asset.id);
+                }
                 m_materialStack.MarkDirty();
             }
         }
+
+        // サムネイルの生成も GPU 待機を伴う。
+        m_materialLibrary.ProcessPendingWork(m_device, m_pipelineCache, m_textureLibrary);
 
         // ビューポートの作り直しは GPU 待機を伴うため、フレームの外で行う。
         if (m_requestedViewportWidth != m_renderer.Width() ||
@@ -357,7 +410,7 @@ int Application::Run() {
         }
 
         m_renderer.Render(m_device, m_pipelineCache, commandList, m_materialStack,
-                          m_textureLibrary, m_paintMasks);
+                          m_textureLibrary, m_materialLibrary, m_paintMasks);
 
         // レンダラがターゲットを差し替えているので、ImGui を描く前に戻す。
         m_device.BindBackBuffer(commandList);
@@ -407,7 +460,10 @@ void Application::DrawUi() {
 
     // パネルはすべてドックへ収める。絶対座標で置くと、ウィンドウの大きさが
     // 変わったときや、別の大きさで保存された ini を読んだときに画面外へはみ出す。
-    const ImGuiID dockspaceId = ImGui::GetID("HeightmapMixerDockSpace");
+    // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
+    // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
+    // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
+    const ImGuiID dockspaceId = ImGui::GetID("HeightmapMixerDockSpace_v2");
 
     // ini にドックの配置が無ければ既定レイアウトを組む。
     // DockSpaceOverViewport がノードを作る前に判定すること。
@@ -424,6 +480,7 @@ void Application::DrawUi() {
 
     DrawViewportPanel();
     DrawLayerPanel();
+    DrawMaterialLibraryPanel();
     DrawMaterialPanel();
     DrawLightingPanel();
     DrawInfoPanel();
@@ -501,6 +558,7 @@ void Application::HandlePaintInput(compositor::MaterialLayer& layer, bool itemAc
 //
 //   +----------+----------------+--------------------+
 //   | レイヤー  | ビューポート    | プレビュー設定      |
+//   | マテリアル |                |                    |
 //   |          |                +--------------------+
 //   |          |                | ライティングと露出   |
 //   |          |                +--------------------+
@@ -527,6 +585,9 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, 0.36f, &rightTop, &right);
 
     ImGui::DockBuilderDockWindow("レイヤー", left);
+    // マテリアルはレイヤーと同じ枠にタブで並べる。
+    // どちらも「何を積むか」を決める作業で、同時には見ない。
+    ImGui::DockBuilderDockWindow("マテリアル", left);
     ImGui::DockBuilderDockWindow("ビューポート", center);
     ImGui::DockBuilderDockWindow("プレビュー設定", rightTop);
     ImGui::DockBuilderDockWindow("ライティングと露出", right);
@@ -730,11 +791,13 @@ void Application::DrawLightingPanel() {
             ui::PropertyBool("背景を表示", &m_renderer.ShowSkybox(), true,
                              "オフにすると背景色だけになる。IBL の寄与は残る");
 
-            ui::PropertyTextInput("HDRI", m_hdrPathBuffer, IM_ARRAYSIZE(m_hdrPathBuffer),
-                                  "Radiance HDR (.hdr) のパス");
             ui::PropertyLabelEmpty("hdrLoad");
-            if (ui::Button("読み込む") && m_hdrPathBuffer[0] != 0) {
-                m_renderer.RequestHdrLoad(std::filesystem::path(m_hdrPathBuffer));
+            if (ui::Button("HDRI を開く…", ui::kWideButtonWidth)) {
+                const std::filesystem::path path =
+                    ShowOpenFileDialog(L"HDRI を開く", HdriFileFilters());
+                if (!path.empty()) {
+                    m_renderer.RequestHdrLoad(path);
+                }
             }
             ui::PropertyEnd();
             ui::EndPropertyTable();
@@ -884,18 +947,26 @@ void Application::DrawLayerPanel() {
         if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer))) {
             layer.name = nameBuffer;
         }
-        changed |= ui::PropertyColor("ベースカラー", &layer.baseColor.x,
-                                     &kDefaultLayer.baseColor.x);
-        changed |= ui::PropertyFloat("ラフネス", &layer.roughness, 0.0f, 1.0f,
-                                     kDefaultLayer.roughness, nullptr, "%.2f");
-        changed |= ui::PropertyFloat("メタルネス", &layer.metallic, 0.0f, 1.0f,
-                                     kDefaultLayer.metallic, nullptr, "%.2f");
-        changed |= ui::PropertyFloat("AO", &layer.ambientOcclusion, 0.0f, 1.0f,
-                                     kDefaultLayer.ambientOcclusion, nullptr, "%.2f");
+        // マテリアルを割り当てているときは、見た目はマテリアル側の値で決まる。
+        // 同じ意味の値を 2 か所に置くと、どちらが効いているのか分からなくなる。
+        const bool hasMaterial = (layer.material != compositor::kNoMaterialAsset);
+        if (!hasMaterial) {
+            changed |= ui::PropertyColor("ベースカラー", &layer.baseColor.x,
+                                         &kDefaultLayer.baseColor.x);
+            changed |= ui::PropertyFloat("ラフネス", &layer.roughness, 0.0f, 1.0f,
+                                         kDefaultLayer.roughness, nullptr, "%.2f");
+            changed |= ui::PropertyFloat("メタルネス", &layer.metallic, 0.0f, 1.0f,
+                                         kDefaultLayer.metallic, nullptr, "%.2f");
+            changed |= ui::PropertyFloat("AO", &layer.ambientOcclusion, 0.0f, 1.0f,
+                                         kDefaultLayer.ambientOcclusion, nullptr, "%.2f");
+        }
         changed |= ui::PropertyFloat("UV スケール", &layer.uvScale, 0.25f, 16.0f,
                                      kDefaultLayer.uvScale,
                                      "このレイヤーの模様を何回並べるか", "%.2f");
         ui::EndPropertyTable();
+    }
+    if (layer.material != compositor::kNoMaterialAsset) {
+        ui::HintText("色とサーフェスの値はマテリアル側で決まる");
     }
 
     ui::SectionHeader("ハイト");
@@ -935,6 +1006,9 @@ void Application::DrawLayerPanel() {
                                      kDefaultLayer.mask.constant,
                                      "出どころの値に掛ける係数", "%.2f");
 
+        if (layer.mask.source == compositor::MaskSource::Texture) {
+            changed |= DrawTextureSlotRow("画像", layer.mask.texture, m_textureLibrary);
+        }
         if (layer.mask.source == compositor::MaskSource::Noise) {
             changed |= DrawNoiseRows(layer.mask.noise, kDefaultLayer.mask.noise);
         }
@@ -980,29 +1054,18 @@ void Application::DrawLayerPanel() {
         changed |= DrawPaintSection(layer);
     }
 
-    ui::SectionHeader("テクスチャ");
-    if (ui::BeginPropertyTable("layerTextureRows")) {
-        ui::PropertyTextInput("パス", m_texturePathBuffer, IM_ARRAYSIZE(m_texturePathBuffer),
-                              "PNG / TGA / JPG");
-        ui::PropertyLabelEmpty("textureLoad");
-        if (ui::Button("読み込む") && m_texturePathBuffer[0] != 0) {
-            m_pendingTexturePath = std::filesystem::path(m_texturePathBuffer);
-        }
-        ImGui::SameLine();
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("(%zu 枚)", m_textureLibrary.Entries().size());
-        ui::PropertyEnd();
-
-        changed |= DrawTextureSlotRow("ベースカラー", layer.textures.baseColor, m_textureLibrary);
-        changed |= DrawTextureSlotRow("法線", layer.textures.normal, m_textureLibrary);
-        changed |= DrawTextureSlotRow("ラフネス", layer.textures.roughness, m_textureLibrary);
-        changed |= DrawTextureSlotRow("メタルネス", layer.textures.metallic, m_textureLibrary);
-        changed |= DrawTextureSlotRow("AO", layer.textures.ambientOcclusion, m_textureLibrary);
-        changed |= DrawTextureSlotRow("ハイト", layer.textures.height, m_textureLibrary);
-        changed |= DrawTextureSlotRow("マスク", layer.textures.mask, m_textureLibrary);
+    ui::SectionHeader("マテリアル");
+    if (ui::BeginPropertyTable("layerMaterialRows")) {
+        changed |= DrawMaterialSlotRow("マテリアル", layer.material, m_materialLibrary);
         ui::EndPropertyTable();
     }
-    ui::HintText("ハイト / マスクは出どころを「テクスチャ」にすると有効");
+    if (const compositor::MaterialAsset* material = m_materialLibrary.Find(layer.material);
+        material != nullptr && material->thumbnail.IsValid()) {
+        ImGui::Image(static_cast<ImTextureID>(material->thumbnail.srv.gpu.ptr),
+                     ImVec2(ui::Scaled(72.0f), ui::Scaled(72.0f)));
+    } else {
+        ui::HintText("マテリアルパネルで作って割り当てる");
+    }
 
     ui::SectionHeader("合成");
     if (ui::BeginPropertyTable("layerBlendRows")) {
@@ -1109,6 +1172,149 @@ bool Application::DrawPaintSection(compositor::MaterialLayer& layer) {
 
     ui::HintText("左ドラッグで塗る / 右ドラッグで消す / Alt + 左ドラッグで視点を回す");
     return changed;
+}
+
+void Application::DrawMaterialLibraryPanel() {
+    if (!ImGui::Begin("マテリアル")) {
+        ImGui::End();
+        return;
+    }
+
+    const std::vector<compositor::MaterialAsset>& assets = m_materialLibrary.Entries();
+    const auto assetCount = static_cast<int>(assets.size());
+    m_selectedMaterial = std::clamp(m_selectedMaterial, 0, (assetCount > 0) ? assetCount - 1 : 0);
+
+    if (ui::Button("追加")) {
+        m_materialLibrary.Add("マテリアル " + std::to_string(assets.size() + 1));
+        m_selectedMaterial = static_cast<int>(assets.size()) - 1;
+    }
+    ImGui::SameLine();
+    if (ui::Button("複製") && assetCount > 0) {
+        m_materialLibrary.Duplicate(assets[static_cast<size_t>(m_selectedMaterial)]);
+        m_selectedMaterial = static_cast<int>(assets.size()) - 1;
+    }
+    ImGui::SameLine();
+    if (ui::Button("削除") && assetCount > 0) {
+        const compositor::MaterialAssetId removed =
+            assets[static_cast<size_t>(m_selectedMaterial)].id;
+        m_materialLibrary.Remove(m_device, removed);
+        // 参照していたレイヤーは「なし」へ戻す。無効な ID を残さない。
+        for (compositor::MaterialLayer& layer : m_materialStack.Layers()) {
+            if (layer.material == removed) {
+                layer.material = compositor::kNoMaterialAsset;
+            }
+        }
+        m_materialStack.MarkDirty();
+        m_selectedMaterial = std::max(0, m_selectedMaterial - 1);
+    }
+
+    if (ui::Button("画像を読み込む…", ui::kWideButtonWidth)) {
+        std::vector<std::filesystem::path> paths =
+            ShowOpenFilesDialog(L"テクスチャを開く", ImageFileFilters());
+        if (!paths.empty()) {
+            m_pendingTexturePaths.insert(m_pendingTexturePaths.end(), paths.begin(), paths.end());
+        }
+    }
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("(%zu 枚)", m_textureLibrary.Entries().size());
+
+    // サムネイルの一覧。パネルの幅に入るだけ横に並べる。
+    const float thumbnailSize = ui::Scaled(84.0f);
+    if (ImGui::BeginChild("materialGrid", ImVec2(0.0f, ui::Scaled(200.0f)),
+                          ImGuiChildFlags_Borders)) {
+        const float step = thumbnailSize + ImGui::GetStyle().ItemSpacing.x;
+        const auto columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / step));
+
+        for (int i = 0; i < assetCount; ++i) {
+            const compositor::MaterialAsset& asset = assets[static_cast<size_t>(i)];
+            ImGui::PushID(static_cast<int>(asset.id));
+
+            ImGui::BeginGroup();
+            const bool selected = (m_selectedMaterial == i);
+            if (selected) {
+                // 選択枠。サムネイルの上に重ねず、背景として敷く。
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    ImGui::GetCursorScreenPos(),
+                    ImVec2(ImGui::GetCursorScreenPos().x + thumbnailSize,
+                           ImGui::GetCursorScreenPos().y + thumbnailSize),
+                    ImGui::GetColorU32(ImGuiCol_HeaderActive));
+            }
+            if (asset.thumbnail.IsValid()) {
+                ImGui::Image(static_cast<ImTextureID>(asset.thumbnail.srv.gpu.ptr),
+                             ImVec2(thumbnailSize, thumbnailSize));
+                if (ImGui::IsItemClicked()) {
+                    m_selectedMaterial = i;
+                }
+            } else if (ImGui::Button("##thumbnail", ImVec2(thumbnailSize, thumbnailSize))) {
+                m_selectedMaterial = i;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", asset.name.c_str());
+            }
+            ImGui::EndGroup();
+
+            ImGui::PopID();
+            if (((i + 1) % columns) != 0 && (i + 1) < assetCount) {
+                ImGui::SameLine();
+            }
+        }
+    }
+    ImGui::EndChild();
+
+    if (assetCount == 0) {
+        ui::HintText("「追加」でマテリアルを作り、マップを割り当てる");
+        ImGui::End();
+        return;
+    }
+
+    compositor::MaterialAsset& asset =
+        *m_materialLibrary.FindMutable(assets[static_cast<size_t>(m_selectedMaterial)].id);
+    bool changed = false;
+
+    ui::SectionHeader("基本");
+    if (ui::BeginPropertyTable("materialBasicRows")) {
+        char nameBuffer[128] = {};
+        std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", asset.name.c_str());
+        if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer))) {
+            asset.name = nameBuffer;
+        }
+
+        static const compositor::MaterialAsset kDefaultAsset;
+        changed |= ui::PropertyColor("ベースカラー", &asset.baseColorTint.x,
+                                     &kDefaultAsset.baseColorTint.x,
+                                     "ベースカラーのマップに掛ける色。マップが無ければこの色");
+        changed |= ui::PropertyFloat("ラフネス", &asset.roughnessValue, 0.0f, 1.0f,
+                                     kDefaultAsset.roughnessValue, "マップが無いときの値",
+                                     "%.2f");
+        changed |= ui::PropertyFloat("メタルネス", &asset.metallicValue, 0.0f, 1.0f,
+                                     kDefaultAsset.metallicValue, "マップが無いときの値",
+                                     "%.2f");
+        changed |= ui::PropertyFloat("AO", &asset.ambientOcclusionValue, 0.0f, 1.0f,
+                                     kDefaultAsset.ambientOcclusionValue, "マップが無いときの値",
+                                     "%.2f");
+        ui::EndPropertyTable();
+    }
+
+    ui::SectionHeader("マップ");
+    if (ui::BeginPropertyTable("materialMapRows")) {
+        changed |= DrawTextureSlotRow("ベースカラー", asset.baseColor, m_textureLibrary);
+        changed |= DrawTextureSlotRow("法線", asset.normal, m_textureLibrary);
+        changed |= DrawTextureSlotRow("ラフネス", asset.roughness, m_textureLibrary);
+        changed |= DrawTextureSlotRow("メタルネス", asset.metallic, m_textureLibrary);
+        changed |= DrawTextureSlotRow("AO", asset.ambientOcclusion, m_textureLibrary);
+        changed |= DrawTextureSlotRow("ハイト", asset.height, m_textureLibrary);
+        ui::EndPropertyTable();
+    }
+    ui::HintText("ハイトはレイヤーの「ハイトの出どころ」をテクスチャにすると効く");
+
+    if (changed) {
+        // サムネイルと合成の両方を作り直す。
+        m_materialLibrary.MarkThumbnailDirty(asset.id);
+        m_materialStack.MarkDirty();
+    }
+
+    ImGui::End();
 }
 
 void Application::DrawInfoPanel() {
