@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "heightmap-mixer",
+  "version": "0.1.0",
+  "description": "Quixel Mixer 相当のマテリアルオーサリングツール",
+  "builtin-baseline": "b5d1a94fb7f88fd835e360fd23a45a09ceedbf48",
+  "dependencies": [
+    "directx-headers",
+    "directx12-agility",
+    "winpixevent",
+    {
+      "name": "imgui",
+      "features": [
+        "dx12-binding",
+        "win32-binding",
+        "docking-experimental"
+      ]
+    }
+  ]
+}

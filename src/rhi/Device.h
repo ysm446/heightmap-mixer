@@ -1,0 +1,75 @@
+#pragma once
+
+#include "rhi/Common.h"
+#include "rhi/DescriptorHeap.h"
+
+namespace hm::rhi {
+
+// DX12 のデバイス、キュー、スワップチェーン、フレーム同期をまとめて持つ。
+// 1 フレームは BeginFrame() / EndFrame() の対で表す。
+class Device {
+public:
+    Device() = default;
+    ~Device();
+
+    Device(const Device&) = delete;
+    Device& operator=(const Device&) = delete;
+
+    bool Initialize(HWND hwnd, uint32_t width, uint32_t height, bool enableDebugLayer);
+    void Shutdown();
+
+    void Resize(uint32_t width, uint32_t height);
+
+    // バックバッファをレンダーターゲット状態にしてクリアしたコマンドリストを返す。
+    // 失敗した場合は nullptr。
+    ID3D12GraphicsCommandList* BeginFrame(const float clearColor[4]);
+    void EndFrame(bool vsync);
+
+    // GPU の完了を待つ。リソース破棄やリサイズの前に必ず呼ぶ。
+    void WaitForGpu();
+
+    ID3D12Device* GetDevice() const { return m_device.Get(); }
+    ID3D12CommandQueue* GetCommandQueue() const { return m_commandQueue.Get(); }
+    DescriptorHeap& SrvHeap() { return m_srvHeap; }
+    uint32_t FrameIndex() const { return m_frameIndex; }
+    uint32_t Width() const { return m_width; }
+    uint32_t Height() const { return m_height; }
+
+private:
+    bool CreateFactoryAndDevice(bool enableDebugLayer);
+    bool CreateCommandObjects();
+    bool CreateSwapChain(HWND hwnd, uint32_t width, uint32_t height);
+    bool CreateBackBufferViews();
+    void ReleaseBackBuffers();
+    void MoveToNextFrame();
+
+    ComPtr<IDXGIFactory6> m_factory;
+    ComPtr<IDXGIAdapter4> m_adapter;
+    ComPtr<ID3D12Device> m_device;
+    ComPtr<ID3D12CommandQueue> m_commandQueue;
+    ComPtr<IDXGISwapChain3> m_swapChain;
+
+    ComPtr<ID3D12CommandAllocator> m_commandAllocators[kFrameCount];
+    ComPtr<ID3D12GraphicsCommandList> m_commandList;
+    ComPtr<ID3D12Resource> m_backBuffers[kFrameCount];
+    DescriptorHandle m_backBufferRtvs[kFrameCount];
+
+    DescriptorHeap m_rtvHeap;
+    DescriptorHeap m_srvHeap;
+
+    ComPtr<ID3D12Fence> m_fence;
+    HANDLE m_fenceEvent = nullptr;
+    // 次に Signal する値。0 は「まだ一度も投入していない」を表すため 1 から始める。
+    uint64_t m_nextFenceValue = 1;
+    // 各フレームスロットが最後に投入した Signal 値。0 なら未使用。
+    uint64_t m_fenceValues[kFrameCount] = {};
+
+    uint32_t m_frameIndex = 0;
+    uint32_t m_width = 0;
+    uint32_t m_height = 0;
+    bool m_allowTearing = false;
+    bool m_frameOpen = false;
+    bool m_initialized = false;
+};
+
+}  // namespace hm::rhi

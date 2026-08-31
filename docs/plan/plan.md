@@ -1,0 +1,154 @@
+# plan — 実装方針と優先順位
+
+作成日時: 2026-08-31 05:46
+更新日時: 2026-08-31 05:46
+
+## 決定済みの技術選定
+
+| 項目 | 選択 |
+| --- | --- |
+| 言語 | C++20 |
+| ビルド | CMake + vcpkg（manifest モード） |
+| グラフィックス API | DirectX 12 |
+| シェーダ | HLSL (SM 6.6) / DXC |
+| UI | Dear ImGui（docking ブランチ） |
+| 合成モデル | レイヤースタック（Quixel Mixer 風） |
+| 対象 OS | Windows のみ |
+
+主要な依存ライブラリの想定: DirectX-Headers, DirectX-Agility-SDK, D3D12MemoryAllocator,
+DirectXMath, Dear ImGui, stb_image / stb_image_write, tinyexr, nlohmann-json。
+
+## ディレクトリ構成（想定）
+
+```
+CMakeLists.txt
+vcpkg.json
+src/
+  core/         数学、ログ、ジョブシステム、ファイル IO、アセット ID
+  rhi/          DX12 ラッパ（device, swapchain, descriptor, PSO, resource）
+  compositor/   レイヤースタックの定義と GPU 評価器
+  renderer/     PBR プレビュー描画、IBL、露出、トーンマップ
+  terrain/      ハイトマップ地形の LOD とスプラット
+  ui/           ImGui パネル群
+  app/          アプリ本体、エントリポイント
+shaders/        HLSL
+assets/         同梱アセット（BRDF LUT, デフォルト HDRI, プリミティブメッシュ）
+docs/
+tests/
+```
+
+## 中核となる設計方針
+
+### 1. チャンネル定義
+
+合成の対象チャンネルは以下に固定する（将来 Emissive / Opacity を追加可能な形にはしておく）。
+
+| チャンネル | 意味 | 評価中のフォーマット |
+| --- | --- | --- |
+| BaseColor | リニア色 | R11G11B10_FLOAT |
+| Normal | タンジェント空間法線 | R16G16_FLOAT（xy のみ保持、z は再構成） |
+| Surface | Roughness / Metalness / AO をパック | R8G8B8A8_UNORM |
+| Height | 高さ（合成の駆動値かつ Displacement） | R16_FLOAT |
+
+評価器は上記 4 枚の UAV を出力とする。エクスポート時にここから任意のパッキングへ変換する。
+
+### 2. ハイトベースブレンド
+
+レイヤー合成の重みは、マスク値そのものではなく「マスクで持ち上げた高さ」の比較で決める。
+
+```hlsl
+// hA/hB: 各レイヤーの height、wA/wB: マスク値、range: 境界の柔らかさ
+float a = hA + wA;
+float b = hB + wB;
+float m = max(a, b) - range;
+float ca = max(a - m, 0.0);
+float cb = max(b - m, 0.0);
+float t = cb / max(ca + cb, 1e-5);   // t が上レイヤーの寄与
+```
+
+`range` を 0 に近づけると硬い置き換え、大きくすると従来のアルファ合成に近づく。
+この 1 パラメータで表現の幅を確保する。
+
+### 3. Normal の合成は RNM
+
+Normal だけは lerp してはいけない。Reoriented Normal Mapping で合成する。
+
+```hlsl
+float3 t = base   * float3( 1,  1,  1) + float3(0, 0, 1);
+float3 u = detail * float3(-1, -1,  1);
+float3 r = t * (dot(t, u) / t.z) - u;
+return normalize(r);
+```
+
+強度調整は detail の xy をスケールしてから RNM に渡す。
+
+### 4. 評価はタイル前提の API にする
+
+編集中の即応性とエクスポート時の解像度を両立するため、評価器は最初から
+「出力領域（タイル矩形）と解像度を引数に取る」形で設計する。
+
+- 編集中: プレビュー解像度（既定 1K、設定で 2K）でフル領域を 1 パス評価。
+- エクスポート: フル解像度（4K / 8K）をタイル分割し、順次評価して読み戻す。
+- 8K × 4 チャンネルは VRAM を強く圧迫するため、フル解像度を常駐させる設計にはしない。
+- 依存関係の変わっていないレイヤーは再評価しない（ダーティフラグ）。
+
+これを後付けするのは大工事になるため、M3 の時点でタイル引数を通しておく。
+
+### 5. 露出とトーンマップ
+
+物理カメラベースで統一する。
+
+```
+EV100    = log2(N^2 / t) + log2(100 / ISO)
+exposure = 1 / (1.2 * 2^EV100)
+```
+
+- マニュアル露出（絞り / シャッター / ISO、または EV 直接指定）。
+- 自動露出（輝度ヒストグラムを compute で作り、指定パーセンタイルから EV を決めて時間補間）。
+- トーンマップは ACES を既定とし、AgX と Reinhard を切り替えられるようにする。
+- IBL の強度は絶対輝度（cd/m^2 相当）で持ち、露出と独立に扱う。
+
+## マイルストーン
+
+### M0 — 基盤の立ち上げ
+CMake + vcpkg のプロジェクト構成、Win32 ウィンドウ、DX12 デバイスと
+スワップチェーン、フレームループ、Dear ImGui（docking）の統合、
+デバッグレイヤーと PIX マーカー。ImGui のウィンドウが表示されて終わり。
+
+### M1 — RHI の整備
+ディスクリプタヒープアロケータ（bindless 前提の永続ヒープ + フレームリング）、
+アップロードリングバッファ、リソース状態遷移のヘルパ、PSO / ルートシグネチャのキャッシュ、
+DXC によるシェーダコンパイルとホットリロード、D3D12MemoryAllocator の導入。
+
+### M2 — PBR プレビューレンダラ
+プリミティブ（平面 / 球 / キューブ）とメッシュ読み込み、GGX 直接光、
+HDRI 読み込みから irradiance と prefiltered specular の生成、BRDF LUT、
+EV100 露出、ACES トーンマップ、カメラ操作。
+**ここで「マテリアルが正しく見える」基準を確定させる。**
+
+### M3 — 合成エンジン v1
+レイヤースタックのデータモデル、GPU 評価器（タイル引数付き）、
+テクスチャレイヤーと単色レイヤー、ハイトブレンド、RNM、
+マスク（定数 / テクスチャ / 反転・レベル調整）、
+評価結果を M2 のプレビューマテリアルに直結、レイヤー UI。
+
+### M4 — マスク生成
+プロシージャルノイズ（fBm / Worley / Voronoi）、
+合成中間結果由来のマスク（高度 / 傾斜 / 曲率 / AO）、
+カーブとレベル調整、ペイントマスク（ブラシ）。
+
+### M5 — 入出力
+テクスチャインポート（PNG / TGA / JPG / HDR / EXR）、
+プロジェクトの保存と読み込み（JSON + 参照アセット）、
+フル解像度エクスポート（タイル評価 + チャンネルパッキング設定 + 出力プリセット）。
+
+### M6 — 地形
+ハイトマップインポート（16bit PNG / RAW / EXR）、LOD 付き地形描画、
+マテリアルのスプラット適用、地形属性を M4 のマスク入力へ接続、地形ペイント。
+
+## 判断を保留している点
+
+- 地形 LOD の方式（CDLOD / ジオメトリクリップマップ / GPU 駆動クアッドツリー）は M6 着手時に決める。
+- レイヤー内部のマスク生成をノードグラフ化するかは、M4 の実装が固まってから判断する。
+- Agility SDK のバージョン固定方針と、bindless（SM 6.6 ResourceDescriptorHeap）を
+  全面採用するか一部に留めるかは M1 で決める。

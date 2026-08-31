@@ -1,0 +1,9 @@
+build/
+out/
+.vs/
+.vscode/
+vcpkg_installed/
+*.user
+*.aps
+*.pdb
+*.ilk
