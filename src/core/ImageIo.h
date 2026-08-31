@@ -30,6 +30,15 @@ struct LdrImage {
 bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage);
 
 // Radiance HDR (.hdr) を読み込む。失敗したら false を返し、理由はログへ出す。
+// HDRI の「空」の代表輝度（上側の中央値）。
+//
+// **HDRI は絶対輝度で較正されていない。** 較正するには、画像のどこかを
+// 「これは何 cd/m^2 か」と決める必要がある。上空は写真ごとの差が小さく、
+// 晴天なら 1 万 cd/m^2 前後という手掛かりがあるため、そこを基準にする。
+//
+// 太陽に引きずられないよう平均ではなく中央値を取る（最大は空の 2000 倍にもなる）。
+float MedianSkyLuminance(const HdrImage& image);
+
 bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage);
 
 // OpenEXR (.exr) を読み込む。失敗したら false を返し、理由はログへ出す。

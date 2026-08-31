@@ -2,6 +2,9 @@
 
 #include "core/Log.h"
 
+#include <algorithm>
+#include <vector>
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
@@ -36,6 +39,37 @@ bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
     MM_LOG_INFO("画像を読み込みました: %s (%d x %d, %d ch)", utf8Path.c_str(), width, height,
                 channels);
     return true;
+}
+
+float MedianSkyLuminance(const HdrImage& image) {
+    if (image.width == 0 || image.height == 0 || image.pixels.empty()) {
+        return 0.0f;
+    }
+
+    // 上から 40% を「空」とみなす。地面や被写体を含めると暗くなりすぎる。
+    const uint32_t skyRows = std::max<uint32_t>(1, image.height * 2 / 5);
+    // 4K でも一瞬で終わるよう間引く。中央値には十分な数を取る。
+    const uint32_t stepX = std::max<uint32_t>(1, image.width / 256);
+    const uint32_t stepY = std::max<uint32_t>(1, skyRows / 128);
+
+    std::vector<float> samples;
+    samples.reserve(static_cast<size_t>(256) * 128);
+    for (uint32_t y = 0; y < skyRows; y += stepY) {
+        for (uint32_t x = 0; x < image.width; x += stepX) {
+            const size_t index = (static_cast<size_t>(y) * image.width + x) * 4;
+            const float r = image.pixels[index];
+            const float g = image.pixels[index + 1];
+            const float b = image.pixels[index + 2];
+            samples.push_back(0.2126f * r + 0.7152f * g + 0.0722f * b);
+        }
+    }
+    if (samples.empty()) {
+        return 0.0f;
+    }
+
+    const size_t middle = samples.size() / 2;
+    std::nth_element(samples.begin(), samples.begin() + middle, samples.end());
+    return samples[middle];
 }
 
 bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {

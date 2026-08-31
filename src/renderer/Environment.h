@@ -39,8 +39,26 @@ public:
                       const SkySettings& sky);
 
     // Radiance HDR (.hdr) から作り直す。
+    //
+    // skyLuminance は**この HDRI の空を何 cd/m^2 とみなすか**（晴天でおよそ 1 万）。
+    //
+    // HDRI は絶対輝度で較正されていない（`EXPOSURE=` ヘッダを持つものは稀で、
+    // 合成ツールが出すものはまず持たない）。画像内の比は本物なので、定数倍しても
+    // 物理的な関係は壊れない。**基準だけが無い**ので、ここで与える。
+    //
+    // 倍率を直接指定させないのは、ファイルによって空の値が違うため
+    // （実測で 0.15〜0.2 のものもあれば 1.0 のものもある）。
+    // 「空が何 cd/m^2 か」なら、どのファイルでも同じ意味になる。
     bool BuildFromHdrFile(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                          const std::filesystem::path& path);
+                          const std::filesystem::path& path, float skyLuminance);
+
+    // 目標輝度だけを変えて作り直す。読み込んだ equirect をそのまま使うので、
+    // ファイルを読み直さない（スライダーを動かしても速い）。
+    bool RebuildWithSkyLuminance(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                 float skyLuminance);
+
+    // 読み込んだ HDRI の空の代表輝度（ファイルの生の値）。較正の分母。
+    float MeasuredSkyLuminance() const { return m_measuredSkyLuminance; }
 
     bool IsReady() const { return m_ready; }
 
@@ -55,12 +73,14 @@ public:
     uint32_t EquirectHeight() const { return m_equirect.height; }
 
 private:
+    // equirect からキューブ以降を作り直す。luminanceScale はそのとき掛ける倍率。
+    bool BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                           float luminanceScale);
     bool CreateTargets(rhi::Device& device, uint32_t equirectWidth, uint32_t equirectHeight);
     void ReleaseTargets(rhi::Device& device);
     bool BuildBrdfLut(rhi::Device& device, rhi::PipelineCache& pipelineCache);
 
     // equirect が書き込まれた状態から、キューブ・irradiance・プリフィルタを作る。
-    bool BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pipelineCache);
 
     rhi::GpuTexture m_equirect;
     rhi::GpuTexture m_cube;
@@ -68,6 +88,8 @@ private:
     rhi::GpuTexture m_prefiltered;
     rhi::GpuTexture m_brdfLut;
 
+    // 読み込んだ HDRI の空の代表輝度。較正の分母。手続き的な空では使わない。
+    float m_measuredSkyLuminance = 0.0f;
     std::string m_sourceName = "手続き的な空";
     bool m_ready = false;
 };

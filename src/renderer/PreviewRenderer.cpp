@@ -222,7 +222,7 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
     if (!m_pendingHdrPath.empty()) {
         const std::filesystem::path path = m_pendingHdrPath;
         m_pendingHdrPath.clear();
-        if (m_environment.BuildFromHdrFile(device, pipelineCache, path)) {
+        if (m_environment.BuildFromHdrFile(device, pipelineCache, path, m_hdriSkyLuminance)) {
             m_hdriPath = path;
         } else {
             // 読み込みに失敗したら手続き的な空へ戻す。
@@ -231,7 +231,16 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
             m_hdriPath.clear();
         }
         m_skyRebuildRequested = false;
+        m_hdriLuminanceRebuildRequested = false;
         return;
+    }
+
+    // 較正倍率だけの変更。equirect は読み込んだままのものを使うので速い。
+    if (m_hdriLuminanceRebuildRequested) {
+        m_hdriLuminanceRebuildRequested = false;
+        if (!m_hdriPath.empty()) {
+            m_environment.RebuildWithSkyLuminance(device, pipelineCache, m_hdriSkyLuminance);
+        }
     }
 
     if (m_skyRebuildRequested) {

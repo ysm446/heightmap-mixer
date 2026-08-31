@@ -1298,8 +1298,20 @@ void Application::DrawLightingPanel() {
             ui::PropertyValue("環境", "%s", m_renderer.GetEnvironment().SourceName().c_str());
             ui::PropertyValue("equirect", "%u x %u", m_renderer.GetEnvironment().EquirectWidth(),
                               m_renderer.GetEnvironment().EquirectHeight());
+            // HDRI を読み込んでいるときだけ出す。手続き的な空は EnvSky が
+            // すでに cd/m^2 で書き込んでいるので、較正するものが無い。
+            if (!m_renderer.HdriPath().empty()) {
+                if (ui::PropertyFloat("空の輝度", &m_renderer.HdriSkyLuminance(), 100.0f,
+                                      100000.0f, 12000.0f,
+                                      "この HDRI の空を何 cd/m2 とみなすか。"
+                                      "HDRI は絶対輝度で較正されていないため、基準をここで与える。"
+                                      "晴天でおよそ 4000〜15000、曇天で 1000〜3000",
+                                      "%.0f cd/m2", ImGuiSliderFlags_Logarithmic)) {
+                    m_renderer.RequestHdriLuminanceRebuild();
+                }
+            }
             ui::PropertyFloat("環境光の強さ", &m_renderer.IblIntensity(), 0.0f, 4.0f, 1.0f,
-                              nullptr, "%.2f");
+                              "物理量ではなく、見た目を整えるための倍率", "%.2f");
             ui::PropertyBool("背景を表示", &m_renderer.ShowSkybox(), true,
                              "オフにすると背景色だけになる。IBL の寄与は残る");
 

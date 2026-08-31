@@ -114,6 +114,12 @@ public:
     // 読み込み済みの HDRI のパス。手続き的な空を使っているときは空。
     const std::filesystem::path& HdriPath() const { return m_hdriPath; }
     float& IblIntensity() { return m_iblIntensity; }
+    // **この HDRI の空を何 cd/m^2 とみなすか。** HDRI は絶対輝度で較正されて
+    // いないので、基準をここで与える。晴天の空がおよそ 1 万。
+    float& HdriSkyLuminance() { return m_hdriSkyLuminance; }
+    float HdriSkyLuminance() const { return m_hdriSkyLuminance; }
+    // 目標輝度だけを変えて環境を作り直す。ファイルは読み直さない。
+    void RequestHdriLuminanceRebuild() { m_hdriLuminanceRebuildRequested = true; }
     bool& ShowSkybox() { return m_showSkybox; }
     // ディレクショナルライトの影を落とすか。落とさないとシャドウパスも走らない。
     bool& ShadowEnabled() { return m_shadowEnabled; }
@@ -168,6 +174,9 @@ private:
     TonemapMode m_tonemap = TonemapMode::Aces;
     DebugView m_debugView = DebugView::Shaded;
     float m_iblIntensity = 1.0f;
+    // 晴天の空はおよそ 4000-15000 cd/m^2。SkySettings::intensity と揃えてある。
+    float m_hdriSkyLuminance = 12000.0f;
+    bool m_hdriLuminanceRebuildRequested = false;
     float m_materialUvScale = 1.0f;
     float m_displacementScale = 0.0f;
     uint32_t m_materialResolution = 1024;

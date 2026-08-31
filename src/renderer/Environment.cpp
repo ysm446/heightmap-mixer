@@ -212,7 +212,8 @@ bool Environment::CreateTargets(rhi::Device& device, uint32_t equirectWidth,
     return true;
 }
 
-bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pipelineCache) {
+bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                    float luminanceScale) {
     ID3D12PipelineState* toCubePipeline =
         pipelineCache.GetCompute(L"EnvEquirectToCube.hlsl", L"CsMain");
     ID3D12PipelineState* downsamplePipeline =
@@ -242,9 +243,10 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
             uint32_t sourceIndex;
             uint32_t outputIndex;
             uint32_t faceSize;
+            float luminanceScale;
         };
-        const EquirectToCubeConstants toCubeConstants{m_equirect.SrvIndex(),
-                                                      m_cube.MipUavIndex(0), kCubeSize};
+        const EquirectToCubeConstants toCubeConstants{
+            m_equirect.SrvIndex(), m_cube.MipUavIndex(0), kCubeSize, luminanceScale};
 
         commandList->SetPipelineState(toCubePipeline);
         commandList->SetComputeRoot32BitConstants(
@@ -392,15 +394,40 @@ bool Environment::BuildFromSky(rhi::Device& device, rhi::PipelineCache& pipeline
     }
 
     m_sourceName = "手続き的な空";
-    return BuildFromEquirect(device, pipelineCache);
+    m_measuredSkyLuminance = 0.0f;
+    // 空は EnvSky が cd/m^2 で書き込んでいるので、ここでの較正は要らない。
+    return BuildFromEquirect(device, pipelineCache, 1.0f);
+}
+
+// 目標輝度から、ファイルの値へ掛ける倍率を出す。
+//
+// 空が測れなかった（真っ暗な画像など）ときは 1.0 に落とす。
+// 0 で割ると無限大になり、環境全体が白飛びしてしまう。
+static float LuminanceScaleFor(float skyLuminance, float measuredSky) {
+    if (measuredSky <= 1e-6f) {
+        return 1.0f;
+    }
+    return skyLuminance / measuredSky;
+}
+
+bool Environment::RebuildWithSkyLuminance(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                          float skyLuminance) {
+    if (!m_equirect.IsValid()) {
+        return false;
+    }
+    return BuildFromEquirect(device, pipelineCache,
+                             LuminanceScaleFor(skyLuminance, m_measuredSkyLuminance));
 }
 
 bool Environment::BuildFromHdrFile(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                                   const std::filesystem::path& path) {
+                                   const std::filesystem::path& path, float skyLuminance) {
     HdrImage image;
     if (!LoadHdrImage(path, image)) {
         return false;
     }
+
+    // 較正の分母。ファイルを読んだ直後に測る。
+    m_measuredSkyLuminance = MedianSkyLuminance(image);
 
     if (!CreateTargets(device, image.width, image.height)) {
         return false;
@@ -452,7 +479,10 @@ bool Environment::BuildFromHdrFile(rhi::Device& device, rhi::PipelineCache& pipe
     device.Defer(staging.allocation);
 
     m_sourceName = path.filename().string();
-    return BuildFromEquirect(device, pipelineCache);
+    const float scale = LuminanceScaleFor(skyLuminance, m_measuredSkyLuminance);
+    MM_LOG_INFO("HDRI を較正しました: 空の生の値 %.3f を %.0f cd/m^2 とみなす（%.0f 倍）",
+                m_measuredSkyLuminance, skyLuminance, scale);
+    return BuildFromEquirect(device, pipelineCache, scale);
 }
 
 }  // namespace mm::renderer
