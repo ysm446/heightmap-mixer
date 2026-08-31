@@ -96,7 +96,11 @@ private:
     // ウィンドウタイトルを「プロジェクト名 - Material Mixer」に揃える。
     void UpdateWindowTitle();
     // このテクスチャを参照しているマテリアルとマスクの数。一覧に出す。
+    // このテクスチャを使っている場所の一覧（削除の確認に出す）。
+    std::vector<std::string> CollectTextureUsers(compositor::TextureId id) const;
     size_t CountTextureUsers(compositor::TextureId id) const;
+    // 参照が残っているテクスチャを消そうとしたときの確認。
+    void DrawTextureRemoveModal();
     // レイヤー一覧。ドラッグで並べ替える。
     void DrawLayerList();
     // ペイントの対象になるレイヤー。ペイントモードで、選択中のレイヤーが
@@ -171,6 +175,9 @@ private:
     std::filesystem::path m_pendingMaterialImport;
     compositor::MaterialAssetId m_pendingExportMaterial = compositor::kNoMaterialAsset;
     compositor::TextureId m_pendingTextureRemove = compositor::kNoTexture;
+    // 確認待ちのテクスチャ。参照が残っているときだけ入る。
+    compositor::TextureId m_textureRemoveCandidate = compositor::kNoTexture;
+    std::vector<std::string> m_textureRemoveUsers;
     bool m_pendingProjectNew = false;
     ImGuiLayer m_imgui;
 

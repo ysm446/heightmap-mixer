@@ -112,6 +112,7 @@ constexpr uint32_t kResolutionValues[] = {512, 1024, 2048};
 constexpr const char* kLayerDragDropType = "MM_LAYER";
 // テクスチャ一覧からマップ欄へのドラッグ＆ドロップで使うペイロードの種別。
 constexpr const char* kTextureDragDropType = "MM_TEXTURE";
+constexpr const char* kTextureRemoveModalTitle = "テクスチャを削除";
 
 // テクスチャの一覧に出すフォーマット名。DXGI の名前は長いので短く言い換える。
 const char* TextureFormatLabel(const compositor::LibraryTexture& entry) {
@@ -634,7 +635,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v4");
+    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v5");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -977,19 +978,23 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     ImGuiID center = dockspaceId;
     ImGuiID left = 0;
     ImGuiID right = 0;
+    ImGuiID bottom = 0;
     ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.24f, &left, &center);
     // 残り幅に対する比率。全体では 0.27 ぶんになる。
     ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.355f, &right, &center);
-
+    // アセットの帯。**右カラムを切り出した後の center を割る**ので、
+    // 帯はビューポートの真下だけに伸び、右カラムの下へは回り込まない。
+    ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, &bottom, &center);
 
     ImGui::DockBuilderDockWindow("レイヤー", left);
     // マテリアルはレイヤーと同じ枠にタブで並べる。
     // どちらも「何を積むか」を決める作業で、同時には見ない。
     ImGui::DockBuilderDockWindow("マテリアル", left);
-    // テクスチャも同じ枠。マテリアルへマップを割り当てるときの入口であり、
-    // レイヤーと同時に見るものではない。
-    ImGui::DockBuilderDockWindow("テクスチャ", left);
     ImGui::DockBuilderDockWindow("ビューポート", center);
+    // テクスチャはビューポートの下の帯。マテリアルのマップ欄へドラッグして
+    // 割り当てるので、**割り当て先と同時に見えている必要がある。**
+    // 左カラムのタブに置くと、マテリアルとテクスチャを同時に出せない。
+    ImGui::DockBuilderDockWindow("テクスチャ", bottom);
     // 右カラムは 3 枚をタブで重ねる。縦に積むと 1 枚あたりが短くなり、
     // どれもスクロールしないと全体が見えなくなる。
     ImGui::DockBuilderDockWindow("プレビュー設定", right);
@@ -1995,23 +2000,110 @@ void Application::DrawStatusBar() {
     ImGui::End();
 }
 
-size_t Application::CountTextureUsers(compositor::TextureId id) const {
+// このテクスチャを使っている場所を、人が読める形で並べる。
+//
+// 削除の確認で「どこが壊れるか」を出すために使う。件数だけだと、
+// 消していいのか判断できない。
+std::vector<std::string> Application::CollectTextureUsers(compositor::TextureId id) const {
+    std::vector<std::string> users;
     if (id == compositor::kNoTexture) {
-        return 0;
+        return users;
     }
-    size_t users = 0;
+
     for (const compositor::MaterialAsset& asset : m_materialLibrary.Entries()) {
-        users += (asset.baseColor == id) ? 1 : 0;
-        users += (asset.normal == id) ? 1 : 0;
-        users += (asset.roughness.texture == id) ? 1 : 0;
-        users += (asset.metallic.texture == id) ? 1 : 0;
-        users += (asset.ambientOcclusion.texture == id) ? 1 : 0;
-        users += (asset.height.texture == id) ? 1 : 0;
+        const auto add = [&](const char* slotName) {
+            users.push_back("マテリアル「" + asset.name + "」の" + slotName);
+        };
+        if (asset.baseColor == id) {
+            add("ベースカラー");
+        }
+        if (asset.normal == id) {
+            add("法線");
+        }
+        if (asset.roughness.texture == id) {
+            add("ラフネス");
+        }
+        if (asset.metallic.texture == id) {
+            add("メタルネス");
+        }
+        if (asset.ambientOcclusion.texture == id) {
+            add("AO");
+        }
+        if (asset.height.texture == id) {
+            add("ハイト");
+        }
     }
+
     for (const compositor::MaterialLayer& layer : m_materialStack.Layers()) {
-        users += (layer.mask.texture.texture == id) ? 1 : 0;
+        if (layer.mask.texture.texture == id) {
+            users.push_back("レイヤー「" + layer.name + "」のマスク");
+        }
     }
     return users;
+}
+
+size_t Application::CountTextureUsers(compositor::TextureId id) const {
+    return CollectTextureUsers(id).size();
+}
+
+// 参照が残っているテクスチャを消そうとしたときの確認。
+//
+// 消しても壊れはしない（参照は削除時に「なし」へ落ちる）が、
+// **黙って落とすと、どのマテリアルが変わったのか分からなくなる。**
+// どこで使われているかを並べて、消すかどうかを決めてもらう。
+void Application::DrawTextureRemoveModal() {
+    // ビューポート中央に出す。ドックのどこにパネルがあっても同じ位置に出したい。
+    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (!ImGui::BeginPopupModal(kTextureRemoveModalTitle, nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+
+    const compositor::LibraryTexture* entry = m_textureLibrary.Find(m_textureRemoveCandidate);
+    ImGui::Text("「%s」は %zu か所で使われています。",
+                (entry != nullptr) ? entry->name.c_str() : "?", m_textureRemoveUsers.size());
+    ImGui::Spacing();
+
+    // 使用箇所。多いときは枠を作ってスクロールさせる（窓が縦に伸びきらないように）。
+    constexpr size_t kMaxRowsWithoutScroll = 8;
+    const bool scroll = m_textureRemoveUsers.size() > kMaxRowsWithoutScroll;
+    const float listHeight =
+        scroll ? ImGui::GetTextLineHeightWithSpacing() * kMaxRowsWithoutScroll : 0.0f;
+    if (ImGui::BeginChild("textureRemoveUsers",
+                          ImVec2(ui::Scaled(360.0f), listHeight),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY)) {
+        for (const std::string& user : m_textureRemoveUsers) {
+            ImGui::BulletText("%s", user.c_str());
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::Spacing();
+    ui::HintText("削除すると、これらの割り当ては「なし」に戻る");
+    ImGui::Spacing();
+
+    const auto close = [this]() {
+        m_textureRemoveCandidate = compositor::kNoTexture;
+        m_textureRemoveUsers.clear();
+        ImGui::CloseCurrentPopup();
+    };
+
+    if (ui::Button("削除する", ui::kWideButtonWidth)) {
+        m_pendingTextureRemove = m_textureRemoveCandidate;
+        close();
+    }
+    ImGui::SameLine();
+    if (ui::Button("やめる", ui::kWideButtonWidth)) {
+        close();
+    }
+    // Esc でも閉じられるようにする。確認はいつでも降りられる方がよい。
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        close();
+    }
+
+    ImGui::EndPopup();
 }
 
 // 読み込んだ画像の一覧。マテリアルのマップはここから割り当てる。
@@ -2035,16 +2127,34 @@ void Application::DrawTextureLibraryPanel() {
     ImGui::SameLine();
     ImGui::BeginDisabled(textureCount == 0);
     if (ui::Button("削除")) {
-        // 破棄はディスクリプタを返すので、フレームの外で処理する。
-        m_pendingTextureRemove = entries[static_cast<size_t>(m_selectedTexture)].id;
+        const compositor::TextureId target = entries[static_cast<size_t>(m_selectedTexture)].id;
+        // マテリアルやレイヤーから参照されているなら、どこが壊れるかを見せて確認する。
+        // 参照が無ければ、いちいち止めない。
+        m_textureRemoveUsers = CollectTextureUsers(target);
+        if (m_textureRemoveUsers.empty()) {
+            // 破棄はディスクリプタを返すので、フレームの外で処理する。
+            m_pendingTextureRemove = target;
+        } else {
+            m_textureRemoveCandidate = target;
+            ImGui::OpenPopup(kTextureRemoveModalTitle);
+        }
     }
     ImGui::EndDisabled();
+    DrawTextureRemoveModal();
 
-    // サムネイルの一覧。パネルの幅に入るだけ横に並べる。
+    // ビューポートの下の横長の帯に置くことを前提に、一覧と詳細を左右に分ける。
+    // 縦に積むと、帯の高さでは両方が見えない。
+    // 幅が足りないとき（左カラムへドッキングし直したときなど）は縦に積む。
+    const float detailWidth = ui::Scaled(300.0f);
+    const bool sideBySide = ImGui::GetContentRegionAvail().x > detailWidth * 2.0f;
+    const ImVec2 gridSize =
+        sideBySide ? ImVec2(-(detailWidth + ImGui::GetStyle().ItemSpacing.x), 0.0f)
+                   : ImVec2(0.0f, ui::Scaled(180.0f));
+
+    // サムネイルの一覧。枠の幅に入るだけ横に並べる。
     // 読み込み時にミップを作ってあるので、元の画像をそのまま縮小して出せる。
     const float thumbnailSize = ui::Scaled(72.0f);
-    if (ImGui::BeginChild("textureGrid", ImVec2(0.0f, ui::Scaled(180.0f)),
-                          ImGuiChildFlags_Borders)) {
+    if (ImGui::BeginChild("textureGrid", gridSize, ImGuiChildFlags_Borders)) {
         const float step = thumbnailSize + ImGui::GetStyle().ItemSpacing.x;
         const auto columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / step));
 
@@ -2093,8 +2203,16 @@ void Application::DrawTextureLibraryPanel() {
     }
     ImGui::EndChild();
 
+    if (sideBySide) {
+        ImGui::SameLine();
+        ImGui::BeginChild("textureDetails", ImVec2(0.0f, 0.0f));
+    }
+
     if (textureCount == 0) {
         ui::HintText("「読み込む…」で画像を読み込む（PNG / JPG / TGA / EXR）");
+        if (sideBySide) {
+            ImGui::EndChild();
+        }
         ImGui::End();
         return;
     }
@@ -2128,6 +2246,9 @@ void Application::DrawTextureLibraryPanel() {
     }
     ui::HintText("サムネイルをマテリアルのマップ欄へドラッグすると割り当てられる");
 
+    if (sideBySide) {
+        ImGui::EndChild();
+    }
     ImGui::End();
 }
 
