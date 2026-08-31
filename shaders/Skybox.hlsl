@@ -12,7 +12,8 @@ struct SkyboxConstants
     float intensity;
 
     uint environmentIndex;
-    uint mipLevel;
+    // 引くミップ。小数を許すのは、ぼかしの強さを段の間で決められるようにするため。
+    float mipLevel;
     float2 pad0;
 };
 
@@ -47,6 +48,6 @@ float4 PsMain(VsOutput input) : SV_Target
     TextureCube<float4> environment = ResourceDescriptorHeap[g_skybox.environmentIndex];
     const float3 direction = normalize(input.direction);
     const float3 radiance =
-        environment.SampleLevel(g_samplerLinearClamp, direction, float(g_skybox.mipLevel)).rgb;
+        environment.SampleLevel(g_samplerLinearClamp, direction, g_skybox.mipLevel).rgb;
     return float4(radiance * g_skybox.intensity, 1.0f);
 }

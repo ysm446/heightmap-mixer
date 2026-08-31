@@ -1320,6 +1320,12 @@ void Application::DrawLightingPanel() {
                               "物理量ではなく、見た目を整えるための倍率", "%.2f");
             ui::PropertyBool("背景を表示", &m_renderer.ShowSkybox(), true,
                              "オフにすると背景色だけになる。IBL の寄与は残る");
+            ImGui::BeginDisabled(!m_renderer.ShowSkybox());
+            ui::PropertyBool("背景をぼかす", &m_renderer.SkyboxBlur(), false,
+                             "背景だけを柔らかくする。素材を見比べるときに、"
+                             "背景の細部が目移りの原因にならないようにする。"
+                             "IBL の寄与と陰影は変わらない");
+            ImGui::EndDisabled();
 
             ui::PropertyLabelEmpty("hdrLoad");
             if (ui::Button("HDRI を開く…", ui::kWideButtonWidth)) {

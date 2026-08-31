@@ -121,6 +121,9 @@ public:
     // 目標輝度だけを変えて環境を作り直す。ファイルは読み直さない。
     void RequestHdriLuminanceRebuild() { m_hdriLuminanceRebuildRequested = true; }
     bool& ShowSkybox() { return m_showSkybox; }
+    // 背景だけをぼかす。**IBL の寄与は変えない。**
+    // プリフィルタ済みキューブの粗いミップを引くだけなので、追加のパスは要らない。
+    bool& SkyboxBlur() { return m_skyboxBlur; }
     // ディレクショナルライトの影を落とすか。落とさないとシャドウパスも走らない。
     bool& ShadowEnabled() { return m_shadowEnabled; }
     // テセレーション（画面上の辺の長さに応じた分割）を使うか。
@@ -183,6 +186,7 @@ private:
     uint32_t m_requestedMaterialResolution = 1024;
     bool m_useMaterialTextures = true;
     bool m_showSkybox = true;
+    bool m_skyboxBlur = false;
     bool m_shadowEnabled = true;
     bool m_tessellationEnabled = false;
     float m_tessellationFactor = 8.0f;

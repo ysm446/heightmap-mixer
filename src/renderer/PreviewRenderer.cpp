@@ -22,6 +22,12 @@ constexpr DXGI_FORMAT kMaterialUvFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 
 // シャドウマップの解像度。プレビューの被写体 1 個ぶんなのでこれで足りる。
 constexpr uint32_t kShadowMapSize = 2048;
+
+// 背景をぼかすときに引くプリフィルタ済みキューブのミップ。小数で指定する。
+//
+// **1.0 以上にすると背景がほぼ単色になり、どこにいるのか分からなくなる。**
+// 0.6 は、草地・道・木立の配置は読めるが細部は目に留まらない、という強さ。
+constexpr float kSkyboxBlurMip = 0.6f;
 constexpr DXGI_FORMAT kShadowDsvFormat = DXGI_FORMAT_D32_FLOAT;
 // プレビューのメッシュの大きさ。どれも原点中心（モデル行列は単位行列）。
 // BoundingRadius() がここから包む球の半径を出すので、値を直接書かないこと。
@@ -96,7 +102,7 @@ struct SkyboxConstants {
     float intensity;
 
     uint32_t environmentIndex;
-    uint32_t mipLevel;
+    float mipLevel;
     float pad0[2];
 };
 
@@ -658,8 +664,17 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
                             XMMatrixInverse(nullptr, XMMatrixMultiply(view, projection)));
             skyboxConstants.cameraPosition = m_camera.Position();
             skyboxConstants.intensity = m_iblIntensity;
-            skyboxConstants.environmentIndex = m_environment.EnvironmentSrvIndex();
-            skyboxConstants.mipLevel = 0;
+            if (m_skyboxBlur) {
+                // プリフィルタ済みキューブはラフネス別に GGX で畳み込んである。
+                // 粗いミップを引けば、ぼかしパスを足さずに背景だけを柔らかくできる。
+                // ミップを落とすだけの（箱フィルタの）環境キューブより滑らか。
+                skyboxConstants.environmentIndex = m_environment.PrefilteredSrvIndex();
+                skyboxConstants.mipLevel = std::min(
+                    kSkyboxBlurMip, static_cast<float>(m_environment.PrefilteredMipCount() - 1));
+            } else {
+                skyboxConstants.environmentIndex = m_environment.EnvironmentSrvIndex();
+                skyboxConstants.mipLevel = 0.0f;
+            }
             std::memcpy(skyboxCb.cpu, &skyboxConstants, sizeof(skyboxConstants));
 
             commandList->SetPipelineState(skyboxPipeline);

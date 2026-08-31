@@ -434,6 +434,7 @@ json WritePreview(renderer::PreviewRenderer& renderer, const fs::path& baseDir) 
     // HDRI の較正倍率。見た目が変わるのでプロジェクトに残す。
     node["hdriSkyLuminance"] = renderer.HdriSkyLuminance();
     node["showSkybox"] = renderer.ShowSkybox();
+    node["skyboxBlur"] = renderer.SkyboxBlur();
     node["shadow"] = renderer.ShadowEnabled();
     // HDRI を読んでいなければ手続き的な空。null で区別する。
     node["hdri"] = renderer.HdriPath().empty()
@@ -497,6 +498,7 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer, const fs
     renderer.IblIntensity() = ReadFloat(node, "iblIntensity", 1.0f);
     renderer.HdriSkyLuminance() = ReadFloat(node, "hdriSkyLuminance", 12000.0f);
     renderer.ShowSkybox() = ReadBool(node, "showSkybox", true);
+    renderer.SkyboxBlur() = ReadBool(node, "skyboxBlur", false);
     renderer.ShadowEnabled() = ReadBool(node, "shadow", true);
 
     if (const json* camera = FindMember(node, "camera");
