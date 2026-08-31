@@ -23,6 +23,12 @@ constexpr DXGI_FORMAT kMaterialUvFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 // シャドウマップの解像度。プレビューの被写体 1 個ぶんなのでこれで足りる。
 constexpr uint32_t kShadowMapSize = 2048;
 constexpr DXGI_FORMAT kShadowDsvFormat = DXGI_FORMAT_D32_FLOAT;
+// プレビューのメッシュの大きさ。どれも原点中心（モデル行列は単位行列）。
+// BoundingRadius() がここから包む球の半径を出すので、値を直接書かないこと。
+constexpr float kSphereRadius = 1.0f;
+constexpr float kPlaneSize = 2.0f;  // 一辺の長さ。XZ 平面に広がる
+constexpr float kCubeSize = 1.4f;   // 一辺の長さ
+
 // 影を落とす範囲。プレビューのメッシュ（最大でも半径 1.5 程度）を囲む。
 constexpr float kShadowRadius = 2.2f;
 constexpr float kShadowDistance = 6.0f;
@@ -140,13 +146,13 @@ XMFLOAT3 LightSettings::Direction() const {
 bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache) {
     // ディスプレイスメントを頂点で押し出すので、プレビューのメッシュは細かく割る。
     // 数万頂点はプレビュー 1 個ぶんとしては軽い。
-    if (!m_sphere.Create(device, MakeSphere(256, 128, 1.0f), L"SphereMesh")) {
+    if (!m_sphere.Create(device, MakeSphere(256, 128, kSphereRadius), L"SphereMesh")) {
         return false;
     }
-    if (!m_plane.Create(device, MakePlane(2.0f, 256), L"PlaneMesh")) {
+    if (!m_plane.Create(device, MakePlane(kPlaneSize, 256), L"PlaneMesh")) {
         return false;
     }
-    if (!m_cube.Create(device, MakeCube(1.4f, 96), L"CubeMesh")) {
+    if (!m_cube.Create(device, MakeCube(kCubeSize, 96), L"CubeMesh")) {
         return false;
     }
     if (!m_environment.Initialize(device, pipelineCache)) {
@@ -233,6 +239,26 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
         m_environment.BuildFromSky(device, pipelineCache, m_sky);
         m_hdriPath.clear();
     }
+}
+
+// 現在のメッシュを包む球の半径。カメラの Frame()（A キー）が使う。
+//
+// ディスプレイスメントは頂点を法線方向へ (height - 0.5) * scale だけ動かすので、
+// 外へ出る最大量 scale * 0.5 を足す。変位量を上げたときにはみ出さないようにするため。
+float PreviewRenderer::BoundingRadius() const {
+    float radius = kSphereRadius;
+    switch (m_shape) {
+        // 平面は XZ に広がるので、対角の半分が包む球の半径になる。
+        case PreviewShape::Plane: radius = kPlaneSize * 0.5f * 1.41421356f; break;
+        case PreviewShape::Cube:  radius = kCubeSize * 0.5f * 1.73205081f; break;
+        case PreviewShape::Sphere:
+        default:                  radius = kSphereRadius; break;
+    }
+
+    if (m_useMaterialTextures) {
+        radius += m_displacementScale * 0.5f;
+    }
+    return radius;
 }
 
 const Mesh& PreviewRenderer::CurrentMesh() const {

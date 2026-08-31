@@ -50,6 +50,12 @@ public:
     void Zoom(float delta);
     void Reset();
 
+    // 注視点を center へ戻す。距離と角度は変えない（F キー）。
+    // パンで被写体を画面外へ追い出したときの復帰に使う。
+    void Focus(const DirectX::XMFLOAT3& center);
+    // 注視点を center へ戻したうえで、半径 radius の球が画面に収まる距離へ寄せる（A キー）。
+    void Frame(const DirectX::XMFLOAT3& center, float radius);
+
     void SetViewportSize(uint32_t width, uint32_t height);
 
     DirectX::XMMATRIX ViewMatrix() const;

@@ -757,6 +757,29 @@ bool Application::HandleLightDrag(bool itemActive) {
     return true;
 }
 
+// F でメッシュを画面の中心へ戻し、A でさらに全体が収まる距離まで引く。
+// DCC の「選択をフレーム / 全体をフレーム」に倣った割り当て。
+//
+// 修飾キーは付けない（Ctrl は数値の直接入力、Alt は軌道に使っている）。
+// カーソルがビューポートの上にあるときだけ効かせ、
+// **テキスト入力中は無視する**。レイヤー名を打っている最中に視点が飛ぶのを防ぐ。
+void Application::HandleCameraShortcuts(bool itemHovered) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (!itemHovered || io.WantTextInput || io.KeyCtrl || io.KeyShift || io.KeyAlt) {
+        return;
+    }
+
+    // プレビューのメッシュはどれも原点中心（モデル行列は単位行列）。
+    constexpr DirectX::XMFLOAT3 kMeshCenter{0.0f, 0.0f, 0.0f};
+    renderer::Camera& camera = m_renderer.GetCamera();
+
+    if (ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+        camera.Focus(kMeshCenter);
+    } else if (ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+        camera.Frame(kMeshCenter, m_renderer.BoundingRadius());
+    }
+}
+
 // ライトの向きを示すギズモ。地面のリング、水平方向、仰角の弧、光が来る向きの矢印。
 //
 // 色はテーマから引かない。座標軸ギズモと同じく「意味を持つ色」として固定する。
@@ -1048,6 +1071,8 @@ void Application::DrawViewportPanel() {
             if (itemHovered && io.MouseWheel != 0.0f) {
                 camera.Zoom(io.MouseWheel);
             }
+
+            HandleCameraShortcuts(itemHovered);
 
             const ImVec2 imageMax(imageOrigin.x + available.x, imageOrigin.y + available.y);
             DrawAxisGizmo(camera, imageOrigin, imageMax);

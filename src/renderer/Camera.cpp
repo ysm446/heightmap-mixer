@@ -11,6 +11,13 @@ namespace {
 // 真上・真下でビュー行列が縮退しないよう、わずかに手前で止める。
 constexpr float kPitchLimit = 1.55334306f;  // 89 度
 
+// 距離の可動域。Zoom / SetState / Frame で同じ範囲に収める。
+constexpr float kMinDistance = 0.1f;
+constexpr float kMaxDistance = 100.0f;
+
+// Frame() で被写体の周りに残す余白。1.0 だと画面の端に接する。
+constexpr float kFrameMargin = 1.08f;
+
 }  // namespace
 
 void Camera::Orbit(float deltaX, float deltaY) {
@@ -36,7 +43,29 @@ void Camera::Pan(float deltaX, float deltaY) {
 }
 
 void Camera::Zoom(float delta) {
-    m_distance = std::clamp(m_distance * std::pow(1.1f, -delta), 0.1f, 100.0f);
+    m_distance = std::clamp(m_distance * std::pow(1.1f, -delta), kMinDistance, kMaxDistance);
+}
+
+void Camera::Focus(const XMFLOAT3& center) {
+    m_target = center;
+}
+
+// 半径 radius の球がちょうど収まる距離は radius / sin(画角 / 2)。
+//
+// **縦横のうち画角が狭い方**で決めること。広い方に合わせると、狭い側からはみ出す。
+// 横長のビューポートなら縦画角、縦長なら横画角が効く。
+void Camera::Frame(const XMFLOAT3& center, float radius) {
+    m_target = center;
+    if (radius <= 0.0f) {
+        return;
+    }
+
+    const float aspect = static_cast<float>(m_width) / static_cast<float>(m_height);
+    const float fovX = 2.0f * std::atan(std::tan(m_fovY * 0.5f) * aspect);
+    const float fov = std::min(m_fovY, fovX);
+
+    const float distance = radius / std::sin(fov * 0.5f);
+    m_distance = std::clamp(distance * kFrameMargin, kMinDistance, kMaxDistance);
 }
 
 void Camera::Reset() {
@@ -52,7 +81,7 @@ CameraState Camera::State() const {
 
 void Camera::SetState(const CameraState& state) {
     m_target = state.target;
-    m_distance = std::clamp(state.distance, 0.1f, 100.0f);
+    m_distance = std::clamp(state.distance, kMinDistance, kMaxDistance);
     m_yaw = state.yaw;
     m_pitch = std::clamp(state.pitch, -kPitchLimit, kPitchLimit);
     m_fovY = std::clamp(state.fovY, 0.2f, 1.5f);

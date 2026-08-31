@@ -109,6 +109,8 @@ private:
     // ビューポート上の L + 左ドラッグでライトの向きを変える。
     // 掴んでいる間は true を返す（軌道やブラシへ渡さない）。
     bool HandleLightDrag(bool itemActive);
+    // ビューポート上の F / A キーで視点をメッシュへ戻す。
+    void HandleCameraShortcuts(bool itemHovered);
     // ライトの向きを示すギズモ。動かしている間と、その直後だけ出す。
     void DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewportMax);
     // ビューポート上のドラッグをブラシへ渡す。ペイントモードのときだけ呼ぶ。

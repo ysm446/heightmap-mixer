@@ -104,6 +104,8 @@ public:
     LightSettings& Light() { return m_light; }
     MaterialSettings& Material() { return m_material; }
     PreviewShape& Shape() { return m_shape; }
+    // 現在のメッシュを包む球の半径（原点中心）。カメラの Frame() が使う。
+    float BoundingRadius() const;
     TonemapMode& Tonemap() { return m_tonemap; }
     DebugView& Debug() { return m_debugView; }
     DebugView Debug() const { return m_debugView; }
