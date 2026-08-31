@@ -1,8 +1,12 @@
 // マテリアル一覧に出すサムネイルを描く。
 //
-// メッシュは使わず、正面を向いた球を解析的に解く。円の内側だけを塗り、
-// 外側は背景で埋める。マップは円板の UV でそのまま引く。
+// メッシュは使わず、正面を向いた球を解析的に解く。マップは円板の UV でそのまま引く。
 // 見た目を比べるためのものなので、プレビュー本体と厳密に一致させる必要はない。
+//
+// **円の外はアルファ 0 で抜く。背景色を焼き込まない。**
+// サムネイルはレイヤーパネル（#1E1E1E）とマテリアル一覧（#232323）の両方に出るので、
+// 背景を塗ると必ずどちらかで四角い色違いの板に見える。
+// 抜いておけば ImGui が置いた先の色に重ねてくれる。
 
 #include "Brdf.hlsli"
 #include "CompositeCommon.hlsli"
@@ -33,9 +37,6 @@ struct ThumbnailConstants
 ConstantBuffer<ThumbnailConstants> g_thumbnail : register(b0);
 
 static const uint kInvalidTextureIndex = 0xFFFFFFFFu;
-
-// 背景。UI のパネル面（#232323）に近い明るさへ落ち着かせる。
-static const float3 kBackground = float3(0.055f, 0.055f, 0.055f);
 
 float4 SampleMap(uint index, float2 uv)
 {
@@ -68,9 +69,15 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     // 少し余白を取って球を収める。
     const float sphereRadius = 0.92f;
-    if (radiusSq > sphereRadius * sphereRadius)
+    const float radius = sqrt(radiusSq);
+
+    // 輪郭のジャギーを消すための幅。disc は size テクセルで [-1, 1] を張るので、
+    // 1 テクセル = 2 / size。その 1.5 倍を半値幅にする（合わせて 3 テクセル）。
+    const float aa = 1.5f / float(g_thumbnail.size);
+
+    if (radius > sphereRadius + aa)
     {
-        output[dispatchThreadId.xy] = float4(LinearToSrgb(kBackground), 1.0f);
+        output[dispatchThreadId.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
 
@@ -137,9 +144,11 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float hemisphere = saturate(normal.y * 0.5f + 0.5f);
     radiance += diffuseColor * lerp(0.06f, 0.24f, hemisphere) * ambientOcclusion;
 
-    // 縁を少し落として球らしく見せる。
-    const float edge = smoothstep(1.0f, 0.86f, sqrt(radiusSq) / sphereRadius);
-    radiance = lerp(kBackground, radiance, edge);
+    // 輪郭は「縁を暗く落とす」のではなくアルファで抜く。
+    // 落とすと、素材の色によっては濃いグレーの輪郭として見えてしまう。
+    // 球らしさは斜めを向いた法線のシェーディングだけで足りる。
+    const float coverage = 1.0f - smoothstep(sphereRadius - aa, sphereRadius + aa, radius);
 
-    output[dispatchThreadId.xy] = float4(LinearToSrgb(ApplyTonemap(radiance, 2)), 1.0f);
+    output[dispatchThreadId.xy] =
+        float4(LinearToSrgb(ApplyTonemap(radiance, 2)), coverage);
 }
