@@ -69,13 +69,25 @@ public:
     uint32_t Resolution() const { return m_resolution; }
     uint32_t EvaluatedLayerCount() const { return m_evaluatedLayerCount; }
 
+    // --- レイヤー一覧のマスクサムネイル -------------------------------------
+    // 評価のついでにレイヤー 1 枚ぶんのマスクを小さく焼く。
+    // 中間結果由来のマスク（傾斜や曲率）はそのレイヤーを合成する直前の下地から
+    // しか作れないので、一覧側で後から作り直すことはできない。
+    //
+    // 添字はスタックの index。並べ替えても次の評価で作り直されるので追従する。
+    // ImGui へ渡すハンドル。まだ無ければ ptr が 0。
+    D3D12_GPU_DESCRIPTOR_HANDLE MaskThumbnailHandle(size_t layerIndex) const;
+
     // 変更を検知していなくても次回に評価し直す。
     void Invalidate() { m_evaluatedRevision = 0; }
 
 private:
     void ReleaseTextures(rhi::Device& device);
+    // レイヤー枚数ぶんのマスクサムネイルを用意する。増減した枚数だけ作る / 捨てる。
+    void EnsureMaskThumbnails(rhi::Device& device, size_t layerCount);
 
     MaterialTextureSet m_textures;
+    std::vector<rhi::GpuTexture> m_maskThumbnails;
     uint32_t m_resolution = 0;
     uint64_t m_evaluatedRevision = 0;
     uint32_t m_evaluatedLayerCount = 0;

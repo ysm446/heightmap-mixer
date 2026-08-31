@@ -171,6 +171,99 @@ Thumbnail ThumbnailButton(const char* id, ImTextureID texture, float size, bool 
     return state;
 }
 
+void ThumbnailImage(ImTextureID texture, float size) {
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const ImVec2 max(min.x + size, min.y + size);
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const float rounding = ImGui::GetStyle().FrameRounding;
+    if (texture != 0) {
+        drawList->AddImage(texture, min, max, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
+                           IM_COL32_WHITE);
+    }
+    // まだ中身が無いときも場所は空けておく。行ごとに幅が変わると読みにくい。
+    // 枠は中身の有無に関わらず引く。行に並ぶ箱の大きさを揃えて見せるため。
+    drawList->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border), rounding, 0, Scaled(1.0f));
+
+    ImGui::Dummy(ImVec2(size, size));
+}
+
+void ColorSwatch(const ImVec4& color, float size) {
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const ImVec2 max(min.x + size, min.y + size);
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const float rounding = ImGui::GetStyle().FrameRounding;
+    // 色そのものが中身なので塗る。枠だけはテーマの色を使う。
+    drawList->AddRectFilled(min, max, ImGui::GetColorU32(color), rounding);
+    drawList->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border), rounding, 0, Scaled(1.0f));
+
+    ImGui::Dummy(ImVec2(size, size));
+}
+
+// 目のアイコン。字形を持たないので図形で描く。
+//
+// 開いた目は上下 2 本の放物線で作った紡錘形と瞳、閉じた目は下向きの弧 1 本。
+// 「見えている / 見えていない」が一目で分かればよいので、これ以上作り込まない。
+namespace {
+
+void DrawEye(ImDrawList* drawList, const ImVec2& center, float size, bool open, ImU32 color) {
+    constexpr int kSegments = 14;
+    const float halfWidth = size * 0.46f;
+    const float halfHeight = size * 0.30f;
+    const float thickness = Scaled(1.3f);
+
+    if (!open) {
+        // 閉じたまぶた。下へふくらむ弧。
+        drawList->PathClear();
+        for (int i = 0; i <= kSegments; ++i) {
+            const float t = -1.0f + 2.0f * static_cast<float>(i) / static_cast<float>(kSegments);
+            drawList->PathLineTo(
+                ImVec2(center.x + t * halfWidth, center.y + halfHeight * (1.0f - t * t)));
+        }
+        drawList->PathStroke(color, ImDrawFlags_None, thickness);
+        return;
+    }
+
+    drawList->PathClear();
+    for (int i = 0; i <= kSegments; ++i) {
+        const float t = -1.0f + 2.0f * static_cast<float>(i) / static_cast<float>(kSegments);
+        drawList->PathLineTo(
+            ImVec2(center.x + t * halfWidth, center.y - halfHeight * (1.0f - t * t)));
+    }
+    for (int i = kSegments; i >= 0; --i) {
+        const float t = -1.0f + 2.0f * static_cast<float>(i) / static_cast<float>(kSegments);
+        drawList->PathLineTo(
+            ImVec2(center.x + t * halfWidth, center.y + halfHeight * (1.0f - t * t)));
+    }
+    drawList->PathStroke(color, ImDrawFlags_Closed, thickness);
+    drawList->AddCircleFilled(center, size * 0.15f, color, 12);
+}
+
+}  // namespace
+
+bool EyeToggle(const char* id, bool* value, float size) {
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+
+    ImGui::InvisibleButton(id, ImVec2(size, size));
+    const bool hovered = ImGui::IsItemHovered();
+
+    bool changed = false;
+    if (ImGui::IsItemClicked()) {
+        *value = !*value;
+        changed = true;
+    }
+
+    // 表示中は本文の色、非表示は補助文字の色。ホバー中だけ本文の色へ持ち上げて、
+    // 押せることを示す。色はテーマから引く（直書きしない）。
+    const ImU32 color = (*value || hovered) ? ImGui::GetColorU32(ImGuiCol_Text)
+                                            : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    DrawEye(ImGui::GetWindowDrawList(), ImVec2(min.x + size * 0.5f, min.y + size * 0.5f), size,
+            *value, color);
+
+    return changed;
+}
+
 ImU32 WarnColor() {
     return ImGui::GetColorU32(kWarn);
 }

@@ -105,7 +105,7 @@ float SampleLayerHeight(float2 uv, float uvPerOutputTexel)
     return base;
 }
 
-float SampleMaskSourceValue(float2 uv, float2 paintUv, uint2 texel, float uvPerOutputTexel)
+float SampleMaskSourceValue(float2 uv, float2 paintUv, float2 derivedUv, float uvPerOutputTexel)
 {
     const uint source = uint(g_layer.maskParams.w);
 
@@ -147,16 +147,19 @@ float SampleMaskSourceValue(float2 uv, float2 paintUv, uint2 texel, float uvPerO
         {
             return g_layer.maskParams.x;
         }
+        // テクセル参照ではなく UV で引く。合成パスは出力テクセルの中心を渡すので
+        // 値は添字参照と一致し、サムネイルのように解像度が違う呼び出しでも使える。
         Texture2D<float> derived = ResourceDescriptorHeap[g_layer.textureIndices1.w];
-        return g_layer.maskParams.x * derived[texel];
+        return g_layer.maskParams.x *
+               derived.SampleLevel(g_samplerLinearClamp, derivedUv, 0.0f);
     }
 
     return g_layer.maskParams.x;
 }
 
-float SampleLayerMask(float2 uv, float2 paintUv, uint2 texel, float uvPerOutputTexel)
+float SampleLayerMask(float2 uv, float2 paintUv, float2 derivedUv, float uvPerOutputTexel)
 {
-    float mask = saturate(SampleMaskSourceValue(uv, paintUv, texel, uvPerOutputTexel));
+    float mask = saturate(SampleMaskSourceValue(uv, paintUv, derivedUv, uvPerOutputTexel));
     mask = ApplyMaskCurve(mask, g_layer.maskCurve.x);
 
     const bool invert = (g_layer.flags & MM_FLAG_MASK_INVERT) != 0u;
@@ -259,7 +262,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     float weight = 1.0f;
     if (!isBaseLayer)
     {
-        const float mask = SampleLayerMask(uv, outputUv, texel, uvPerOutputTexel);
+        const float mask = SampleLayerMask(uv, outputUv, outputUv, uvPerOutputTexel);
         const float destinationHeight = heightTarget[texel];
         weight = HeightBlendWeight(destinationHeight, layerHeight, mask, g_layer.blendParams.x);
     }
@@ -302,4 +305,65 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         const float destination = isBaseLayer ? layerHeight : heightTarget[texel];
         heightTarget[texel] = lerp(destination, layerHeight, weight);
     }
+}
+
+// --- マスクのサムネイル ---------------------------------------------------
+//
+// レイヤー一覧に出す小さなマスク画像を作る。合成パスと同じ LayerConstants を
+// そのまま使い、次の 3 つだけ差し替えて呼ぶ。
+//
+//   outputIndices.x : サムネイルの UAV
+//   resolution      : サムネイルの一辺
+//   tile            : (0, 0, 一辺, 一辺)
+//
+// 中間結果由来のマスクはこのレイヤーを合成する直前の下地から作られるため、
+// 合成ループの中、そのレイヤーの順番で呼ぶこと。
+
+// 1 テクセルあたりの格子の一辺。合成解像度との差を埋めるための平均化に使う。
+//
+// 1 点だけ拾うと、傾斜や窪みのマスクのように細かい模様が砂嵐になる。
+// 16 点（4 x 4）で平均はほぼ収束する（8 x 8 にしても見た目は変わらない）。
+#define MM_MASK_THUMBNAIL_TAPS 4
+
+[numthreads(8, 8, 1)]
+void CsMaskThumbnail(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    if (dispatchThreadId.x >= g_layer.tile.z || dispatchThreadId.y >= g_layer.tile.w)
+    {
+        return;
+    }
+
+    RWTexture2D<float4> output = ResourceDescriptorHeap[g_layer.outputIndices.x];
+
+    // 一番下のレイヤーは下地なのでマスクが効かない。一覧でも「全面」と示す。
+    const bool isBaseLayer = (g_layer.flags & MM_FLAG_BASE_LAYER) != 0u;
+    if (isBaseLayer)
+    {
+        output[dispatchThreadId.xy] = float4(1.0f, 1.0f, 1.0f, 1.0f);
+        return;
+    }
+
+    const float2 texelSize = 1.0f / float2(g_layer.resolution);
+    const float uvPerOutputTexel = texelSize.x * g_layer.blendParams.z;
+
+    // **1 テクセルにつき 1 回だけ評価すると使いものにならない。**
+    // 傾斜や窪みのマスクは合成解像度そのままの細かさを持つので、
+    // 数十テクセルに 1 点だけ拾うと砂嵐にしか見えない。テクセルが覆う範囲を
+    // 格子状に取って平均する。カーブとレベルを掛けたあとの値を平均するので、
+    // 一覧に出るのは「そのあたりがどれだけ覆われるか」になる。
+    float sum = 0.0f;
+    for (int y = 0; y < MM_MASK_THUMBNAIL_TAPS; ++y)
+    {
+        for (int x = 0; x < MM_MASK_THUMBNAIL_TAPS; ++x)
+        {
+            const float2 offset =
+                (float2(x, y) + 0.5f) / float(MM_MASK_THUMBNAIL_TAPS);
+            const float2 outputUv = (float2(dispatchThreadId.xy) + offset) * texelSize;
+            sum += SampleLayerMask(outputUv * g_layer.blendParams.z, outputUv, outputUv,
+                                   uvPerOutputTexel);
+        }
+    }
+
+    const float mask = sum / float(MM_MASK_THUMBNAIL_TAPS * MM_MASK_THUMBNAIL_TAPS);
+    output[dispatchThreadId.xy] = float4(mask, mask, mask, 1.0f);
 }

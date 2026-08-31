@@ -94,6 +94,24 @@ struct Thumbnail {
 // （枠の描画は最後のアイテムを変えない）。
 Thumbnail ThumbnailButton(const char* id, ImTextureID texture, float size, bool selected);
 
+// 一覧の行に置く小さなサムネイル。**選択枠は付けない。**
+// 行そのものが選択を示すので、画像側にも枠を出すと選択が二重に見える。
+// texture の ptr が 0 なら中身の代わりに枠だけを描く。
+void ThumbnailImage(ImTextureID texture, float size);
+
+// 一覧の行に置く単色のサムネイル。テクスチャを持たないもの
+// （マテリアルを割り当てていないレイヤーなど）の代わりに使う。
+void ColorSwatch(const ImVec4& color, float size);
+
+// --- 表示・非表示の目印 ---------------------------------------------------
+
+// 目のアイコンでオン / オフを切り替える。値が変わったら true。
+//
+// **字形ではなく図形で描く。** フォントは日本語が出せるシステムフォントを
+// 読むだけで、目のような記号の字形を持っていない（design-guide.md の
+// 「記号を使うとき」を参照）。
+bool EyeToggle(const char* id, bool* value, float size);
+
 // 通知の意味色。ステータスバーで警告とエラーを区別するためだけに使う。
 // グレー基調を崩さないよう彩度は低く抑えてある。配色の一部なので UiStyle.cpp に置く。
 ImU32 WarnColor();

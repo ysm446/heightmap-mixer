@@ -23,6 +23,12 @@ constexpr DXGI_FORMAT kHeightFormat = DXGI_FORMAT_R16_FLOAT;
 constexpr uint32_t kFlagMaskInvert = 0x1u;
 constexpr uint32_t kFlagBaseLayer = 0x2u;
 
+// レイヤー一覧に出すマスクサムネイルの一辺。行の高さに対して十分な細かさがあればよい。
+constexpr uint32_t kMaskThumbnailSize = 64;
+// マスクは 1 チャンネルだが、R8 のまま ImGui へ渡すと赤一色で描かれる。
+// 灰色として見せたいので RGB へ同じ値を書く。
+constexpr DXGI_FORMAT kMaskThumbnailFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+
 // GPU 側の LayerConstants と一致させること。
 struct LayerConstants {
     uint32_t outputIndices[4];
@@ -120,8 +126,46 @@ bool MaterialEvaluator::Create(rhi::Device& device, uint32_t resolution) {
 
 void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseTextures(device);
+    for (rhi::GpuTexture& thumbnail : m_maskThumbnails) {
+        ReleaseTexture(device, thumbnail);
+    }
+    m_maskThumbnails.clear();
     m_resolution = 0;
     m_evaluatedRevision = 0;
+}
+
+// マスクサムネイルは合成解像度に依らないので、Create / Resize では作り直さない。
+void MaterialEvaluator::EnsureMaskThumbnails(rhi::Device& device, size_t layerCount) {
+    // 減ったぶんは捨てる。GPU がまだ見ているかもしれないので Defer を通す。
+    while (m_maskThumbnails.size() > layerCount) {
+        ReleaseTexture(device, m_maskThumbnails.back());
+        m_maskThumbnails.pop_back();
+    }
+
+    while (m_maskThumbnails.size() < layerCount) {
+        rhi::TextureDesc desc;
+        desc.width = kMaskThumbnailSize;
+        desc.height = kMaskThumbnailSize;
+        desc.format = kMaskThumbnailFormat;
+        desc.allowUnorderedAccess = true;
+        desc.createSrv = true;
+        desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        desc.debugName = L"LayerMaskThumbnail";
+
+        rhi::GpuTexture thumbnail;
+        if (!device.Allocator().CreateTexture2D(desc, thumbnail)) {
+            MM_LOG_WARN("レイヤーのマスクサムネイルを作れませんでした");
+            return;
+        }
+        m_maskThumbnails.push_back(std::move(thumbnail));
+    }
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE MaterialEvaluator::MaskThumbnailHandle(size_t layerIndex) const {
+    if (layerIndex >= m_maskThumbnails.size() || !m_maskThumbnails[layerIndex].IsValid()) {
+        return D3D12_GPU_DESCRIPTOR_HANDLE{0};
+    }
+    return m_maskThumbnails[layerIndex].srv.gpu;
 }
 
 void MaterialEvaluator::ReleaseTextures(rhi::Device& device) {
@@ -153,14 +197,16 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     ID3D12PipelineState* layerPipeline =
         pipelineCache.GetCompute(L"CompositeLayer.hlsl", L"CsMain");
     ID3D12PipelineState* maskPipeline = pipelineCache.GetCompute(L"CompositeMask.hlsl", L"CsMain");
+    // マスクのサムネイルは合成と同じ定数を使うので、同じシェーダの別エントリ。
+    ID3D12PipelineState* thumbnailPipeline =
+        pipelineCache.GetCompute(L"CompositeLayer.hlsl", L"CsMaskThumbnail");
     if (layerPipeline == nullptr || maskPipeline == nullptr) {
         return;
     }
 
+    // 有効なレイヤーが 1 枚も無いときは npos。合成はしないが、
+    // マスクのサムネイルはレイヤーの有無に関わらず作り直す。
     const size_t baseIndex = stack.FirstEnabledIndex();
-    if (baseIndex == static_cast<size_t>(-1)) {
-        return;
-    }
 
     PIXBeginEvent(commandList, PIX_COLOR(220, 140, 60), "CompositeStack");
 
@@ -171,6 +217,11 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     TransitionIfNeeded(commandList, m_textures.surface, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
+    EnsureMaskThumbnails(device, stack.Layers().size());
+    for (rhi::GpuTexture& thumbnail : m_maskThumbnails) {
+        TransitionIfNeeded(commandList, thumbnail, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
     m_evaluatedLayerCount = 0;
     m_evaluatedTileCount = static_cast<uint32_t>(tiles.size());
 
@@ -178,13 +229,10 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     // タイル優先で回すと隣のタイルの未評価の値を読んでしまう。
     for (size_t layerIndex = 0; layerIndex < stack.Layers().size(); ++layerIndex) {
         const MaterialLayer& layer = stack.Layers()[layerIndex];
-        if (!layer.enabled) {
-            continue;
-        }
-
         const bool isBaseLayer = (layerIndex == baseIndex);
         // 下地のレイヤーには合成する相手がいないので、中間結果由来のマスクは使えない。
-        const bool useDerivedMask = !isBaseLayer && IsDerivedMaskSource(layer.mask.source);
+        const bool useDerivedMask =
+            layer.enabled && !isBaseLayer && IsDerivedMaskSource(layer.mask.source);
 
         if (useDerivedMask) {
             PIXBeginEvent(commandList, PIX_COLOR(200, 200, 80), "CompositeMask");
@@ -229,137 +277,169 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             PIXEndEvent(commandList);
         }
 
-        commandList->SetPipelineState(layerPipeline);
+        // タイルごとに変わるのは矩形だけなので、定数はレイヤー 1 枚につき 1 回組む。
+        // マスクのサムネイルも同じ値を使う（差し替えるのは出力・解像度・矩形だけ）。
+        LayerConstants constants = {};
+        constants.outputIndices[0] = m_textures.baseColor.UavIndex();
+        constants.outputIndices[1] = m_textures.normal.UavIndex();
+        constants.outputIndices[2] = m_textures.surface.UavIndex();
+        constants.outputIndices[3] = m_textures.height.UavIndex();
 
-        for (const TileRect& tile : tiles) {
-            LayerConstants constants = {};
-            constants.outputIndices[0] = m_textures.baseColor.UavIndex();
-            constants.outputIndices[1] = m_textures.normal.UavIndex();
-            constants.outputIndices[2] = m_textures.surface.UavIndex();
-            constants.outputIndices[3] = m_textures.height.UavIndex();
+        constants.resolution[0] = m_resolution;
+        constants.resolution[1] = m_resolution;
 
-            constants.tile[0] = tile.x;
-            constants.tile[1] = tile.y;
-            constants.tile[2] = tile.width;
-            constants.tile[3] = tile.height;
+        // 一番下のレイヤーは下地なので、必ず全チャンネルを埋める。
+        // そうしないと未初期化のテクセルが残る。
+        constants.channelMask = isBaseLayer ? kAllChannelBits : layer.channelMask;
 
-            constants.resolution[0] = m_resolution;
-            constants.resolution[1] = m_resolution;
-
-            // 一番下のレイヤーは下地なので、必ず全チャンネルを埋める。
-            // そうしないと未初期化のテクセルが残る。
-            constants.channelMask = isBaseLayer ? kAllChannelBits : layer.channelMask;
-
-            constants.flags = 0;
-            if (layer.mask.invert) {
-                constants.flags |= kFlagMaskInvert;
-            }
-            if (isBaseLayer) {
-                constants.flags |= kFlagBaseLayer;
-            }
-
-            // マップはレイヤーが参照するマテリアルから引く。
-            const MaterialAsset* material = materials.Find(layer.material);
-
-            // 定数もマテリアルが持っているほうを優先する。
-            // マテリアル側とレイヤー側の両方が掛かると、どちらが効いているか分からない。
-            const DirectX::XMFLOAT3 baseColor =
-                (material != nullptr) ? material->baseColorTint : layer.baseColor;
-            constants.baseColor[0] = baseColor.x;
-            constants.baseColor[1] = baseColor.y;
-            constants.baseColor[2] = baseColor.z;
-
-            constants.surfaceParams[0] =
-                (material != nullptr) ? material->roughnessValue : layer.roughness;
-            constants.surfaceParams[1] =
-                (material != nullptr) ? material->metallicValue : layer.metallic;
-            constants.surfaceParams[2] = (material != nullptr)
-                                             ? material->ambientOcclusionValue
-                                             : layer.ambientOcclusion;
-            constants.surfaceParams[3] = layer.heightBase;
-
-            constants.blendParams[0] = layer.blendRange;
-            constants.blendParams[1] = layer.normalStrength;
-            constants.blendParams[2] = layer.uvScale;
-            constants.blendParams[3] = static_cast<float>(layer.heightSource);
-
-            constants.maskParams[0] = layer.mask.constant;
-            constants.maskParams[1] = layer.mask.levelsLow;
-            constants.maskParams[2] = layer.mask.levelsHigh;
-            constants.maskParams[3] = static_cast<float>(layer.mask.source);
-
-            constants.heightNoise[0] = layer.heightNoise.scale;
-            // ハイトはノイズの amount ではなく heightGain を使う。
-            constants.heightNoise[1] = layer.heightGain;
-            constants.heightNoise[2] = static_cast<float>(layer.heightNoise.octaves);
-            constants.heightNoise[3] = layer.heightNoise.offset;
-
-            constants.maskNoise[0] = layer.mask.noise.scale;
-            constants.maskNoise[1] = layer.mask.noise.amount;
-            constants.maskNoise[2] = static_cast<float>(layer.mask.noise.octaves);
-            constants.maskNoise[3] = layer.mask.noise.offset;
-
-            // ベースカラーだけ sRGB として読む。それ以外はリニア。
-            constants.textureIndices0[0] =
-                (material != nullptr) ? textures.SrvIndex(material->baseColor, true)
-                                      : kInvalidTextureIndex;
-            constants.textureIndices0[1] =
-                (material != nullptr) ? textures.SrvIndex(material->normal, false)
-                                      : kInvalidTextureIndex;
-            constants.textureIndices0[2] =
-                (material != nullptr) ? textures.SrvIndex(material->roughness.texture, false)
-                                      : kInvalidTextureIndex;
-            constants.textureIndices0[3] =
-                (material != nullptr) ? textures.SrvIndex(material->metallic.texture, false)
-                                      : kInvalidTextureIndex;
-            constants.textureIndices1[0] =
-                (material != nullptr)
-                    ? textures.SrvIndex(material->ambientOcclusion.texture, false)
-                    : kInvalidTextureIndex;
-            constants.textureIndices1[1] =
-                (material != nullptr) ? textures.SrvIndex(material->height.texture, false)
-                                      : kInvalidTextureIndex;
-            // マスク用テクスチャはレイヤー固有。マテリアルのマップとは用途が別。
-            constants.textureIndices1[2] = textures.SrvIndex(layer.mask.texture.texture, false);
-
-            // スカラーのマップは「どのチャンネルを読むか」も渡す。
-            // Megascans の _ORD のように 1 枚へ詰めたテクスチャに対応するため。
-            constants.mapChannels[0] =
-                ((material != nullptr) ? PackMaterialChannels(*material) : 0u) |
-                PackChannel(layer.mask.texture.channel, 4);
-            constants.textureIndices1[3] =
-                useDerivedMask ? m_textures.maskScratch.SrvIndex() : kInvalidTextureIndex;
-
-            constants.maskCurve[0] = layer.mask.contrast;
-            constants.maskCurve[1] = layer.mask.derivedScale;
-
-            constants.noiseTypes[0] = static_cast<uint32_t>(layer.heightNoise.type);
-            constants.noiseTypes[1] = static_cast<uint32_t>(layer.mask.noise.type);
-
-            constants.paintParams[0] = (layer.mask.source == MaskSource::Paint)
-                                           ? paintMasks.SrvIndex(layer.mask.paint)
-                                           : kInvalidTextureIndex;
-
-            const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(LayerConstants), 256);
-            if (!cb.IsValid()) {
-                break;
-            }
-            std::memcpy(cb.cpu, &constants, sizeof(constants));
-
-            commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
-            commandList->Dispatch(DispatchCount(tile.width), DispatchCount(tile.height), 1);
+        constants.flags = 0;
+        if (layer.mask.invert) {
+            constants.flags |= kFlagMaskInvert;
+        }
+        if (isBaseLayer) {
+            constants.flags |= kFlagBaseLayer;
         }
 
-        // 次のレイヤーは前のレイヤーの結果を読むので、必ず区切る。
-        const D3D12_RESOURCE_BARRIER barriers[] = {
-            CD3DX12_RESOURCE_BARRIER::UAV(m_textures.baseColor.resource.Get()),
-            CD3DX12_RESOURCE_BARRIER::UAV(m_textures.normal.resource.Get()),
-            CD3DX12_RESOURCE_BARRIER::UAV(m_textures.surface.resource.Get()),
-            CD3DX12_RESOURCE_BARRIER::UAV(m_textures.height.resource.Get()),
-        };
-        commandList->ResourceBarrier(_countof(barriers), barriers);
+        // マップはレイヤーが参照するマテリアルから引く。
+        const MaterialAsset* material = materials.Find(layer.material);
 
-        ++m_evaluatedLayerCount;
+        // 定数もマテリアルが持っているほうを優先する。
+        // マテリアル側とレイヤー側の両方が掛かると、どちらが効いているか分からない。
+        const DirectX::XMFLOAT3 baseColor =
+            (material != nullptr) ? material->baseColorTint : layer.baseColor;
+        constants.baseColor[0] = baseColor.x;
+        constants.baseColor[1] = baseColor.y;
+        constants.baseColor[2] = baseColor.z;
+
+        constants.surfaceParams[0] =
+            (material != nullptr) ? material->roughnessValue : layer.roughness;
+        constants.surfaceParams[1] =
+            (material != nullptr) ? material->metallicValue : layer.metallic;
+        constants.surfaceParams[2] = (material != nullptr)
+                                         ? material->ambientOcclusionValue
+                                         : layer.ambientOcclusion;
+        constants.surfaceParams[3] = layer.heightBase;
+
+        constants.blendParams[0] = layer.blendRange;
+        constants.blendParams[1] = layer.normalStrength;
+        constants.blendParams[2] = layer.uvScale;
+        constants.blendParams[3] = static_cast<float>(layer.heightSource);
+
+        constants.maskParams[0] = layer.mask.constant;
+        constants.maskParams[1] = layer.mask.levelsLow;
+        constants.maskParams[2] = layer.mask.levelsHigh;
+        constants.maskParams[3] = static_cast<float>(layer.mask.source);
+
+        constants.heightNoise[0] = layer.heightNoise.scale;
+        // ハイトはノイズの amount ではなく heightGain を使う。
+        constants.heightNoise[1] = layer.heightGain;
+        constants.heightNoise[2] = static_cast<float>(layer.heightNoise.octaves);
+        constants.heightNoise[3] = layer.heightNoise.offset;
+
+        constants.maskNoise[0] = layer.mask.noise.scale;
+        constants.maskNoise[1] = layer.mask.noise.amount;
+        constants.maskNoise[2] = static_cast<float>(layer.mask.noise.octaves);
+        constants.maskNoise[3] = layer.mask.noise.offset;
+
+        // ベースカラーだけ sRGB として読む。それ以外はリニア。
+        constants.textureIndices0[0] =
+            (material != nullptr) ? textures.SrvIndex(material->baseColor, true)
+                                  : kInvalidTextureIndex;
+        constants.textureIndices0[1] =
+            (material != nullptr) ? textures.SrvIndex(material->normal, false)
+                                  : kInvalidTextureIndex;
+        constants.textureIndices0[2] =
+            (material != nullptr) ? textures.SrvIndex(material->roughness.texture, false)
+                                  : kInvalidTextureIndex;
+        constants.textureIndices0[3] =
+            (material != nullptr) ? textures.SrvIndex(material->metallic.texture, false)
+                                  : kInvalidTextureIndex;
+        constants.textureIndices1[0] =
+            (material != nullptr)
+                ? textures.SrvIndex(material->ambientOcclusion.texture, false)
+                : kInvalidTextureIndex;
+        constants.textureIndices1[1] =
+            (material != nullptr) ? textures.SrvIndex(material->height.texture, false)
+                                  : kInvalidTextureIndex;
+        // マスク用テクスチャはレイヤー固有。マテリアルのマップとは用途が別。
+        constants.textureIndices1[2] = textures.SrvIndex(layer.mask.texture.texture, false);
+
+        // スカラーのマップは「どのチャンネルを読むか」も渡す。
+        // Megascans の _ORD のように 1 枚へ詰めたテクスチャに対応するため。
+        constants.mapChannels[0] =
+            ((material != nullptr) ? PackMaterialChannels(*material) : 0u) |
+            PackChannel(layer.mask.texture.channel, 4);
+        constants.textureIndices1[3] =
+            useDerivedMask ? m_textures.maskScratch.SrvIndex() : kInvalidTextureIndex;
+
+        constants.maskCurve[0] = layer.mask.contrast;
+        constants.maskCurve[1] = layer.mask.derivedScale;
+
+        constants.noiseTypes[0] = static_cast<uint32_t>(layer.heightNoise.type);
+        constants.noiseTypes[1] = static_cast<uint32_t>(layer.mask.noise.type);
+
+        constants.paintParams[0] = (layer.mask.source == MaskSource::Paint)
+                                       ? paintMasks.SrvIndex(layer.mask.paint)
+                                       : kInvalidTextureIndex;
+
+        // 無効なレイヤーは合成しない。サムネイルだけは一覧のために作る。
+        if (layer.enabled) {
+            commandList->SetPipelineState(layerPipeline);
+
+            for (const TileRect& tile : tiles) {
+                LayerConstants tileConstants = constants;
+                tileConstants.tile[0] = tile.x;
+                tileConstants.tile[1] = tile.y;
+                tileConstants.tile[2] = tile.width;
+                tileConstants.tile[3] = tile.height;
+
+                const rhi::UploadAllocation cb =
+                    device.Upload().Allocate(sizeof(LayerConstants), 256);
+                if (!cb.IsValid()) {
+                    break;
+                }
+                std::memcpy(cb.cpu, &tileConstants, sizeof(tileConstants));
+
+                commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+                commandList->Dispatch(DispatchCount(tile.width), DispatchCount(tile.height), 1);
+            }
+
+            // 次のレイヤーは前のレイヤーの結果を読むので、必ず区切る。
+            const D3D12_RESOURCE_BARRIER barriers[] = {
+                CD3DX12_RESOURCE_BARRIER::UAV(m_textures.baseColor.resource.Get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(m_textures.normal.resource.Get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(m_textures.surface.resource.Get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(m_textures.height.resource.Get()),
+            };
+            commandList->ResourceBarrier(_countof(barriers), barriers);
+
+            ++m_evaluatedLayerCount;
+        }
+
+        // --- マスクのサムネイル ---------------------------------------------
+        // 中間結果由来のマスクはこのレイヤーを合成する直前の下地からしか作れない。
+        // 一覧側で後から焼き直せないので、合成ループの中でここに置く。
+        if (thumbnailPipeline != nullptr && layerIndex < m_maskThumbnails.size() &&
+            m_maskThumbnails[layerIndex].IsValid()) {
+            LayerConstants thumbnailConstants = constants;
+            thumbnailConstants.outputIndices[0] = m_maskThumbnails[layerIndex].UavIndex();
+            thumbnailConstants.resolution[0] = kMaskThumbnailSize;
+            thumbnailConstants.resolution[1] = kMaskThumbnailSize;
+            thumbnailConstants.tile[0] = 0;
+            thumbnailConstants.tile[1] = 0;
+            thumbnailConstants.tile[2] = kMaskThumbnailSize;
+            thumbnailConstants.tile[3] = kMaskThumbnailSize;
+
+            const rhi::UploadAllocation cb =
+                device.Upload().Allocate(sizeof(LayerConstants), 256);
+            if (cb.IsValid()) {
+                std::memcpy(cb.cpu, &thumbnailConstants, sizeof(thumbnailConstants));
+                commandList->SetPipelineState(thumbnailPipeline);
+                commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+                commandList->Dispatch(DispatchCount(kMaskThumbnailSize),
+                                      DispatchCount(kMaskThumbnailSize), 1);
+            }
+        }
     }
 
     // メッシュのピクセルシェーダから読めるようにする。
@@ -369,6 +449,11 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     TransitionIfNeeded(commandList, m_textures.surface,
                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+    // サムネイルは ImGui が SRV として読む。
+    for (rhi::GpuTexture& thumbnail : m_maskThumbnails) {
+        TransitionIfNeeded(commandList, thumbnail, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    }
 
     PIXEndEvent(commandList);
 }

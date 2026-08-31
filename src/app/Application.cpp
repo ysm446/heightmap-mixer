@@ -110,6 +110,12 @@ constexpr uint32_t kResolutionValues[] = {512, 1024, 2048};
 
 // レイヤー一覧のドラッグ＆ドロップで使うペイロードの種別。
 constexpr const char* kLayerDragDropType = "MM_LAYER";
+// レイヤー一覧の行に並べるサムネイルの一辺（96 DPI 基準）。行の高さはこれで決まる。
+// 中身（マテリアルとマスク）を読めることを優先して、文字より大きく取る。
+constexpr float kLayerRowThumbnail = 32.0f;
+// 目のアイコンの一辺。**サムネイルより小さくする。**
+// 同じ大きさだと切り替えのアイコンが素材と同じ重みで並び、目線が散る。
+constexpr float kLayerRowEye = 18.0f;
 // テクスチャ一覧からマップ欄へのドラッグ＆ドロップで使うペイロードの種別。
 constexpr const char* kTextureDragDropType = "MM_TEXTURE";
 constexpr const char* kTextureRemoveModalTitle = "テクスチャを削除";
@@ -1389,6 +1395,13 @@ void Application::RemoveLayer(int index) {
 }
 
 // レイヤー一覧。一番上が最前面。ドラッグで並べ替える。
+//
+// 行の並びは Quixel Mixer に合わせる。
+//   目のアイコン / マテリアルのサムネイル / マスクのサムネイル / 名前 / 削除
+//
+// 行そのものを `Selectable` にし、その上へ部品を重ねる。
+// 部品を `SameLine` で横に並べる方式だと、目のアイコンやサムネイルの上では
+// 行を選べなくなり、当たり判定に穴が空く。
 void Application::DrawLayerList() {
     std::vector<compositor::MaterialLayer>& layers = m_materialStack.Layers();
     const auto layerCount = static_cast<int>(layers.size());
@@ -1398,25 +1411,23 @@ void Application::DrawLayerList() {
     int dropTo = -1;
     int deleteIndex = -1;
 
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float thumbnailSize = ui::Scaled(kLayerRowThumbnail);
+    const float eyeSize = ui::Scaled(kLayerRowEye);
+    const float rowHeight = thumbnailSize + style.FramePadding.y * 2.0f;
+    const float gap = style.ItemInnerSpacing.x;
+    const float deleteSize = ImGui::GetFrameHeight();
+
     if (ImGui::BeginChild("layerList", ImVec2(0.0f, ui::Scaled(150.0f)),
                           ImGuiChildFlags_Borders)) {
         for (int i = layerCount - 1; i >= 0; --i) {
             compositor::MaterialLayer& layer = layers[static_cast<size_t>(i)];
             ImGui::PushID(i);
 
-            if (ImGui::Checkbox("##enabled", &layer.enabled)) {
-                MarkDocumentChanged();
-            }
-            ImGui::SameLine();
-
-            // 行の右端に削除アイコンを置く。名前はその手前までに収める。
-            const float deleteSize = ImGui::GetFrameHeight();
-            const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
-            const float nameWidth = std::max(ui::Scaled(40.0f),
-                                             ImGui::GetContentRegionAvail().x - deleteSize - gap);
-
-            if (ImGui::Selectable(layer.name.c_str(), m_selectedLayer == i, 0,
-                                  ImVec2(nameWidth, 0.0f))) {
+            // 行の背景と選択。この上へ部品を重ねるので AllowOverlap を付ける。
+            if (ImGui::Selectable("##row", m_selectedLayer == i,
+                                  ImGuiSelectableFlags_AllowOverlap,
+                                  ImVec2(0.0f, rowHeight))) {
                 m_selectedLayer = i;
             }
 
@@ -1435,8 +1446,73 @@ void Application::DrawLayerList() {
                 ImGui::EndDragDropTarget();
             }
 
+            const ImVec2 rowMin = ImGui::GetItemRectMin();
+            const ImVec2 rowMax = ImGui::GetItemRectMax();
+            // 部品を重ねるあいだカーソルを動かすので、次の行の位置を控えておく。
+            const ImVec2 nextRow = ImGui::GetCursorScreenPos();
+            const float centerY = (rowMin.y + rowMax.y) * 0.5f;
+            float x = rowMin.x + style.FramePadding.x;
+
+            // --- 目のアイコン --------------------------------------------
+            ImGui::SetCursorScreenPos(ImVec2(x, centerY - eyeSize * 0.5f));
+            if (ui::EyeToggle("##visible", &layer.enabled, eyeSize)) {
+                MarkDocumentChanged();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(layer.enabled ? "このレイヤーを隠す" : "このレイヤーを表示する");
+            }
+            x += eyeSize + gap;
+
+            // --- マテリアルのサムネイル ------------------------------------
+            const compositor::MaterialAsset* material = m_materialLibrary.Find(layer.material);
+            ImGui::SetCursorScreenPos(ImVec2(x, centerY - thumbnailSize * 0.5f));
+            if (material != nullptr && material->thumbnail.IsValid()) {
+                ui::ThumbnailImage(static_cast<ImTextureID>(material->thumbnail.srv.gpu.ptr),
+                                   thumbnailSize);
+            } else {
+                // マテリアルを割り当てていないレイヤーは定数値で塗られる。
+                // 何も出さずに空けるより、その色を出すほうが手がかりになる。
+                ui::ColorSwatch(
+                    ImVec4(layer.baseColor.x, layer.baseColor.y, layer.baseColor.z, 1.0f),
+                    thumbnailSize);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("マテリアル: %s",
+                                  (material != nullptr) ? material->name.c_str() : "なし");
+            }
+            x += thumbnailSize + gap;
+
+            // --- マスクのサムネイル ----------------------------------------
+            // 合成のついでに焼いたもの。まだ評価していなければ ptr が 0 になり、
+            // ThumbnailImage が枠だけを描く。
+            const D3D12_GPU_DESCRIPTOR_HANDLE maskHandle =
+                m_renderer.Evaluator().MaskThumbnailHandle(static_cast<size_t>(i));
+            ImGui::SetCursorScreenPos(ImVec2(x, centerY - thumbnailSize * 0.5f));
+            ui::ThumbnailImage(static_cast<ImTextureID>(maskHandle.ptr), thumbnailSize);
+            if (ImGui::IsItemHovered()) {
+                const bool isBase = (i == 0);
+                ImGui::SetTooltip("マスク: %s%s",
+                                  kMaskSourceLabels[static_cast<int>(layer.mask.source)],
+                                  isBase ? "（下地なので効かない）" : "");
+            }
+            x += thumbnailSize + gap;
+
+            // --- 名前 ------------------------------------------------------
+            // 削除アイコンの手前で切る。長い名前がボタンへ潜り込まないようにする。
+            const float nameRight = rowMax.x - deleteSize - gap;
+            ImGui::SetCursorScreenPos(ImVec2(x, centerY - ImGui::GetTextLineHeight() * 0.5f));
+            ImGui::PushClipRect(ImVec2(x, rowMin.y), ImVec2(nameRight, rowMax.y), true);
+            if (layer.enabled) {
+                ImGui::TextUnformatted(layer.name.c_str());
+            } else {
+                // 隠しているレイヤーは名前も落とす。目のアイコンだけだと見落とす。
+                ImGui::TextDisabled("%s", layer.name.c_str());
+            }
+            ImGui::PopClipRect();
+
+            // --- 削除 ------------------------------------------------------
             // 最後の 1 枚は消せない。下地が無くなると合成の起点が消えるため。
-            ImGui::SameLine(0.0f, gap);
+            ImGui::SetCursorScreenPos(ImVec2(rowMax.x - deleteSize, centerY - deleteSize * 0.5f));
             ImGui::BeginDisabled(layerCount <= 1);
             // 記号は `×`（U+00D7）。`✕`(U+2715) のような装飾的な字は
             // Yu Gothic に無く、`?` に化ける。
@@ -1449,8 +1525,14 @@ void Application::DrawLayerList() {
                                                    : "最後の 1 枚は削除できない");
             }
 
+            ImGui::SetCursorScreenPos(nextRow);
             ImGui::PopID();
         }
+
+        // 行は SetCursorScreenPos で組み立てているので、最後に実体のあるアイテムを
+        // 1 つ置いてカーソル位置を確定させる。これが無いと ImGui が
+        // 「アイテムを出さずに境界だけ広げた」と判断して警告を出す。
+        ImGui::Dummy(ImVec2(0.0f, 0.0f));
     }
     ImGui::EndChild();
 
