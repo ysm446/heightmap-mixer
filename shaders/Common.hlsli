@@ -1,5 +1,5 @@
-#ifndef HM_COMMON_HLSLI
-#define HM_COMMON_HLSLI
+#ifndef MM_COMMON_HLSLI
+#define MM_COMMON_HLSLI
 
 // 全パス共通のルートシグネチャに対応する宣言。
 // b0 は各シェーダが自前のルート定数構造体を宣言するため、ここでは定義しない。
@@ -119,21 +119,21 @@ float WorleyFbm(float2 p, int octaves)
 }
 
 // ノイズの種類。C++ 側の NoiseType と一致させること。
-#define HM_NOISE_FBM    0
-#define HM_NOISE_RIDGED 1
-#define HM_NOISE_WORLEY 2
+#define MM_NOISE_FBM    0
+#define MM_NOISE_RIDGED 1
+#define MM_NOISE_WORLEY 2
 
 float SampleNoise(uint type, float2 p, int octaves)
 {
-    if (type == HM_NOISE_RIDGED)
+    if (type == MM_NOISE_RIDGED)
     {
         return RidgedFbm(p, octaves);
     }
-    if (type == HM_NOISE_WORLEY)
+    if (type == MM_NOISE_WORLEY)
     {
         return WorleyFbm(p, octaves);
     }
     return Fbm(p, octaves);
 }
 
-#endif  // HM_COMMON_HLSLI
+#endif  // MM_COMMON_HLSLI

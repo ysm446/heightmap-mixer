@@ -2,10 +2,10 @@
 
 #include "core/Log.h"
 
-namespace hm {
+namespace mm {
 namespace {
 
-constexpr const wchar_t* kWindowClassName = L"HeightmapMixerWindowClass";
+constexpr const wchar_t* kWindowClassName = L"MaterialMixerWindowClass";
 
 }  // namespace
 
@@ -24,7 +24,7 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
     wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = kWindowClassName;
     if (::RegisterClassExW(&wc) == 0 && ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-        HM_LOG_ERROR("RegisterClassExW に失敗しました (0x%08lX)", ::GetLastError());
+        MM_LOG_ERROR("RegisterClassExW に失敗しました (0x%08lX)", ::GetLastError());
         return false;
     }
 
@@ -39,7 +39,7 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
                                rect.right - rect.left, rect.bottom - rect.top,
                                nullptr, nullptr, instance, this);
     if (m_hwnd == nullptr) {
-        HM_LOG_ERROR("CreateWindowExW に失敗しました (0x%08lX)", ::GetLastError());
+        MM_LOG_ERROR("CreateWindowExW に失敗しました (0x%08lX)", ::GetLastError());
         return false;
     }
 
@@ -61,7 +61,7 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
             const LONG fittedHeight = (windowHeight < workHeight) ? windowHeight : workHeight;
             ::SetWindowPos(m_hwnd, nullptr, monitorInfo.rcWork.left, monitorInfo.rcWork.top,
                            fittedWidth, fittedHeight, SWP_NOZORDER | SWP_NOACTIVATE);
-            HM_LOG_WARN("ウィンドウがモニタの作業領域に収まらないため縮めました "
+            MM_LOG_WARN("ウィンドウがモニタの作業領域に収まらないため縮めました "
                         "(要求 %ux%u のクライアント領域は確保できません)",
                         width, height);
         }
@@ -151,4 +151,4 @@ LRESULT Window::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     return ::DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
-}  // namespace hm
+}  // namespace mm

@@ -64,7 +64,7 @@ RWTexture2D<float4> output = ResourceDescriptorHeap[g_layer.outputIndices.x];
 
 - 実行時に DXC でコンパイルする。シェーダモデルは 6.6。
 - `shaders/` をソースツリーのまま参照する。
-  `HM_SHADER_DIR`（CMake が定義、環境変数で上書き可）を見る。
+  `MM_SHADER_DIR`（CMake が定義、環境変数で上書き可）を見る。
   実行ファイル横へコピーしないことで、起動したままの編集・再コンパイルが成立する。
 - 更新は `shaders/` 配下のタイムスタンプ走査で検出し、PSO キャッシュを作り直す。
   破棄の前に必ず `WaitForGpu` する。

@@ -9,7 +9,7 @@
 
 #include <cstdint>
 
-namespace hm::rhi {
+namespace mm::rhi {
 
 template <typename T>
 using ComPtr = Microsoft::WRL::ComPtr<T>;
@@ -22,6 +22,6 @@ inline constexpr DXGI_FORMAT kBackBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 // HRESULT を検査し、失敗ならログを出して false を返す。例外は投げない。
 bool CheckHr(HRESULT hr, const char* expr, const char* file, int line);
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi
 
-#define HM_CHECK_HR(expr) ::hm::rhi::CheckHr((expr), #expr, __FILE__, __LINE__)
+#define MM_CHECK_HR(expr) ::mm::rhi::CheckHr((expr), #expr, __FILE__, __LINE__)

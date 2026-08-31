@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-namespace hm::rhi {
+namespace mm::rhi {
 
 void DeletionQueue::Push(ComPtr<IUnknown> object, uint64_t fenceValue) {
     if (!object) {
@@ -26,4 +26,4 @@ void DeletionQueue::Flush() {
     m_entries.clear();
 }
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

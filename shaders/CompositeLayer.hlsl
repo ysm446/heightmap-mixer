@@ -7,18 +7,18 @@
 
 #include "CompositeCommon.hlsli"
 
-#define HM_SOURCE_CONSTANT 0
-#define HM_SOURCE_NOISE    1
-#define HM_SOURCE_TEXTURE  2
+#define MM_SOURCE_CONSTANT 0
+#define MM_SOURCE_NOISE    1
+#define MM_SOURCE_TEXTURE  2
 // 3..6 は合成の中間結果に由来するマスク。CompositeMask パスが事前に計算する。
-#define HM_SOURCE_DERIVED  3
+#define MM_SOURCE_DERIVED  3
 // ブラシで描いたマスク。PaintMaskStore が持つテクスチャをそのまま読む。
-#define HM_SOURCE_PAINT    7
+#define MM_SOURCE_PAINT    7
 
 static const uint kInvalidTextureIndex = 0xFFFFFFFFu;
 
-#define HM_FLAG_MASK_INVERT 0x1u
-#define HM_FLAG_BASE_LAYER  0x2u
+#define MM_FLAG_MASK_INVERT 0x1u
+#define MM_FLAG_BASE_LAYER  0x2u
 
 struct LayerConstants
 {
@@ -42,7 +42,7 @@ struct LayerConstants
     float4 maskCurve;   // contrast, derivedScale, 未使用, 未使用
     uint4 noiseTypes;   // height, mask, 未使用, 未使用
     uint4 paintParams;  // ペイントマスクの SRV, 未使用 x3
-    // スカラーのマップのチャンネル指定。4bit ずつ HM_CHANNEL_SLOT_* の順で詰めてある。
+    // スカラーのマップのチャンネル指定。4bit ずつ MM_CHANNEL_SLOT_* の順で詰めてある。
     uint4 mapChannels;  // x にすべて入る。yzw は未使用
 };
 
@@ -79,16 +79,16 @@ float SampleLayerHeight(float2 uv, float uvPerOutputTexel)
     float height = g_layer.surfaceParams.w;
 
     const uint source = uint(g_layer.blendParams.w);
-    if (source == HM_SOURCE_NOISE)
+    if (source == MM_SOURCE_NOISE)
     {
         const float2 p = uv * g_layer.heightNoise.x + g_layer.heightNoise.w;
         height += SampleNoise(g_layer.noiseTypes.x, p, int(g_layer.heightNoise.z)) *
                   g_layer.heightNoise.y;
     }
-    else if (source == HM_SOURCE_TEXTURE && g_layer.textureIndices1.y != kInvalidTextureIndex)
+    else if (source == MM_SOURCE_TEXTURE && g_layer.textureIndices1.y != kInvalidTextureIndex)
     {
         const float sampled = SampleLayerScalar(g_layer.textureIndices1.y,
-                                                HM_CHANNEL_SLOT_HEIGHT, uv, uvPerOutputTexel);
+                                                MM_CHANNEL_SLOT_HEIGHT, uv, uvPerOutputTexel);
         height += sampled * g_layer.heightNoise.y;
     }
 
@@ -99,7 +99,7 @@ float SampleMaskSourceValue(float2 uv, float2 paintUv, uint2 texel, float uvPerO
 {
     const uint source = uint(g_layer.maskParams.w);
 
-    if (source == HM_SOURCE_PAINT)
+    if (source == MM_SOURCE_PAINT)
     {
         if (g_layer.paintParams.x == kInvalidTextureIndex)
         {
@@ -112,7 +112,7 @@ float SampleMaskSourceValue(float2 uv, float2 paintUv, uint2 texel, float uvPerO
                paint.SampleLevel(g_samplerLinearWrap, paintUv, 0.0f);
     }
 
-    if (source == HM_SOURCE_NOISE)
+    if (source == MM_SOURCE_NOISE)
     {
         const float2 p = uv * g_layer.maskNoise.x + g_layer.maskNoise.w;
         const float noise = SampleNoise(g_layer.noiseTypes.y, p, int(g_layer.maskNoise.z));
@@ -120,18 +120,18 @@ float SampleMaskSourceValue(float2 uv, float2 paintUv, uint2 texel, float uvPerO
         return g_layer.maskParams.x + (noise - 0.5f) * g_layer.maskNoise.y;
     }
 
-    if (source == HM_SOURCE_TEXTURE)
+    if (source == MM_SOURCE_TEXTURE)
     {
         if (g_layer.textureIndices1.z == kInvalidTextureIndex)
         {
             return g_layer.maskParams.x;
         }
         return g_layer.maskParams.x * SampleLayerScalar(g_layer.textureIndices1.z,
-                                                       HM_CHANNEL_SLOT_MASK, uv,
+                                                       MM_CHANNEL_SLOT_MASK, uv,
                                                        uvPerOutputTexel);
     }
 
-    if (source >= HM_SOURCE_DERIVED)
+    if (source >= MM_SOURCE_DERIVED)
     {
         if (g_layer.textureIndices1.w == kInvalidTextureIndex)
         {
@@ -149,7 +149,7 @@ float SampleLayerMask(float2 uv, float2 paintUv, uint2 texel, float uvPerOutputT
     float mask = saturate(SampleMaskSourceValue(uv, paintUv, texel, uvPerOutputTexel));
     mask = ApplyMaskCurve(mask, g_layer.maskCurve.x);
 
-    const bool invert = (g_layer.flags & HM_FLAG_MASK_INVERT) != 0u;
+    const bool invert = (g_layer.flags & MM_FLAG_MASK_INVERT) != 0u;
     return ApplyMaskLevels(mask, g_layer.maskParams.y, g_layer.maskParams.z, invert);
 }
 
@@ -228,23 +228,23 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (g_layer.textureIndices0.z != kInvalidTextureIndex)
     {
         layerRoughness = SampleLayerScalar(g_layer.textureIndices0.z,
-                                           HM_CHANNEL_SLOT_ROUGHNESS, uv, uvPerOutputTexel);
+                                           MM_CHANNEL_SLOT_ROUGHNESS, uv, uvPerOutputTexel);
     }
     if (g_layer.textureIndices0.w != kInvalidTextureIndex)
     {
-        layerMetallic = SampleLayerScalar(g_layer.textureIndices0.w, HM_CHANNEL_SLOT_METALLIC,
+        layerMetallic = SampleLayerScalar(g_layer.textureIndices0.w, MM_CHANNEL_SLOT_METALLIC,
                                           uv, uvPerOutputTexel);
     }
     if (g_layer.textureIndices1.x != kInvalidTextureIndex)
     {
-        layerAo = SampleLayerScalar(g_layer.textureIndices1.x, HM_CHANNEL_SLOT_AO, uv,
+        layerAo = SampleLayerScalar(g_layer.textureIndices1.x, MM_CHANNEL_SLOT_AO, uv,
                                     uvPerOutputTexel);
     }
 
     const float layerHeight = SampleLayerHeight(uv, uvPerOutputTexel);
     const float3 layerNormal = ComputeLayerNormal(uv, noiseTexelSize, uvPerOutputTexel);
 
-    const bool isBaseLayer = (g_layer.flags & HM_FLAG_BASE_LAYER) != 0u;
+    const bool isBaseLayer = (g_layer.flags & MM_FLAG_BASE_LAYER) != 0u;
 
     float weight = 1.0f;
     if (!isBaseLayer)

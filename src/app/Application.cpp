@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-namespace hm {
+namespace mm {
 namespace {
 
 // クライアント領域（描画される中身）のサイズ。ウィンドウ枠は含まない。
@@ -26,25 +26,25 @@ constexpr uint32_t kInitialHeight = 1080;
 // ホットリロードの走査間隔（フレーム数）。毎フレーム走査するほどの頻度は要らない。
 constexpr uint32_t kHotReloadIntervalFrames = 30;
 
-#if defined(HM_DEBUG)
+#if defined(MM_DEBUG)
 constexpr bool kEnableDebugLayer = true;
 #else
 constexpr bool kEnableDebugLayer = false;
 #endif
 
-// シェーダの探索先。環境変数 HM_SHADER_DIR で差し替えられるようにしておく。
+// シェーダの探索先。環境変数 MM_SHADER_DIR で差し替えられるようにしておく。
 std::filesystem::path ResolveShaderRoot() {
-    const DWORD needed = ::GetEnvironmentVariableW(L"HM_SHADER_DIR", nullptr, 0);
+    const DWORD needed = ::GetEnvironmentVariableW(L"MM_SHADER_DIR", nullptr, 0);
     if (needed > 0) {
         std::wstring value;
         value.resize(needed);
-        const DWORD written = ::GetEnvironmentVariableW(L"HM_SHADER_DIR", value.data(), needed);
+        const DWORD written = ::GetEnvironmentVariableW(L"MM_SHADER_DIR", value.data(), needed);
         if (written > 0) {
             value.resize(written);
             return std::filesystem::path(value);
         }
     }
-    return std::filesystem::path(HM_SHADER_DIR);
+    return std::filesystem::path(MM_SHADER_DIR);
 }
 
 float RadiansToDegrees(float radians) {
@@ -78,7 +78,7 @@ const char* const kResolutionLabels[] = {"512", "1024", "2048"};
 constexpr uint32_t kResolutionValues[] = {512, 1024, 2048};
 
 // レイヤー一覧のドラッグ＆ドロップで使うペイロードの種別。
-constexpr const char* kLayerDragDropType = "HM_LAYER";
+constexpr const char* kLayerDragDropType = "MM_LAYER";
 
 // ビューポートの背景色の既定値。Application のメンバ初期化と揃えること。
 constexpr float kDefaultClearColor[3] = {0.09f, 0.09f, 0.11f};
@@ -303,7 +303,7 @@ bool Application::Initialize(const StartupOptions& options) {
 
     // ファイル選択ダイアログ（IFileDialog）が COM を使う。
     if (FAILED(::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE))) {
-        HM_LOG_WARN("COM を初期化できませんでした。ファイル選択ダイアログは使えません");
+        MM_LOG_WARN("COM を初期化できませんでした。ファイル選択ダイアログは使えません");
     }
 
     // ウィンドウ生成より前に済ませる必要がある。
@@ -312,7 +312,7 @@ bool Application::Initialize(const StartupOptions& options) {
     // クライアント領域を実ピクセルで 1920x1080 にする。DPI では拡大しない。
     // UI の大きさは ImGui 側の DPI スケールで合わせる。
     // モニタからはみ出す場合は Window::Create 側で作業領域に収める。
-    if (!m_window.Create(L"heightmap-mixer", kInitialWidth, kInitialHeight)) {
+    if (!m_window.Create(L"Material Mixer", kInitialWidth, kInitialHeight)) {
         return false;
     }
 
@@ -351,7 +351,7 @@ bool Application::Initialize(const StartupOptions& options) {
         m_renderer.RequestHdrLoad(options.hdriPath);
     }
 
-    HM_LOG_INFO("heightmap-mixer %s を起動しました", HM_APP_VERSION);
+    MM_LOG_INFO("material-mixer %s を起動しました", MM_APP_VERSION);
     return true;
 }
 
@@ -380,7 +380,7 @@ void Application::PollShaderHotReload() {
         return;
     }
 
-    HM_LOG_INFO("シェーダの更新を検出しました。PSO を作り直します");
+    MM_LOG_INFO("シェーダの更新を検出しました。PSO を作り直します");
     // PSO は GPU が参照中の可能性があるため、破棄前に必ず待つ。
     m_device.WaitForGpu();
     m_pipelineCache.InvalidateAll();
@@ -502,7 +502,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("HeightmapMixerDockSpace_v2");
+    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v2");
 
     // ini にドックの配置が無ければ既定レイアウトを組む。
     // DockSpaceOverViewport がノードを作る前に判定すること。
@@ -1381,7 +1381,7 @@ void Application::DrawInfoPanel() {
         const ImGuiIO& io = ImGui::GetIO();
 
         if (ui::BeginPropertyTable("infoRows")) {
-            ui::PropertyValue("バージョン", "%s", HM_APP_VERSION);
+            ui::PropertyValue("バージョン", "%s", MM_APP_VERSION);
             ui::PropertyValue("フレーム", "%.1f FPS (%.3f ms)", io.Framerate,
                               1000.0f / io.Framerate);
             ui::PropertyValue("バックバッファ", "%u x %u", m_device.Width(), m_device.Height());
@@ -1414,4 +1414,4 @@ void Application::DrawInfoPanel() {
     ImGui::End();
 }
 
-}  // namespace hm
+}  // namespace mm

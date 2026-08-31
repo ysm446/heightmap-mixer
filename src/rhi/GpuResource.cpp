@@ -2,7 +2,7 @@
 
 #include "core/Log.h"
 
-namespace hm::rhi {
+namespace mm::rhi {
 
 ResourceAllocator::~ResourceAllocator() {
     Destroy();
@@ -17,7 +17,7 @@ bool ResourceAllocator::Create(ID3D12Device* device, IDXGIAdapter* adapter,
     desc.Flags = D3D12MA::ALLOCATOR_FLAG_DEFAULT_POOLS_NOT_ZEROED;
 
     D3D12MA::Allocator* raw = nullptr;
-    if (!HM_CHECK_HR(D3D12MA::CreateAllocator(&desc, &raw))) {
+    if (!MM_CHECK_HR(D3D12MA::CreateAllocator(&desc, &raw))) {
         return false;
     }
     m_allocator.Attach(raw);
@@ -84,7 +84,7 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
 
     D3D12MA::Allocation* allocation = nullptr;
     ID3D12Resource* resource = nullptr;
-    if (!HM_CHECK_HR(m_allocator->CreateResource(&allocDesc, &resourceDesc, desc.initialState,
+    if (!MM_CHECK_HR(m_allocator->CreateResource(&allocDesc, &resourceDesc, desc.initialState,
                                                  clearValuePtr, &allocation,
                                                  IID_PPV_ARGS(&resource)))) {
         return false;
@@ -232,7 +232,7 @@ bool ResourceAllocator::CreateDefaultBuffer(uint64_t sizeInBytes,
 
     D3D12MA::Allocation* allocation = nullptr;
     ID3D12Resource* resource = nullptr;
-    if (!HM_CHECK_HR(m_allocator->CreateResource(&allocDesc, &resourceDesc, initialState, nullptr,
+    if (!MM_CHECK_HR(m_allocator->CreateResource(&allocDesc, &resourceDesc, initialState, nullptr,
                                                  &allocation, IID_PPV_ARGS(&resource)))) {
         return false;
     }
@@ -270,7 +270,7 @@ bool ResourceAllocator::CreateUploadBuffer(uint64_t sizeInBytes, const wchar_t* 
 
     D3D12MA::Allocation* allocation = nullptr;
     ID3D12Resource* resource = nullptr;
-    if (!HM_CHECK_HR(m_allocator->CreateResource(&allocDesc, &resourceDesc,
+    if (!MM_CHECK_HR(m_allocator->CreateResource(&allocDesc, &resourceDesc,
                                                  D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                                                  &allocation, IID_PPV_ARGS(&resource)))) {
         return false;
@@ -309,7 +309,7 @@ bool ResourceAllocator::CreateReadbackBuffer(uint64_t sizeInBytes, const wchar_t
 
     D3D12MA::Allocation* allocation = nullptr;
     ID3D12Resource* resource = nullptr;
-    if (!HM_CHECK_HR(m_allocator->CreateResource(&allocDesc, &resourceDesc,
+    if (!MM_CHECK_HR(m_allocator->CreateResource(&allocDesc, &resourceDesc,
                                                  D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
                                                  &allocation, IID_PPV_ARGS(&resource)))) {
         return false;
@@ -361,4 +361,4 @@ void ResourceAllocator::ReleaseDescriptors(GpuBuffer& buffer) {
     buffer.uav = DescriptorHandle{};
 }
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

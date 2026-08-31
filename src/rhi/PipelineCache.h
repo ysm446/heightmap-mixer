@@ -5,7 +5,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace hm::rhi {
+namespace mm::rhi {
 
 class ShaderCompiler;
 
@@ -79,4 +79,4 @@ private:
     std::unordered_map<std::wstring, ComPtr<ID3D12PipelineState>> m_graphicsPipelines;
 };
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

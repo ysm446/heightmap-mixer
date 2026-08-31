@@ -4,7 +4,7 @@
 
 #include <vector>
 
-namespace hm::rhi {
+namespace mm::rhi {
 
 // GPU がまだ参照している可能性のあるオブジェクトを、フレーム同期後に解放するためのキュー。
 // リソースを直接 Reset せず、必ずここを経由させる。
@@ -30,4 +30,4 @@ private:
     std::vector<Entry> m_entries;
 };
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

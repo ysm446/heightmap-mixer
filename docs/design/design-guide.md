@@ -72,7 +72,7 @@ ImGui は docking ブランチを使う。全体は 1 つのドックスペー�
 | 中央 | 残り | ビューポート |
 
 - **分割の前に `DockBuilderSetNodeSize()` を呼ぶ。** 呼ばないと分割比が当てにならない。
-- **パネルを増減したらドックスペース ID の版を上げる**（`HeightmapMixerDockSpace_v2`）。
+- **パネルを増減したらドックスペース ID の版を上げる**（`MaterialMixerDockSpace_v2`）。
   上げないと、新しいパネルが ini に無いまま浮いて出てくる。
 - 組むのは **ini にドックの配置が無いときだけ**。判定は
   `DockBuilderGetNode()` が null かどうかで、**`DockSpaceOverViewport()` がノードを作る前**に行う。
@@ -219,7 +219,7 @@ if (ui::BeginPropertyTable("layerBasicRows")) {
 
 - **上が最前面**（スタックの index が大きいほうが上）。一覧は逆順に描く。
 - 行は「有効チェックボックス + 名前の `Selectable`」。
-- **並べ替えはドラッグ＆ドロップ。** ペイロードは `HM_LAYER`（スタックの index）。
+- **並べ替えはドラッグ＆ドロップ。** ペイロードは `MM_LAYER`（スタックの index）。
   ドロップ結果はループの外で `MaterialStack::MoveTo()` に渡す。
   走査中に並びを変えない。
 - `MoveTo` は入れ替えではなく「抜いて差し込む」。間のレイヤーの順序が保たれる。
@@ -271,7 +271,7 @@ COM を使うので `CoInitializeEx` 済みであること（`Application::Initi
 **画面キャプチャに頼らない。** 他ウィンドウを掴んだり、DPI の違いで縮んだ絵になる。
 
 ```
-heightmap_mixer.exe --screenshot-ui <path> --screenshot-frame 20
+material_mixer.exe --screenshot-ui <path> --screenshot-frame 20
 ```
 
 `--screenshot-ui` はバックバッファ（UI 込み）を PNG に書き出して終了する。

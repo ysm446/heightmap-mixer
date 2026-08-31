@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <vector>
 
-namespace hm {
+namespace mm {
 
 // ファイル選択ダイアログの絞り込み。表示名と `*.png;*.jpg` 形式のパターンの対。
 struct FileFilter {
@@ -28,10 +28,10 @@ std::vector<std::filesystem::path> ShowOpenFilesDialog(const wchar_t* title,
                                                        const std::vector<FileFilter>& filters);
 
 // 保存先を選ぶ。取り消したら空のパスを返す。
-// defaultExtension は先頭のドットを含めない（"hmproj" など）。
+// defaultExtension は先頭のドットを含めない（"mmproj" など）。
 std::filesystem::path ShowSaveFileDialog(const wchar_t* title,
                                          const std::vector<FileFilter>& filters,
                                          const wchar_t* defaultExtension,
                                          const std::filesystem::path& initialPath = {});
 
-}  // namespace hm
+}  // namespace mm

@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace hm {
+namespace mm {
 
 // Win32 ウィンドウ。メッセージフックを差し込めるようにして、UI 層への依存を持たない。
 class Window {
@@ -52,4 +52,4 @@ private:
     ResizeCallback m_resizeCallback;
 };
 
-}  // namespace hm
+}  // namespace mm

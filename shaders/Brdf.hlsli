@@ -1,5 +1,5 @@
-#ifndef HM_BRDF_HLSLI
-#define HM_BRDF_HLSLI
+#ifndef MM_BRDF_HLSLI
+#define MM_BRDF_HLSLI
 
 #include "Common.hlsli"
 
@@ -140,4 +140,4 @@ float GeometrySmithIbl(float nDotV, float nDotL, float roughness)
     return gv * gl;
 }
 
-#endif  // HM_BRDF_HLSLI
+#endif  // MM_BRDF_HLSLI

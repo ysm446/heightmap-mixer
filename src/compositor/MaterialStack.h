@@ -4,7 +4,7 @@
 
 #include <vector>
 
-namespace hm::compositor {
+namespace mm::compositor {
 
 // レイヤーを下から上へ積んだもの。index 0 が一番下（下地）。
 class MaterialStack {
@@ -32,4 +32,4 @@ private:
     uint64_t m_revision = 1;
 };
 
-}  // namespace hm::compositor
+}  // namespace mm::compositor

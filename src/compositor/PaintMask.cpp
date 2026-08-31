@@ -8,7 +8,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace hm::compositor {
+namespace mm::compositor {
 namespace {
 
 constexpr uint32_t kGroupSize = 8;
@@ -230,7 +230,7 @@ std::vector<uint8_t> PaintMaskStore::ReadPixels(rhi::Device& device, PaintMaskId
     if (executed) {
         void* mapped = nullptr;
         const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(totalBytes)};
-        if (HM_CHECK_HR(readback.resource->Map(0, &readRange, &mapped))) {
+        if (MM_CHECK_HR(readback.resource->Map(0, &readRange, &mapped))) {
             const auto* source = static_cast<const uint8_t*>(mapped) + footprint.Offset;
             // 行ピッチは 256 バイト境界へ揃えられているので、詰め直して返す。
             pixels.resize(static_cast<size_t>(m_resolution) * m_resolution);
@@ -261,7 +261,7 @@ PaintMaskId PaintMaskStore::AddFromPixels(rhi::Device& device, uint32_t resoluti
         m_requestedResolution = resolution;
     }
     if (resolution != m_resolution) {
-        HM_LOG_ERROR("ペイントマスクの解像度が揃っていません (%u != %u)", resolution,
+        MM_LOG_ERROR("ペイントマスクの解像度が揃っていません (%u != %u)", resolution,
                      m_resolution);
         return kNoPaintMask;
     }
@@ -287,7 +287,7 @@ PaintMaskId PaintMaskStore::AddFromPixels(rhi::Device& device, uint32_t resoluti
 
     void* mapped = nullptr;
     const D3D12_RANGE readRange = {0, 0};
-    if (!HM_CHECK_HR(staging.resource->Map(0, &readRange, &mapped))) {
+    if (!MM_CHECK_HR(staging.resource->Map(0, &readRange, &mapped))) {
         ReleaseTexture(device, entry.texture);
         return kNoPaintMask;
     }
@@ -370,7 +370,7 @@ void PaintMaskStore::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache&
         Resized item;
         item.entry = &entry;
         if (!CreateMaskTexture(device, resolution, item.texture)) {
-            HM_LOG_ERROR("ペイントマスクの作り直しに失敗しました");
+            MM_LOG_ERROR("ペイントマスクの作り直しに失敗しました");
             for (Resized& created : resized) {
                 ReleaseTexture(device, created.texture);
             }
@@ -677,4 +677,4 @@ bool PaintMaskStore::Process(rhi::Device& device, rhi::PipelineCache& pipelineCa
     return recorded;
 }
 
-}  // namespace hm::compositor
+}  // namespace mm::compositor

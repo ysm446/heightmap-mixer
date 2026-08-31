@@ -1,5 +1,5 @@
-#ifndef HM_COMPOSITE_COMMON_HLSLI
-#define HM_COMPOSITE_COMMON_HLSLI
+#ifndef MM_COMPOSITE_COMMON_HLSLI
+#define MM_COMPOSITE_COMMON_HLSLI
 
 #include "Common.hlsli"
 
@@ -27,11 +27,11 @@ uint UnpackChannel(uint packed, uint slotIndex)
     return (packed >> (slotIndex * 4u)) & 0xFu;
 }
 
-#define HM_CHANNEL_SLOT_ROUGHNESS 0u
-#define HM_CHANNEL_SLOT_METALLIC  1u
-#define HM_CHANNEL_SLOT_AO        2u
-#define HM_CHANNEL_SLOT_HEIGHT    3u
-#define HM_CHANNEL_SLOT_MASK      4u
+#define MM_CHANNEL_SLOT_ROUGHNESS 0u
+#define MM_CHANNEL_SLOT_METALLIC  1u
+#define MM_CHANNEL_SLOT_AO        2u
+#define MM_CHANNEL_SLOT_HEIGHT    3u
+#define MM_CHANNEL_SLOT_MASK      4u
 
 float3 DecodeTangentNormal(float2 xy)
 {
@@ -104,4 +104,4 @@ float ApplyMaskLevels(float value, float low, float high, bool invert)
     return invert ? (1.0f - result) : result;
 }
 
-#endif  // HM_COMPOSITE_COMMON_HLSLI
+#endif  // MM_COMPOSITE_COMMON_HLSLI

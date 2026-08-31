@@ -10,7 +10,7 @@
 
 using namespace DirectX;
 
-namespace hm::renderer {
+namespace mm::renderer {
 namespace {
 
 constexpr uint32_t kCubeSize = 256;
@@ -422,7 +422,7 @@ bool Environment::BuildFromHdrFile(rhi::Device& device, rhi::PipelineCache& pipe
 
     void* mapped = nullptr;
     const D3D12_RANGE readRange = {0, 0};
-    if (!HM_CHECK_HR(staging.resource->Map(0, &readRange, &mapped))) {
+    if (!MM_CHECK_HR(staging.resource->Map(0, &readRange, &mapped))) {
         return false;
     }
     auto* destination = static_cast<uint8_t*>(mapped) + footprint.Offset;
@@ -455,4 +455,4 @@ bool Environment::BuildFromHdrFile(rhi::Device& device, rhi::PipelineCache& pipe
     return BuildFromEquirect(device, pipelineCache);
 }
 
-}  // namespace hm::renderer
+}  // namespace mm::renderer

@@ -5,7 +5,7 @@
 
 using namespace DirectX;
 
-namespace hm::renderer {
+namespace mm::renderer {
 namespace {
 
 // 真上・真下でビュー行列が縮退しないよう、わずかに手前で止める。
@@ -101,4 +101,4 @@ XMMATRIX Camera::ProjectionMatrix() const {
     return XMMatrixPerspectiveFovRH(m_fovY, aspect, m_nearZ, m_farZ);
 }
 
-}  // namespace hm::renderer
+}  // namespace mm::renderer

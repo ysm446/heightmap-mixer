@@ -12,7 +12,7 @@
 // ここでは実装マクロを定義しない。
 #include <tinyexr.h>
 
-namespace hm {
+namespace mm {
 
 bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
     outImage = LdrImage{};
@@ -24,7 +24,7 @@ bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
     int channels = 0;
     stbi_uc* data = ::stbi_load(utf8Path.c_str(), &width, &height, &channels, 4);
     if (data == nullptr) {
-        HM_LOG_ERROR("画像を読み込めません: %s (%s)", utf8Path.c_str(), ::stbi_failure_reason());
+        MM_LOG_ERROR("画像を読み込めません: %s (%s)", utf8Path.c_str(), ::stbi_failure_reason());
         return false;
     }
 
@@ -33,7 +33,7 @@ bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
     outImage.pixels.assign(data, data + static_cast<size_t>(width) * height * 4);
     ::stbi_image_free(data);
 
-    HM_LOG_INFO("画像を読み込みました: %s (%d x %d, %d ch)", utf8Path.c_str(), width, height,
+    MM_LOG_INFO("画像を読み込みました: %s (%d x %d, %d ch)", utf8Path.c_str(), width, height,
                 channels);
     return true;
 }
@@ -48,7 +48,7 @@ bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {
     int channels = 0;
     float* data = ::stbi_loadf(utf8Path.c_str(), &width, &height, &channels, 4);
     if (data == nullptr) {
-        HM_LOG_ERROR("HDR 画像を読み込めません: %s (%s)", utf8Path.c_str(), ::stbi_failure_reason());
+        MM_LOG_ERROR("HDR 画像を読み込めません: %s (%s)", utf8Path.c_str(), ::stbi_failure_reason());
         return false;
     }
 
@@ -57,7 +57,7 @@ bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {
     outImage.pixels.assign(data, data + static_cast<size_t>(width) * height * 4);
     ::stbi_image_free(data);
 
-    HM_LOG_INFO("HDR 画像を読み込みました: %s (%d x %d, %d ch)", utf8Path.c_str(), width, height,
+    MM_LOG_INFO("HDR 画像を読み込みました: %s (%d x %d, %d ch)", utf8Path.c_str(), width, height,
                 channels);
     return true;
 }
@@ -74,7 +74,7 @@ bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage) {
     // LoadEXR は常に RGBA の 4 チャンネルで返す。
     const int result = ::LoadEXR(&data, &width, &height, utf8Path.c_str(), &error);
     if (result != TINYEXR_SUCCESS) {
-        HM_LOG_ERROR("EXR を読み込めません: %s (%s)", utf8Path.c_str(),
+        MM_LOG_ERROR("EXR を読み込めません: %s (%s)", utf8Path.c_str(),
                      (error != nullptr) ? error : "原因不明");
         if (error != nullptr) {
             ::FreeEXRErrorMessage(error);
@@ -87,7 +87,7 @@ bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage) {
     outImage.pixels.assign(data, data + static_cast<size_t>(width) * height * 4);
     ::free(data);
 
-    HM_LOG_INFO("EXR を読み込みました: %s (%d x %d)", utf8Path.c_str(), width, height);
+    MM_LOG_INFO("EXR を読み込みました: %s (%d x %d)", utf8Path.c_str(), width, height);
     return true;
 }
 
@@ -102,11 +102,11 @@ bool SaveRgba8Png(const std::filesystem::path& path, uint32_t width, uint32_t he
                                         static_cast<int>(height), 4, pixels,
                                         static_cast<int>(rowPitch));
     if (result == 0) {
-        HM_LOG_ERROR("PNG を書き出せません: %s", utf8Path.c_str());
+        MM_LOG_ERROR("PNG を書き出せません: %s", utf8Path.c_str());
         return false;
     }
 
-    HM_LOG_INFO("PNG を書き出しました: %s (%u x %u)", utf8Path.c_str(), width, height);
+    MM_LOG_INFO("PNG を書き出しました: %s (%u x %u)", utf8Path.c_str(), width, height);
     return true;
 }
 
@@ -121,12 +121,12 @@ bool SaveGray8Png(const std::filesystem::path& path, uint32_t width, uint32_t he
                                         static_cast<int>(height), 1, pixels,
                                         static_cast<int>(rowPitch));
     if (result == 0) {
-        HM_LOG_ERROR("PNG を書き出せません: %s", utf8Path.c_str());
+        MM_LOG_ERROR("PNG を書き出せません: %s", utf8Path.c_str());
         return false;
     }
 
-    HM_LOG_INFO("PNG を書き出しました: %s (%u x %u, 1 ch)", utf8Path.c_str(), width, height);
+    MM_LOG_INFO("PNG を書き出しました: %s (%u x %u, 1 ch)", utf8Path.c_str(), width, height);
     return true;
 }
 
-}  // namespace hm
+}  // namespace mm

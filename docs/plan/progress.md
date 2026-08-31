@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-08-31 18:04
+更新日時: 2026-08-31 18:52
 
 ## 現在の状況
 
@@ -180,9 +180,16 @@ UI はグレー基調に整理し、ルールを [design/design-guide.md](../des
     Megascans の `_ORD`（O=AO / R=Roughness / D=Displacement）を 1 枚のまま使える
   - `MaterialLibrary::AssignOrdTexture` と、マテリアルパネルの `ORD` 行
   - チャンネル指定は 4bit ずつ 1 つの uint へ詰めてシェーダへ渡す
-    （`HM_CHANNEL_SLOT_*` / `PackChannel`）
+    （`MM_CHANNEL_SLOT_*` / `PackChannel`）
   - `core/ImageIo` に `LoadExrImage`（tinyexr）を追加
   - `TextureLibrary` が EXR を `R16G16B16A16_FLOAT` のまま保持する
+
+- 2026-08-31 18:52 — **プロジェクト名を material-mixer へ変更**。
+  - 表に出る名前（実行ファイル、ウィンドウタイトル、vcpkg.json、ini、ドキュメント）と
+    内部の識別子（`namespace mm`、`MM_*` マクロ、HLSL の `MM_*`）をまとめて変更
+  - プロジェクトファイルの拡張子も `.mmproj` にした（M5b で使う）
+  - **リポジトリのフォルダ名は未変更**。`d:/GitHub/heightmap-mixer` のまま。
+    フォルダを変えたら `build/` を作り直すこと（`MM_SHADER_DIR` に絶対パスが焼かれている）
 
 ## 環境の実測値（2026-08-31 時点）
 
@@ -227,7 +234,7 @@ M5b（プロジェクトの保存と読み込み）。土台は M5a で入れて
   ImGui へ渡す日本語は `u8"..."` ではなく素の `"..."` を使う
   （C++20 では `u8""` が `const char8_t*` になり `const char*` へ渡せない）。
 
-- **シェーダの参照先**: 実行ファイル横へコピーせず、`HM_SHADER_DIR`
+- **シェーダの参照先**: 実行ファイル横へコピーせず、`MM_SHADER_DIR`
   （CMake が定義。環境変数で上書き可）でソースツリーの `shaders/` を直接読む。
   exe 単体を別マシンへ持っていっても動かない。配布形態は M5 で見直す。
 

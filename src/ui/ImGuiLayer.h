@@ -2,10 +2,10 @@
 
 #include "rhi/Common.h"
 
-namespace hm {
+namespace mm {
 
 // ImGui のレイアウト保存先。作業ディレクトリからの相対パス。
-inline constexpr const char* kImGuiIniFileName = "heightmap_mixer_imgui.ini";
+inline constexpr const char* kImGuiIniFileName = "material_mixer_imgui.ini";
 
 class Window;
 
@@ -46,4 +46,4 @@ private:
     bool m_initialized = false;
 };
 
-}  // namespace hm
+}  // namespace mm

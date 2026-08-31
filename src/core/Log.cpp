@@ -5,7 +5,7 @@
 #include <cstdarg>
 #include <cstdio>
 
-namespace hm {
+namespace mm {
 namespace {
 
 const char* LevelTag(LogLevel level) {
@@ -42,8 +42,8 @@ void FatalExit(const char* fmt, ...) {
     std::vsnprintf(body, sizeof(body), fmt, args);
     va_end(args);
     WriteLine("[fatal] ", body);
-    ::MessageBoxA(nullptr, body, "heightmap-mixer", MB_OK | MB_ICONERROR);
+    ::MessageBoxA(nullptr, body, "material-mixer", MB_OK | MB_ICONERROR);
     ::ExitProcess(1);
 }
 
-}  // namespace hm
+}  // namespace mm

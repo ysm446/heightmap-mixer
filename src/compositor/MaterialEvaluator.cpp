@@ -10,7 +10,7 @@
 
 using namespace DirectX;
 
-namespace hm::compositor {
+namespace mm::compositor {
 namespace {
 
 constexpr uint32_t kGroupSize = 8;
@@ -398,4 +398,4 @@ void MaterialEvaluator::EvaluateIfDirty(rhi::Device& device, rhi::PipelineCache&
     m_evaluatedRevision = stack.Revision();
 }
 
-}  // namespace hm::compositor
+}  // namespace mm::compositor

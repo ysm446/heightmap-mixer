@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-namespace hm::compositor {
+namespace mm::compositor {
 namespace {
 
 constexpr uint32_t kGroupSize = 8;
@@ -39,7 +39,7 @@ struct ThumbnailConstants {
 }  // namespace
 
 uint32_t PackMaterialChannels(const MaterialAsset& asset) {
-    // 並びは HM_CHANNEL_SLOT_* と一致させること。
+    // 並びは MM_CHANNEL_SLOT_* と一致させること。
     return PackChannel(asset.roughness.channel, 0) | PackChannel(asset.metallic.channel, 1) |
            PackChannel(asset.ambientOcclusion.channel, 2) | PackChannel(asset.height.channel, 3);
 }
@@ -164,7 +164,7 @@ void MaterialLibrary::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache
         } else {
             // 失敗を繰り返さないよう、要求は落とす。
             asset.thumbnailDirty = false;
-            HM_LOG_WARN("マテリアル「%s」のサムネイルを作れませんでした", asset.name.c_str());
+            MM_LOG_WARN("マテリアル「%s」のサムネイルを作れませんでした", asset.name.c_str());
         }
     }
 }
@@ -243,4 +243,4 @@ bool MaterialLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pi
     return true;
 }
 
-}  // namespace hm::compositor
+}  // namespace mm::compositor

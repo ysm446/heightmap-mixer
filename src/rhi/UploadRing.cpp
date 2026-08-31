@@ -2,7 +2,7 @@
 
 #include "core/Log.h"
 
-namespace hm::rhi {
+namespace mm::rhi {
 namespace {
 
 uint64_t AlignUp(uint64_t value, uint64_t alignment) {
@@ -22,12 +22,12 @@ bool UploadRing::Create(ResourceAllocator& allocator, uint64_t bytesPerFrame) {
     // 常時マップしたままにする。アップロードヒープなので Unmap は不要。
     void* mapped = nullptr;
     const D3D12_RANGE readRange = {0, 0};
-    if (!HM_CHECK_HR(m_buffer.resource->Map(0, &readRange, &mapped))) {
+    if (!MM_CHECK_HR(m_buffer.resource->Map(0, &readRange, &mapped))) {
         return false;
     }
     m_mapped = static_cast<uint8_t*>(mapped);
 
-    HM_LOG_INFO("アップロードリング: %llu MB (%llu MB x %u フレーム)",
+    MM_LOG_INFO("アップロードリング: %llu MB (%llu MB x %u フレーム)",
                 static_cast<unsigned long long>(total / (1024 * 1024)),
                 static_cast<unsigned long long>(m_bytesPerFrame / (1024 * 1024)), kFrameCount);
     return true;
@@ -56,7 +56,7 @@ UploadAllocation UploadRing::Allocate(uint64_t size, uint64_t alignment) {
     const uint64_t alignedOffset = AlignUp(m_offset, alignment);
     if (alignedOffset + size > m_bytesPerFrame) {
         if (!m_overflowReported) {
-            HM_LOG_ERROR("アップロードリングが不足しました (要求 %llu, 残り %llu)",
+            MM_LOG_ERROR("アップロードリングが不足しました (要求 %llu, 残り %llu)",
                          static_cast<unsigned long long>(size),
                          static_cast<unsigned long long>(m_bytesPerFrame - alignedOffset));
             m_overflowReported = true;
@@ -78,4 +78,4 @@ UploadAllocation UploadRing::Allocate(uint64_t size, uint64_t alignment) {
     return result;
 }
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

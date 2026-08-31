@@ -12,7 +12,7 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wparam,
                                                              LPARAM lparam);
 
-namespace hm {
+namespace mm {
 namespace {
 
 // UI の拡大率。クライアント領域を実ピクセルで固定しているため 1.0 で固定する。
@@ -66,7 +66,7 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
     // 固定したはずの作業面積がモニタ設定によって変わってしまう。
     // DPI 認識自体は有効なままなので、OS によるビットマップ拡大は起きない。
     const float monitorDpiScale = ImGui_ImplWin32_GetDpiScaleForHwnd(window.Handle());
-    HM_LOG_INFO("モニタの DPI スケール: %.2f（UI スケールは %.2f 固定）", monitorDpiScale,
+    MM_LOG_INFO("モニタの DPI スケール: %.2f（UI スケールは %.2f 固定）", monitorDpiScale,
                 kUiScale);
     m_dpiScale = kUiScale;
 
@@ -74,7 +74,7 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
     ui::ApplyTheme(m_dpiScale);
 
     if (!ImGui_ImplWin32_Init(window.Handle())) {
-        HM_LOG_ERROR("ImGui_ImplWin32_Init に失敗しました");
+        MM_LOG_ERROR("ImGui_ImplWin32_Init に失敗しました");
         return false;
     }
 
@@ -90,7 +90,7 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
     info.SrvDescriptorFreeFn = &SrvDescriptorFree;
 
     if (!ImGui_ImplDX12_Init(&info)) {
-        HM_LOG_ERROR("ImGui_ImplDX12_Init に失敗しました");
+        MM_LOG_ERROR("ImGui_ImplDX12_Init に失敗しました");
         return false;
     }
 
@@ -114,11 +114,11 @@ void ImGuiLayer::LoadFonts(float dpiScale) {
     ImGuiIO& io = ImGui::GetIO();
     for (const char* path : kCandidates) {
         if (io.Fonts->AddFontFromFileTTF(path, fontSize) != nullptr) {
-            HM_LOG_INFO("フォントを読み込みました: %s", path);
+            MM_LOG_INFO("フォントを読み込みました: %s", path);
             return;
         }
     }
-    HM_LOG_WARN("日本語フォントが見つかりませんでした。既定フォントを使用します");
+    MM_LOG_WARN("日本語フォントが見つかりませんでした。既定フォントを使用します");
     io.Fonts->AddFontDefault();
 }
 
@@ -152,4 +152,4 @@ bool ImGuiLayer::HandleMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
     return ImGui_ImplWin32_WndProcHandler(hwnd, msg, wparam, lparam) != 0;
 }
 
-}  // namespace hm
+}  // namespace mm

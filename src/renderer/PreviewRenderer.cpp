@@ -10,7 +10,7 @@
 
 using namespace DirectX;
 
-namespace hm::renderer {
+namespace mm::renderer {
 namespace {
 
 constexpr DXGI_FORMAT kSceneColorFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -156,7 +156,7 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
             m_hdriPath = path;
         } else {
             // 読み込みに失敗したら手続き的な空へ戻す。
-            HM_LOG_WARN("HDRI の読み込みに失敗したため、手続き的な空に戻します");
+            MM_LOG_WARN("HDRI の読み込みに失敗したため、手続き的な空に戻します");
             m_environment.BuildFromSky(device, pipelineCache, m_sky);
             m_hdriPath.clear();
         }
@@ -229,7 +229,7 @@ bool PreviewRenderer::SaveOutputToPng(rhi::Device& device, const std::filesystem
 
     void* mapped = nullptr;
     const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(totalBytes)};
-    if (!HM_CHECK_HR(readback.resource->Map(0, &readRange, &mapped))) {
+    if (!MM_CHECK_HR(readback.resource->Map(0, &readRange, &mapped))) {
         return false;
     }
 
@@ -513,4 +513,4 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     PIXEndEvent(commandList);
 }
 
-}  // namespace hm::renderer
+}  // namespace mm::renderer

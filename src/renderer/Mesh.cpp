@@ -7,7 +7,7 @@
 
 using namespace DirectX;
 
-namespace hm::renderer {
+namespace mm::renderer {
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
@@ -40,7 +40,7 @@ bool Mesh::Create(rhi::Device& device, const MeshData& data, const wchar_t* debu
 
     void* mapped = nullptr;
     const D3D12_RANGE readRange = {0, 0};
-    if (!HM_CHECK_HR(staging.resource->Map(0, &readRange, &mapped))) {
+    if (!MM_CHECK_HR(staging.resource->Map(0, &readRange, &mapped))) {
         return false;
     }
     auto* bytes = static_cast<uint8_t*>(mapped);
@@ -224,4 +224,4 @@ MeshData MakeCube(float size) {
     return data;
 }
 
-}  // namespace hm::renderer
+}  // namespace mm::renderer

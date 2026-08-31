@@ -6,7 +6,7 @@
 
 #include <vector>
 
-namespace hm::renderer {
+namespace mm::renderer {
 
 // PipelineCache の VertexLayout::MeshStandard と対応する頂点。
 struct MeshVertex {
@@ -47,4 +47,4 @@ MeshData MakeSphere(uint32_t segments, uint32_t rings, float radius);
 MeshData MakePlane(float size, uint32_t subdivisions);
 MeshData MakeCube(float size);
 
-}  // namespace hm::renderer
+}  // namespace mm::renderer

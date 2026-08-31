@@ -16,7 +16,7 @@
 #include <filesystem>
 #include <vector>
 
-namespace hm {
+namespace mm {
 
 // コマンドラインから渡せる起動オプション。
 struct StartupOptions {
@@ -102,4 +102,4 @@ private:
     uint32_t m_frameCounter = 0;
 };
 
-}  // namespace hm
+}  // namespace mm

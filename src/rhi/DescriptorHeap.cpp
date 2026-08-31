@@ -2,7 +2,7 @@
 
 #include "core/Log.h"
 
-namespace hm::rhi {
+namespace mm::rhi {
 
 bool DescriptorHeap::Create(ID3D12Device* device, D3D12_DESCRIPTOR_HEAP_TYPE type,
                             uint32_t capacity, bool shaderVisible) {
@@ -12,7 +12,7 @@ bool DescriptorHeap::Create(ID3D12Device* device, D3D12_DESCRIPTOR_HEAP_TYPE typ
     desc.Flags = shaderVisible ? D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
                                : D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 
-    if (!HM_CHECK_HR(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&m_heap)))) {
+    if (!MM_CHECK_HR(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&m_heap)))) {
         return false;
     }
 
@@ -43,7 +43,7 @@ void DescriptorHeap::Destroy() {
 
 DescriptorHandle DescriptorHeap::Allocate() {
     if (m_freeList.empty()) {
-        HM_LOG_ERROR("ディスクリプタヒープが枯渇しました (capacity=%u)", m_capacity);
+        MM_LOG_ERROR("ディスクリプタヒープが枯渇しました (capacity=%u)", m_capacity);
         return DescriptorHandle{};
     }
     const uint32_t index = m_freeList.back();
@@ -56,7 +56,7 @@ void DescriptorHeap::Free(const DescriptorHandle& handle) {
         return;
     }
     if (handle.index >= m_capacity) {
-        HM_LOG_ERROR("範囲外のディスクリプタを解放しようとしました (index=%u)", handle.index);
+        MM_LOG_ERROR("範囲外のディスクリプタを解放しようとしました (index=%u)", handle.index);
         return;
     }
     m_freeList.push_back(handle.index);
@@ -75,4 +75,4 @@ DescriptorHandle DescriptorHeap::At(uint32_t index) const {
     return handle;
 }
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

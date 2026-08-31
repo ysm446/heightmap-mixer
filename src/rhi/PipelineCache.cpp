@@ -3,7 +3,7 @@
 #include "core/Log.h"
 #include "rhi/ShaderCompiler.h"
 
-namespace hm::rhi {
+namespace mm::rhi {
 namespace {
 
 D3D12_STATIC_SAMPLER_DESC MakeStaticSampler(UINT shaderRegister, D3D12_FILTER filter,
@@ -124,13 +124,13 @@ bool PipelineCache::CreateGlobalRootSignature() {
     const HRESULT hr = D3D12SerializeVersionedRootSignature(&desc, &blob, &errorBlob);
     if (FAILED(hr)) {
         if (errorBlob) {
-            HM_LOG_ERROR("ルートシグネチャのシリアライズに失敗: %s",
+            MM_LOG_ERROR("ルートシグネチャのシリアライズに失敗: %s",
                          static_cast<const char*>(errorBlob->GetBufferPointer()));
         }
         return false;
     }
 
-    if (!HM_CHECK_HR(m_device->CreateRootSignature(0, blob->GetBufferPointer(),
+    if (!MM_CHECK_HR(m_device->CreateRootSignature(0, blob->GetBufferPointer(),
                                                    blob->GetBufferSize(),
                                                    IID_PPV_ARGS(&m_rootSignature)))) {
         return false;
@@ -164,7 +164,7 @@ ID3D12PipelineState* PipelineCache::GetCompute(const std::wstring& relativePath,
     desc.CS.BytecodeLength = bytecode->GetBufferSize();
 
     ComPtr<ID3D12PipelineState> pipeline;
-    if (!HM_CHECK_HR(m_device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pipeline)))) {
+    if (!MM_CHECK_HR(m_device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pipeline)))) {
         m_computePipelines.emplace(key, nullptr);
         return nullptr;
     }
@@ -238,7 +238,7 @@ ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc
     psoDesc.SampleDesc.Count = 1;
 
     ComPtr<ID3D12PipelineState> pipeline;
-    if (!HM_CHECK_HR(m_device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipeline)))) {
+    if (!MM_CHECK_HR(m_device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipeline)))) {
         m_graphicsPipelines.emplace(key, nullptr);
         return nullptr;
     }
@@ -254,4 +254,4 @@ void PipelineCache::InvalidateAll() {
     m_graphicsPipelines.clear();
 }
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

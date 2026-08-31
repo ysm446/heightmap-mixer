@@ -2,7 +2,7 @@
 
 #include <utility>
 
-namespace hm::compositor {
+namespace mm::compositor {
 
 MaterialStack::MaterialStack() {
     // 既定は「岩の隙間に砂が溜まる」構成。ハイトブレンドの効果が一目で分かる。
@@ -105,4 +105,4 @@ size_t MaterialStack::FirstEnabledIndex() const {
     return static_cast<size_t>(-1);
 }
 
-}  // namespace hm::compositor
+}  // namespace mm::compositor

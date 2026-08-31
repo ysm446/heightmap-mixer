@@ -8,7 +8,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace hm::rhi {
+namespace mm::rhi {
 
 // DXC を使った HLSL のランタイムコンパイラ。
 // シェーダはソースツリーの shaders/ を直接参照し、更新を検出して再コンパイルできる。
@@ -43,4 +43,4 @@ private:
     bool m_scanned = false;
 };
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

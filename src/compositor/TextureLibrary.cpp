@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace hm::compositor {
+namespace mm::compositor {
 namespace {
 
 constexpr uint32_t kGroupSize = 8;
@@ -203,7 +203,7 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
 
     void* mapped = nullptr;
     const D3D12_RANGE readRange = {0, 0};
-    if (!HM_CHECK_HR(staging.resource->Map(0, &readRange, &mapped))) {
+    if (!MM_CHECK_HR(staging.resource->Map(0, &readRange, &mapped))) {
         return kNoTexture;
     }
     auto* destination = static_cast<uint8_t*>(mapped) + footprint.Offset;
@@ -298,4 +298,4 @@ bool TextureLibrary::GenerateMips(rhi::Device& device, rhi::PipelineCache& pipel
     return executed;
 }
 
-}  // namespace hm::compositor
+}  // namespace mm::compositor

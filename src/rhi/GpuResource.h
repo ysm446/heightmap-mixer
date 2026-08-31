@@ -8,7 +8,7 @@
 
 #include <vector>
 
-namespace hm::rhi {
+namespace mm::rhi {
 
 // リソースの状態は当面サブリソース単位ではなく、リソース全体で 1 つだけ持つ。
 // ミップ単位で別状態にしたくなった時点で拡張する。
@@ -130,4 +130,4 @@ private:
     DescriptorHeap* m_dsvHeap = nullptr;
 };
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

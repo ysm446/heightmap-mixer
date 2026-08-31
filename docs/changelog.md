@@ -1,9 +1,20 @@
 # Changelog
 
 作成日時: 2026-08-31 06:18
-更新日時: 2026-08-31 18:04
+更新日時: 2026-08-31 18:52
 
 ## 未リリース
+
+### 2026-08-31 18:52 — プロジェクト名を material-mixer に変更
+
+- 名前を `heightmap-mixer` から **`material-mixer`** に変えた。
+  扱っているのは BaseColor / Normal / Surface / Height の 4 チャンネルを持つマテリアルで、
+  ハイトマップはその 1 チャンネルとハイトブレンドの駆動値にすぎない。
+  実行ファイルは `material_mixer.exe`、ウィンドウのタイトルは `Material Mixer`。
+- 内部の識別子もそろえた。`namespace hm` → `namespace mm`、`HM_*` → `MM_*`
+  （C++ のマクロ、HLSL の定数、インクルードガード）。
+- レイアウトの保存先が `material_mixer_imgui.ini` に変わるため、
+  パネル配置は一度既定に戻る。
 
 ### 2026-08-31 18:04 — チャンネルパックされたテクスチャと EXR に対応
 

@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <string>
 
-namespace hm::compositor {
+namespace mm::compositor {
 
 // 合成対象のチャンネル。出力テクスチャの構成と対応する。
 enum class Channel : uint32_t {
@@ -63,12 +63,12 @@ struct MapSlot {
 };
 
 // チャンネル指定をまとめてシェーダへ渡すための詰め方。4bit ずつ、最大 8 スロット。
-// 並びはシェーダの HM_CHANNEL_* と一致させること。
+// 並びはシェーダの MM_CHANNEL_* と一致させること。
 inline constexpr uint32_t PackChannel(TextureChannel channel, uint32_t slotIndex) {
     return static_cast<uint32_t>(channel) << (slotIndex * 4u);
 }
 
-// ノイズの種類。シェーダの HM_NOISE_* と一致させること。
+// ノイズの種類。シェーダの MM_NOISE_* と一致させること。
 enum class NoiseType : uint32_t {
     Fbm = 0,     // 一般的なフラクタルノイズ
     Ridged = 1,  // 尾根状。稜線や割れ目に向く
@@ -158,4 +158,4 @@ struct MaterialLayer {
     float uvScale = 1.0f;
 };
 
-}  // namespace hm::compositor
+}  // namespace mm::compositor

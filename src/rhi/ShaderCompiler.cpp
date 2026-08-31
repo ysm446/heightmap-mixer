@@ -4,7 +4,7 @@
 
 #include <vector>
 
-namespace hm::rhi {
+namespace mm::rhi {
 namespace {
 
 bool IsShaderFile(const std::filesystem::path& path) {
@@ -23,21 +23,21 @@ bool ShaderCompiler::Create(const std::filesystem::path& shaderRoot) {
 
     std::error_code ec;
     if (!std::filesystem::is_directory(m_root, ec)) {
-        HM_LOG_ERROR("シェーダディレクトリが見つかりません: %ls", m_root.c_str());
+        MM_LOG_ERROR("シェーダディレクトリが見つかりません: %ls", m_root.c_str());
         return false;
     }
 
-    if (!HM_CHECK_HR(DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&m_utils)))) {
+    if (!MM_CHECK_HR(DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&m_utils)))) {
         return false;
     }
-    if (!HM_CHECK_HR(DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&m_compiler)))) {
+    if (!MM_CHECK_HR(DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&m_compiler)))) {
         return false;
     }
-    if (!HM_CHECK_HR(m_utils->CreateDefaultIncludeHandler(&m_includeHandler))) {
+    if (!MM_CHECK_HR(m_utils->CreateDefaultIncludeHandler(&m_includeHandler))) {
         return false;
     }
 
-    HM_LOG_INFO("シェーダディレクトリ: %ls", m_root.c_str());
+    MM_LOG_INFO("シェーダディレクトリ: %ls", m_root.c_str());
     return true;
 }
 
@@ -61,8 +61,8 @@ ComPtr<IDxcBlob> ShaderCompiler::Compile(const std::wstring& relativePath,
     const std::wstring fullPathStr = fullPath.wstring();
 
     ComPtr<IDxcBlobEncoding> sourceBlob;
-    if (!HM_CHECK_HR(m_utils->LoadFile(fullPathStr.c_str(), nullptr, &sourceBlob))) {
-        HM_LOG_ERROR("シェーダを読み込めません: %ls", fullPathStr.c_str());
+    if (!MM_CHECK_HR(m_utils->LoadFile(fullPathStr.c_str(), nullptr, &sourceBlob))) {
+        MM_LOG_ERROR("シェーダを読み込めません: %ls", fullPathStr.c_str());
         return result;
     }
 
@@ -77,7 +77,7 @@ ComPtr<IDxcBlob> ShaderCompiler::Compile(const std::wstring& relativePath,
         L"-HV", L"2021",
         L"-enable-16bit-types",
     };
-#if defined(HM_DEBUG)
+#if defined(MM_DEBUG)
     extraArgs.push_back(L"-Zi");
     extraArgs.push_back(L"-Qembed_debug");
     extraArgs.push_back(L"-Od");
@@ -86,7 +86,7 @@ ComPtr<IDxcBlob> ShaderCompiler::Compile(const std::wstring& relativePath,
 #endif
 
     ComPtr<IDxcCompilerArgs> args;
-    if (!HM_CHECK_HR(m_utils->BuildArguments(relativePath.c_str(), entryPoint, targetProfile,
+    if (!MM_CHECK_HR(m_utils->BuildArguments(relativePath.c_str(), entryPoint, targetProfile,
                                              extraArgs.data(),
                                              static_cast<UINT32>(extraArgs.size()), nullptr, 0,
                                              &args))) {
@@ -94,7 +94,7 @@ ComPtr<IDxcBlob> ShaderCompiler::Compile(const std::wstring& relativePath,
     }
 
     ComPtr<IDxcResult> compileResult;
-    if (!HM_CHECK_HR(m_compiler->Compile(&source, args->GetArguments(), args->GetCount(),
+    if (!MM_CHECK_HR(m_compiler->Compile(&source, args->GetArguments(), args->GetCount(),
                                          m_includeHandler.Get(),
                                          IID_PPV_ARGS(&compileResult)))) {
         return result;
@@ -103,22 +103,22 @@ ComPtr<IDxcBlob> ShaderCompiler::Compile(const std::wstring& relativePath,
     ComPtr<IDxcBlobUtf8> errors;
     if (SUCCEEDED(compileResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&errors), nullptr)) &&
         errors && errors->GetStringLength() > 0) {
-        HM_LOG_WARN("%ls %ls:\n%s", relativePath.c_str(), entryPoint, errors->GetStringPointer());
+        MM_LOG_WARN("%ls %ls:\n%s", relativePath.c_str(), entryPoint, errors->GetStringPointer());
     }
 
     HRESULT status = S_OK;
     compileResult->GetStatus(&status);
     if (FAILED(status)) {
-        HM_LOG_ERROR("シェーダのコンパイルに失敗しました: %ls %ls", relativePath.c_str(),
+        MM_LOG_ERROR("シェーダのコンパイルに失敗しました: %ls %ls", relativePath.c_str(),
                      entryPoint);
         return result;
     }
 
-    if (!HM_CHECK_HR(compileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&result), nullptr))) {
+    if (!MM_CHECK_HR(compileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&result), nullptr))) {
         return ComPtr<IDxcBlob>();
     }
 
-    HM_LOG_INFO("シェーダをコンパイルしました: %ls %ls (%ls)", relativePath.c_str(), entryPoint,
+    MM_LOG_INFO("シェーダをコンパイルしました: %ls %ls (%ls)", relativePath.c_str(), entryPoint,
                 targetProfile);
     return result;
 }
@@ -168,4 +168,4 @@ bool ShaderCompiler::PollChanges() {
     return changed;
 }
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

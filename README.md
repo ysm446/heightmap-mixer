@@ -1,4 +1,4 @@
-# heightmap-mixer
+# material-mixer
 
 Quixel Mixer 相当のマテリアルオーサリングツール。
 ハイトマップと PBR テクスチャをレイヤー合成してマテリアルを作り、それを地形に適用する。
@@ -50,7 +50,7 @@ vcpkg のパスは `VCPKG_ROOT` が設定されていればそれを、なけれ
 ## ビルド
 
 ```powershell
-cd D:\GitHub\heightmap-mixer
+cd D:\GitHub\material-mixer
 cmake --preset x64
 cmake --build --preset x64-release
 ```
@@ -68,23 +68,23 @@ cmake --build --preset x64-release
 ## 実行
 
 ```powershell
-$exe = "D:\GitHub\heightmap-mixer\build\bin\Release\heightmap_mixer.exe"
+$exe = "D:\GitHub\material-mixer\build\bin\Release\material_mixer.exe"
 Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe)
 ```
 
 作業ディレクトリを exe の場所にすること。UI のレイアウトが
-`heightmap_mixer_imgui.ini` としてそこに保存される。
+`material_mixer_imgui.ini` としてそこに保存される。
 
 > **シェーダはソースツリーを直接参照する。**
 > `shaders/` の絶対パスが構成時に実行ファイルへ焼き込まれるため、
 > exe 単体を別マシンへ持っていっても動かない。
 > 起動したままシェーダを編集して即反映できる開発の都合を優先している。
-> 環境変数 `HM_SHADER_DIR` で参照先を上書きできる。
+> 環境変数 `MM_SHADER_DIR` で参照先を上書きできる。
 
 ### コマンドライン
 
 ```
-heightmap_mixer.exe [--hdri <path>] [--texture <path>]...
+material_mixer.exe [--hdri <path>] [--texture <path>]...
                     [--screenshot <path>] [--screenshot-ui <path>]
                     [--screenshot-frame <n>]
 ```

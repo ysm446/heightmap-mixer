@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace hm::compositor {
+namespace mm::compositor {
 
 // 1 枚のペイントマスク。
 struct PaintMaskEntry {
@@ -143,4 +143,4 @@ private:
     uint32_t m_requestedResolution = 1024;
 };
 
-}  // namespace hm::compositor
+}  // namespace mm::compositor

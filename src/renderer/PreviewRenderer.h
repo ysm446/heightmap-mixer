@@ -11,7 +11,7 @@
 
 #include <DirectXMath.h>
 
-namespace hm::renderer {
+namespace mm::renderer {
 
 enum class PreviewShape {
     Sphere,
@@ -145,4 +145,4 @@ private:
     uint32_t m_height = 0;
 };
 
-}  // namespace hm::renderer
+}  // namespace mm::renderer

@@ -4,7 +4,7 @@
 #include <filesystem>
 #include <vector>
 
-namespace hm {
+namespace mm {
 
 // 線形 HDR 画像。常に RGBA の 4 チャンネルで保持する。
 struct HdrImage {
@@ -44,4 +44,4 @@ bool SaveRgba8Png(const std::filesystem::path& path, uint32_t width, uint32_t he
 bool SaveGray8Png(const std::filesystem::path& path, uint32_t width, uint32_t height,
                   uint32_t rowPitch, const uint8_t* pixels);
 
-}  // namespace hm
+}  // namespace mm

@@ -17,7 +17,7 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     endif()
 endif()
 
-project(heightmap_mixer VERSION 0.1.0 LANGUAGES CXX)
+project(material_mixer VERSION 0.1.0 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "本プロジェクトは Windows 専用です。")
@@ -77,7 +77,7 @@ find_package(Stb REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(tinyexr CONFIG REQUIRED)
 
-set(hm_sources
+set(mm_sources
     src/app/Main.cpp
     src/app/Application.cpp
     src/app/Application.h
@@ -131,20 +131,20 @@ set(hm_sources
 )
 
 # シェーダはビルド対象ではないが、VS のソリューションから編集できるようにしておく。
-file(GLOB hm_shaders CONFIGURE_DEPENDS "shaders/*.hlsl" "shaders/*.hlsli")
-set_source_files_properties(${hm_shaders} PROPERTIES HEADER_FILE_ONLY TRUE)
-source_group("shaders" FILES ${hm_shaders})
+file(GLOB mm_shaders CONFIGURE_DEPENDS "shaders/*.hlsl" "shaders/*.hlsli")
+set_source_files_properties(${mm_shaders} PROPERTIES HEADER_FILE_ONLY TRUE)
+source_group("shaders" FILES ${mm_shaders})
 
-add_executable(heightmap_mixer WIN32 ${hm_sources} ${hm_shaders})
+add_executable(material_mixer WIN32 ${mm_sources} ${mm_shaders})
 
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" PREFIX "src" FILES ${hm_sources})
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" PREFIX "src" FILES ${mm_sources})
 
-target_include_directories(heightmap_mixer PRIVATE
+target_include_directories(material_mixer PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${Stb_INCLUDE_DIR}"
 )
 
-target_compile_definitions(heightmap_mixer PRIVATE
+target_compile_definitions(material_mixer PRIVATE
     UNICODE
     _UNICODE
     WIN32_LEAN_AND_MEAN
@@ -152,15 +152,15 @@ target_compile_definitions(heightmap_mixer PRIVATE
     # PIX マーカーを有効にする。未定義だと pix3.h の呼び出しが消え、
     # Release で PIX による計測ができなくなる。
     USE_PIX
-    HM_APP_VERSION="${PROJECT_VERSION}"
+    MM_APP_VERSION="${PROJECT_VERSION}"
     # シェーダはホットリロードのためソースツリーを直接参照する。
-    HM_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders"
-    $<$<CONFIG:Debug>:HM_DEBUG=1>
+    MM_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+    $<$<CONFIG:Debug>:MM_DEBUG=1>
 )
 
-target_compile_options(heightmap_mixer PRIVATE /W4 /permissive- /utf-8 /Zc:preprocessor)
+target_compile_options(material_mixer PRIVATE /W4 /permissive- /utf-8 /Zc:preprocessor)
 
-target_link_libraries(heightmap_mixer PRIVATE
+target_link_libraries(material_mixer PRIVATE
     Microsoft::DirectX-Headers
     Microsoft::DirectX-Guids
     Microsoft::DirectX12-Agility
@@ -179,14 +179,14 @@ target_link_libraries(heightmap_mixer PRIVATE
 )
 
 # --- Agility SDK の DLL を実行ファイル横の D3D12/ に配置する ---------------
-add_custom_command(TARGET heightmap_mixer POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:heightmap_mixer>/D3D12"
+add_custom_command(TARGET material_mixer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:material_mixer>/D3D12"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_PROPERTY:Microsoft::DirectX12-Core,IMPORTED_LOCATION_RELEASE>"
-        "$<TARGET_FILE_DIR:heightmap_mixer>/D3D12"
+        "$<TARGET_FILE_DIR:material_mixer>/D3D12"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_PROPERTY:Microsoft::DirectX12-Layers,IMPORTED_LOCATION_DEBUG>"
-        "$<TARGET_FILE_DIR:heightmap_mixer>/D3D12"
+        "$<TARGET_FILE_DIR:material_mixer>/D3D12"
     COMMAND_EXPAND_LISTS
     COMMENT "Agility SDK の DLL を D3D12/ に配置"
 )
@@ -194,15 +194,15 @@ add_custom_command(TARGET heightmap_mixer POST_BUILD
 # --- DXC の署名用 DLL を実行ファイル横に置く -------------------------------
 # dxcompiler.dll はリンクしているため applocal で配置されるが、
 # dxil.dll (署名) はリンクしていないので明示的にコピーする。
-add_custom_command(TARGET heightmap_mixer POST_BUILD
+add_custom_command(TARGET material_mixer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_PROPERTY:Microsoft::DXIL,IMPORTED_LOCATION_DEBUG>"
-        "$<TARGET_FILE_DIR:heightmap_mixer>"
+        "$<TARGET_FILE_DIR:material_mixer>"
     COMMAND_EXPAND_LISTS
     COMMENT "dxil.dll を配置"
 )
 
-set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT heightmap_mixer)
-set_target_properties(heightmap_mixer PROPERTIES
-    VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:heightmap_mixer>"
+set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT material_mixer)
+set_target_properties(material_mixer PROPERTIES
+    VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:material_mixer>"
 )

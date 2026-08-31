@@ -6,7 +6,7 @@
 #include <cstdio>
 #include <string>
 
-namespace hm::ui {
+namespace mm::ui {
 namespace {
 
 float g_dpiScale = 1.0f;
@@ -371,4 +371,4 @@ void HintText(const char* format, ...) {
     va_end(args);
 }
 
-}  // namespace hm::ui
+}  // namespace mm::ui

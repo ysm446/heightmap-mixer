@@ -101,7 +101,7 @@ DXC によるシェーダコンパイルとホットリロード、bindless の�
 ## 開発用のコマンドライン
 
 ```
-heightmap_mixer.exe [--hdri <path>] [--texture <path>]...
+material_mixer.exe [--hdri <path>] [--texture <path>]...
                     [--screenshot <path>] [--screenshot-ui <path>]
                     [--screenshot-frame <n>]
 ```

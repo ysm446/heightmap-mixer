@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace hm::compositor {
+namespace mm::compositor {
 
 struct LibraryTexture {
     TextureId id = kNoTexture;
@@ -54,4 +54,4 @@ private:
     TextureId m_nextId = 1;
 };
 
-}  // namespace hm::compositor
+}  // namespace mm::compositor

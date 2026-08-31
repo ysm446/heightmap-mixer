@@ -18,11 +18,11 @@ __declspec(dllexport) extern const char* D3D12SDKPath = ".\\D3D12\\";
 namespace {
 
 // 使い方:
-//   heightmap_mixer.exe [--hdri <path>] [--texture <path>]...
+//   material_mixer.exe [--hdri <path>] [--texture <path>]...
 //                       [--screenshot <path>] [--screenshot-ui <path>]
 //                       [--screenshot-frame <n>]
-hm::StartupOptions ParseCommandLine() {
-    hm::StartupOptions options;
+mm::StartupOptions ParseCommandLine() {
+    mm::StartupOptions options;
 
     int argc = 0;
     LPWSTR* argv = ::CommandLineToArgvW(::GetCommandLineW(), &argc);
@@ -48,7 +48,7 @@ hm::StartupOptions ParseCommandLine() {
             options.screenshotFrame = static_cast<uint32_t>(::_wtoi(argv[i + 1]));
             ++i;
         } else {
-            HM_LOG_WARN("不明な引数です: %ls", argument.c_str());
+            MM_LOG_WARN("不明な引数です: %ls", argument.c_str());
         }
     }
 
@@ -59,9 +59,9 @@ hm::StartupOptions ParseCommandLine() {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
-    const hm::StartupOptions options = ParseCommandLine();
+    const mm::StartupOptions options = ParseCommandLine();
 
-    hm::Application app;
+    mm::Application app;
     if (!app.Initialize(options)) {
         app.Shutdown();
         return 1;

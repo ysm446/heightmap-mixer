@@ -9,7 +9,7 @@
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 
-namespace hm::compositor {
+namespace mm::compositor {
 
 // 合成結果のチャンネルセット。plan.md の定義に対応する。
 struct MaterialTextureSet {
@@ -83,4 +83,4 @@ private:
     uint32_t m_tileSize = 512;
 };
 
-}  // namespace hm::compositor
+}  // namespace mm::compositor

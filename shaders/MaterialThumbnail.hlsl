@@ -26,7 +26,7 @@ struct ThumbnailConstants
     float metallicValue;
     float aoValue;
     float uvScale;
-    // スカラーのマップのチャンネル指定。4bit ずつ HM_CHANNEL_SLOT_* の順。
+    // スカラーのマップのチャンネル指定。4bit ずつ MM_CHANNEL_SLOT_* の順。
     uint mapChannels;
 };
 
@@ -92,19 +92,19 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (g_thumbnail.roughnessIndex != kInvalidTextureIndex)
     {
         roughness = SampleScalarMap(g_thumbnail.roughnessIndex,
-                                    HM_CHANNEL_SLOT_ROUGHNESS, uv);
+                                    MM_CHANNEL_SLOT_ROUGHNESS, uv);
     }
 
     float metallic = g_thumbnail.metallicValue;
     if (g_thumbnail.metallicIndex != kInvalidTextureIndex)
     {
-        metallic = SampleScalarMap(g_thumbnail.metallicIndex, HM_CHANNEL_SLOT_METALLIC, uv);
+        metallic = SampleScalarMap(g_thumbnail.metallicIndex, MM_CHANNEL_SLOT_METALLIC, uv);
     }
 
     float ambientOcclusion = g_thumbnail.aoValue;
     if (g_thumbnail.aoIndex != kInvalidTextureIndex)
     {
-        ambientOcclusion = SampleScalarMap(g_thumbnail.aoIndex, HM_CHANNEL_SLOT_AO, uv);
+        ambientOcclusion = SampleScalarMap(g_thumbnail.aoIndex, MM_CHANNEL_SLOT_AO, uv);
     }
 
     // 球の接空間は、正面を向いているので x が接線、y が従法線でよい。

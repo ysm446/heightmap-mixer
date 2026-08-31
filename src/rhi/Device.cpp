@@ -8,7 +8,7 @@
 
 #include <utility>
 
-namespace hm::rhi {
+namespace mm::rhi {
 namespace {
 
 // ImGui のフォントアトラスや将来のテクスチャ用に、余裕をもって確保しておく。
@@ -80,20 +80,20 @@ bool Device::CreateFactoryAndDevice(bool enableDebugLayer) {
         ComPtr<ID3D12Debug> debug;
         if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) {
             debug->EnableDebugLayer();
-            HM_LOG_INFO("D3D12 デバッグレイヤーを有効化しました");
+            MM_LOG_INFO("D3D12 デバッグレイヤーを有効化しました");
 
             ComPtr<ID3D12Debug1> debug1;
             if (SUCCEEDED(debug.As(&debug1))) {
                 debug1->SetEnableGPUBasedValidation(TRUE);
-                HM_LOG_INFO("GPU ベースバリデーションを有効化しました");
+                MM_LOG_INFO("GPU ベースバリデーションを有効化しました");
             }
             factoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
         } else {
-            HM_LOG_WARN("D3D12 デバッグレイヤーを取得できませんでした（Graphics Tools 未導入の可能性）");
+            MM_LOG_WARN("D3D12 デバッグレイヤーを取得できませんでした（Graphics Tools 未導入の可能性）");
         }
     }
 
-    if (!HM_CHECK_HR(CreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&m_factory)))) {
+    if (!MM_CHECK_HR(CreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&m_factory)))) {
         return false;
     }
 
@@ -120,14 +120,14 @@ bool Device::CreateFactoryAndDevice(bool enableDebugLayer) {
         if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_12_0,
                                         IID_PPV_ARGS(&m_device)))) {
             m_adapter = adapter;
-            HM_LOG_INFO("アダプタ: %ls (VRAM %llu MB)", desc.Description,
+            MM_LOG_INFO("アダプタ: %ls (VRAM %llu MB)", desc.Description,
                         static_cast<unsigned long long>(desc.DedicatedVideoMemory / (1024 * 1024)));
             break;
         }
     }
 
     if (!m_device) {
-        HM_LOG_ERROR("D3D12 デバイスを作成できるアダプタが見つかりませんでした");
+        MM_LOG_ERROR("D3D12 デバイスを作成できるアダプタが見つかりませんでした");
         return false;
     }
 
@@ -136,7 +136,7 @@ bool Device::CreateFactoryAndDevice(bool enableDebugLayer) {
     if (FAILED(m_device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &shaderModel,
                                              sizeof(shaderModel))) ||
         shaderModel.HighestShaderModel < D3D_SHADER_MODEL_6_6) {
-        HM_LOG_ERROR("シェーダモデル 6.6 に対応していません");
+        MM_LOG_ERROR("シェーダモデル 6.6 に対応していません");
         return false;
     }
 
@@ -145,7 +145,7 @@ bool Device::CreateFactoryAndDevice(bool enableDebugLayer) {
     if (FAILED(m_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options,
                                              sizeof(options))) ||
         options.ResourceBindingTier < D3D12_RESOURCE_BINDING_TIER_3) {
-        HM_LOG_ERROR("Resource Binding Tier 3 に対応していません（bindless に必要）");
+        MM_LOG_ERROR("Resource Binding Tier 3 に対応していません（bindless に必要）");
         return false;
     }
 
@@ -166,48 +166,48 @@ bool Device::CreateCommandObjects() {
     D3D12_COMMAND_QUEUE_DESC queueDesc = {};
     queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
-    if (!HM_CHECK_HR(m_device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&m_commandQueue)))) {
+    if (!MM_CHECK_HR(m_device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&m_commandQueue)))) {
         return false;
     }
     m_commandQueue->SetName(L"MainDirectQueue");
 
     for (uint32_t i = 0; i < kFrameCount; ++i) {
-        if (!HM_CHECK_HR(m_device->CreateCommandAllocator(
+        if (!MM_CHECK_HR(m_device->CreateCommandAllocator(
                 D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_commandAllocators[i])))) {
             return false;
         }
     }
 
-    if (!HM_CHECK_HR(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+    if (!MM_CHECK_HR(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
                                                  m_commandAllocators[0].Get(), nullptr,
                                                  IID_PPV_ARGS(&m_commandList)))) {
         return false;
     }
     // 作成直後は開いた状態なので閉じておく。
-    if (!HM_CHECK_HR(m_commandList->Close())) {
+    if (!MM_CHECK_HR(m_commandList->Close())) {
         return false;
     }
 
-    if (!HM_CHECK_HR(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+    if (!MM_CHECK_HR(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
                                                       IID_PPV_ARGS(&m_immediateAllocator)))) {
         return false;
     }
-    if (!HM_CHECK_HR(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+    if (!MM_CHECK_HR(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
                                                  m_immediateAllocator.Get(), nullptr,
                                                  IID_PPV_ARGS(&m_immediateCommandList)))) {
         return false;
     }
-    if (!HM_CHECK_HR(m_immediateCommandList->Close())) {
+    if (!MM_CHECK_HR(m_immediateCommandList->Close())) {
         return false;
     }
 
-    if (!HM_CHECK_HR(m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence)))) {
+    if (!MM_CHECK_HR(m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence)))) {
         return false;
     }
 
     m_fenceEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (m_fenceEvent == nullptr) {
-        HM_LOG_ERROR("フェンス用イベントの作成に失敗しました");
+        MM_LOG_ERROR("フェンス用イベントの作成に失敗しました");
         return false;
     }
     return true;
@@ -226,15 +226,15 @@ bool Device::CreateSwapChain(HWND hwnd, uint32_t width, uint32_t height) {
     desc.Flags = m_allowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0u;
 
     ComPtr<IDXGISwapChain1> swapChain1;
-    if (!HM_CHECK_HR(m_factory->CreateSwapChainForHwnd(m_commandQueue.Get(), hwnd, &desc, nullptr,
+    if (!MM_CHECK_HR(m_factory->CreateSwapChainForHwnd(m_commandQueue.Get(), hwnd, &desc, nullptr,
                                                        nullptr, &swapChain1))) {
         return false;
     }
     // Alt+Enter による自動フルスクリーン切り替えは使わない。
-    if (!HM_CHECK_HR(m_factory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER))) {
+    if (!MM_CHECK_HR(m_factory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER))) {
         return false;
     }
-    if (!HM_CHECK_HR(swapChain1.As(&m_swapChain))) {
+    if (!MM_CHECK_HR(swapChain1.As(&m_swapChain))) {
         return false;
     }
     m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
@@ -243,7 +243,7 @@ bool Device::CreateSwapChain(HWND hwnd, uint32_t width, uint32_t height) {
 
 bool Device::CreateBackBufferViews() {
     for (uint32_t i = 0; i < kFrameCount; ++i) {
-        if (!HM_CHECK_HR(m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i])))) {
+        if (!MM_CHECK_HR(m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i])))) {
             return false;
         }
         wchar_t name[32] = {};
@@ -279,7 +279,7 @@ void Device::Resize(uint32_t width, uint32_t height) {
     ReleaseBackBuffers();
 
     const UINT flags = m_allowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0u;
-    if (!HM_CHECK_HR(m_swapChain->ResizeBuffers(kFrameCount, width, height, kBackBufferFormat,
+    if (!MM_CHECK_HR(m_swapChain->ResizeBuffers(kFrameCount, width, height, kBackBufferFormat,
                                                 flags))) {
         return;
     }
@@ -299,7 +299,7 @@ ID3D12GraphicsCommandList* Device::BeginFrame(const float clearColor[4]) {
     // m_fenceValues[i] == 0 は未使用スロットなので待たない。
     const uint64_t pending = m_fenceValues[m_frameIndex];
     if (pending != 0 && m_fence->GetCompletedValue() < pending) {
-        if (!HM_CHECK_HR(m_fence->SetEventOnCompletion(pending, m_fenceEvent))) {
+        if (!MM_CHECK_HR(m_fence->SetEventOnCompletion(pending, m_fenceEvent))) {
             return nullptr;
         }
         ::WaitForSingleObjectEx(m_fenceEvent, INFINITE, FALSE);
@@ -309,10 +309,10 @@ ID3D12GraphicsCommandList* Device::BeginFrame(const float clearColor[4]) {
     m_deletionQueue.Collect(m_fence->GetCompletedValue());
     m_uploadRing.BeginFrame(m_frameIndex);
 
-    if (!HM_CHECK_HR(m_commandAllocators[m_frameIndex]->Reset())) {
+    if (!MM_CHECK_HR(m_commandAllocators[m_frameIndex]->Reset())) {
         return nullptr;
     }
-    if (!HM_CHECK_HR(m_commandList->Reset(m_commandAllocators[m_frameIndex].Get(), nullptr))) {
+    if (!MM_CHECK_HR(m_commandList->Reset(m_commandAllocators[m_frameIndex].Get(), nullptr))) {
         return nullptr;
     }
 
@@ -393,7 +393,7 @@ void Device::EndFrame(bool vsync) {
 
     PIXEndEvent(m_commandList.Get());
 
-    if (!HM_CHECK_HR(m_commandList->Close())) {
+    if (!MM_CHECK_HR(m_commandList->Close())) {
         m_frameOpen = false;
         return;
     }
@@ -403,7 +403,7 @@ void Device::EndFrame(bool vsync) {
 
     const UINT syncInterval = vsync ? 1u : 0u;
     const UINT presentFlags = (!vsync && m_allowTearing) ? DXGI_PRESENT_ALLOW_TEARING : 0u;
-    HM_CHECK_HR(m_swapChain->Present(syncInterval, presentFlags));
+    MM_CHECK_HR(m_swapChain->Present(syncInterval, presentFlags));
 
     m_frameOpen = false;
     MoveToNextFrame();
@@ -414,14 +414,14 @@ void Device::EndFrame(bool vsync) {
 
         void* mapped = nullptr;
         const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(m_pendingCapture.sizeInBytes)};
-        if (HM_CHECK_HR(m_pendingCapture.resource->Map(0, &readRange, &mapped))) {
+        if (MM_CHECK_HR(m_pendingCapture.resource->Map(0, &readRange, &mapped))) {
             const bool saved = SaveRgba8Png(
                 m_capturePath, m_width, m_height, m_pendingCaptureFootprint.Footprint.RowPitch,
                 static_cast<const uint8_t*>(mapped) + m_pendingCaptureFootprint.Offset);
             const D3D12_RANGE writtenRange = {0, 0};
             m_pendingCapture.resource->Unmap(0, &writtenRange);
             if (!saved) {
-                HM_LOG_ERROR("バックバッファの書き出しに失敗しました");
+                MM_LOG_ERROR("バックバッファの書き出しに失敗しました");
             }
         }
 
@@ -451,10 +451,10 @@ bool Device::ExecuteImmediate(const std::function<void(ID3D12GraphicsCommandList
     if (!m_immediateCommandList || !record) {
         return false;
     }
-    if (!HM_CHECK_HR(m_immediateAllocator->Reset())) {
+    if (!MM_CHECK_HR(m_immediateAllocator->Reset())) {
         return false;
     }
-    if (!HM_CHECK_HR(m_immediateCommandList->Reset(m_immediateAllocator.Get(), nullptr))) {
+    if (!MM_CHECK_HR(m_immediateCommandList->Reset(m_immediateAllocator.Get(), nullptr))) {
         return false;
     }
 
@@ -463,7 +463,7 @@ bool Device::ExecuteImmediate(const std::function<void(ID3D12GraphicsCommandList
 
     record(m_immediateCommandList.Get());
 
-    if (!HM_CHECK_HR(m_immediateCommandList->Close())) {
+    if (!MM_CHECK_HR(m_immediateCommandList->Close())) {
         return false;
     }
     ID3D12CommandList* lists[] = {m_immediateCommandList.Get()};
@@ -474,7 +474,7 @@ bool Device::ExecuteImmediate(const std::function<void(ID3D12GraphicsCommandList
 
 void Device::MoveToNextFrame() {
     const uint64_t value = m_nextFenceValue++;
-    if (!HM_CHECK_HR(m_commandQueue->Signal(m_fence.Get(), value))) {
+    if (!MM_CHECK_HR(m_commandQueue->Signal(m_fence.Get(), value))) {
         return;
     }
     m_fenceValues[m_frameIndex] = value;
@@ -488,11 +488,11 @@ void Device::WaitForGpu() {
     }
 
     const uint64_t value = m_nextFenceValue++;
-    if (!HM_CHECK_HR(m_commandQueue->Signal(m_fence.Get(), value))) {
+    if (!MM_CHECK_HR(m_commandQueue->Signal(m_fence.Get(), value))) {
         return;
     }
     if (m_fence->GetCompletedValue() < value) {
-        if (!HM_CHECK_HR(m_fence->SetEventOnCompletion(value, m_fenceEvent))) {
+        if (!MM_CHECK_HR(m_fence->SetEventOnCompletion(value, m_fenceEvent))) {
             return;
         }
         ::WaitForSingleObjectEx(m_fenceEvent, INFINITE, FALSE);
@@ -537,4 +537,4 @@ void Device::Shutdown() {
     m_factory.Reset();
 }
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

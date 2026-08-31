@@ -4,7 +4,7 @@
 
 #include <vector>
 
-namespace hm::rhi {
+namespace mm::rhi {
 
 inline constexpr uint32_t kInvalidDescriptorIndex = 0xFFFFFFFFu;
 
@@ -43,4 +43,4 @@ private:
     bool m_shaderVisible = false;
 };
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

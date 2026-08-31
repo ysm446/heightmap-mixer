@@ -2,15 +2,15 @@
 
 #include "core/Log.h"
 
-namespace hm::rhi {
+namespace mm::rhi {
 
 bool CheckHr(HRESULT hr, const char* expr, const char* file, int line) {
     if (SUCCEEDED(hr)) {
         return true;
     }
-    HM_LOG_ERROR("%s:%d: %s が 0x%08lX で失敗しました", file, line, expr,
+    MM_LOG_ERROR("%s:%d: %s が 0x%08lX で失敗しました", file, line, expr,
                  static_cast<unsigned long>(hr));
     return false;
 }
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

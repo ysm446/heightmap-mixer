@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-namespace hm::renderer {
+namespace mm::renderer {
 
 // カメラのビュー空間の基底をワールド座標で表したもの。
 // 座標軸ギズモのように「向きだけ」が要る用途に使う。
@@ -61,4 +61,4 @@ private:
     uint32_t m_height = 1;
 };
 
-}  // namespace hm::renderer
+}  // namespace mm::renderer

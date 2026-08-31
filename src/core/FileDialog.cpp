@@ -6,7 +6,7 @@
 #include <shobjidl.h>
 #include <wrl/client.h>
 
-namespace hm {
+namespace mm {
 namespace {
 
 using Microsoft::WRL::ComPtr;
@@ -40,7 +40,7 @@ ComPtr<IFileDialog> CreateFileDialog(const CLSID& clsid, const wchar_t* title,
                                      const std::vector<FileFilter>& filters) {
     ComPtr<IFileDialog> dialog;
     if (FAILED(::CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) {
-        HM_LOG_ERROR("ファイルダイアログを作成できません");
+        MM_LOG_ERROR("ファイルダイアログを作成できません");
         return nullptr;
     }
 
@@ -76,7 +76,7 @@ std::vector<FileFilter> HdriFileFilters() {
 
 std::vector<FileFilter> ProjectFileFilters() {
     return {
-        {L"heightmap-mixer プロジェクト (*.hmproj)", L"*.hmproj"},
+        {L"material-mixer プロジェクト (*.mmproj)", L"*.mmproj"},
         {L"すべてのファイル (*.*)", L"*.*"},
     };
 }
@@ -171,4 +171,4 @@ std::filesystem::path ShowSaveFileDialog(const wchar_t* title,
     return ToPath(item.Get());
 }
 
-}  // namespace hm
+}  // namespace mm

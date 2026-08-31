@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace hm::compositor {
+namespace mm::compositor {
 
 // マテリアル 1 つぶん。PBR のマップ一式に名前を付けたもの。
 //
@@ -40,7 +40,7 @@ struct MaterialAsset {
     bool thumbnailDirty = true;
 };
 
-// チャンネル指定をシェーダへ渡す形へ詰める。並びは HM_CHANNEL_SLOT_* と一致させること。
+// チャンネル指定をシェーダへ渡す形へ詰める。並びは MM_CHANNEL_SLOT_* と一致させること。
 uint32_t PackMaterialChannels(const MaterialAsset& asset);
 
 // マテリアルを保持し、サムネイルを作る。
@@ -79,4 +79,4 @@ private:
     MaterialAssetId m_nextId = 1;
 };
 
-}  // namespace hm::compositor
+}  // namespace mm::compositor

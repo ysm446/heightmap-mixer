@@ -9,7 +9,7 @@
 #include <filesystem>
 #include <functional>
 
-namespace hm::rhi {
+namespace mm::rhi {
 
 // DX12 のデバイス、キュー、スワップチェーン、フレーム同期をまとめて持つ。
 // 1 フレームは BeginFrame() / EndFrame() の対で表す。
@@ -114,4 +114,4 @@ private:
     bool m_initialized = false;
 };
 
-}  // namespace hm::rhi
+}  // namespace mm::rhi

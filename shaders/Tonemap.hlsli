@@ -1,5 +1,5 @@
-#ifndef HM_TONEMAP_HLSLI
-#define HM_TONEMAP_HLSLI
+#ifndef MM_TONEMAP_HLSLI
+#define MM_TONEMAP_HLSLI
 
 #include "Common.hlsli"
 
@@ -56,4 +56,4 @@ float3 ApplyTonemap(float3 color, uint mode)
     return saturate(color);
 }
 
-#endif  // HM_TONEMAP_HLSLI
+#endif  // MM_TONEMAP_HLSLI

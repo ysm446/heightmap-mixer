@@ -7,10 +7,10 @@
 
 #include "CompositeCommon.hlsli"
 
-#define HM_MASK_HEIGHT    3
-#define HM_MASK_SLOPE     4
-#define HM_MASK_CURVATURE 5
-#define HM_MASK_CAVITY    6
+#define MM_MASK_HEIGHT    3
+#define MM_MASK_SLOPE     4
+#define MM_MASK_CURVATURE 5
+#define MM_MASK_CAVITY    6
 
 // 勾配とラプラシアンを見た目の妥当な範囲へ丸める係数。
 // 生の値はノイズ周波数がそのまま出て極端に大きくなる。
@@ -58,11 +58,11 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     float result = 0.0f;
 
-    if (g_mask.source == HM_MASK_HEIGHT)
+    if (g_mask.source == MM_MASK_HEIGHT)
     {
         result = saturate(center * scale);
     }
-    else if (g_mask.source == HM_MASK_SLOPE)
+    else if (g_mask.source == MM_MASK_SLOPE)
     {
         const float hx0 = SampleHeight(height, uv - float2(texelSize.x, 0.0f));
         const float hx1 = SampleHeight(height, uv + float2(texelSize.x, 0.0f));
@@ -75,7 +75,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
         result = saturate(length(float2(dx, dy)) * kDerivedGradientScale * scale);
     }
-    else if (g_mask.source == HM_MASK_CURVATURE)
+    else if (g_mask.source == MM_MASK_CURVATURE)
     {
         const float hx0 = SampleHeight(height, uv - float2(texelSize.x, 0.0f));
         const float hx1 = SampleHeight(height, uv + float2(texelSize.x, 0.0f));
@@ -88,7 +88,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         // 0.5 を平坦とし、凸で大きく、凹で小さくなるようにする。
         result = saturate(0.5f + laplacian * kDerivedCurvatureScale * scale * 0.5f);
     }
-    else if (g_mask.source == HM_MASK_CAVITY)
+    else if (g_mask.source == MM_MASK_CAVITY)
     {
         // 周囲の平均より低いほど窪んでいるとみなす簡易 AO。
         // 半径を変えた 2 つのリングを見て、中くらいと大きめの窪みを拾う。

@@ -9,7 +9,7 @@
 // **UI を変更するときは docs/design/design-guide.md に従うこと。**
 // 個々のパネルが ImGui のウィジェットを直接呼ぶのではなく、
 // ここのヘルパーを通すことで、ラベルの体裁・幅・既定値・ツールチップが揃う。
-namespace hm::ui {
+namespace mm::ui {
 
 // 部品の寸法。96 DPI 基準の値を置き、使うときに Scaled() で現在の DPI へ合わせる。
 // 値の意味と使い分けは design-guide.md にある。種類を勝手に増やさない。
@@ -68,4 +68,4 @@ bool Button(const char* label, float width = kButtonWidth);
 // 補助テキスト。操作の説明や単位の目安を 1 行で添えるときに使う。
 void HintText(const char* format, ...);
 
-}  // namespace hm::ui
+}  // namespace mm::ui
