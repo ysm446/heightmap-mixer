@@ -25,9 +25,27 @@ struct LibraryTexture {
     // ImGui は値をそのまま描くので、リニアのまま渡すと極端に暗く見える。
     rhi::GpuTexture preview;
 
+    // 1 チャンネルだけを灰色で描くための SRV。R / G / B / A の 4 本。
+    //
+    // **Megascans の `_ORD` は 1 枚に AO / ラフネス / ハイトが詰まっている。**
+    // RGB のまま見ても意味の読めない色の塊にしかならないので、
+    // チャンネルを分けて確かめられるようにする。
+    //
+    // 実体は増えない。SRV の Shader4ComponentMapping で `RRR1` のように
+    // 並べ替えるだけなので、増えるのはディスクリプタ 4 本ぶんだけ。
+    rhi::DescriptorHandle channelSrv[4];
+
     // 一覧に描くハンドル。表示用が無ければ元のテクスチャ（中身が sRGB）を使う。
     D3D12_GPU_DESCRIPTOR_HANDLE PreviewHandle() const {
         return preview.IsValid() ? preview.srv.gpu : texture.srv.gpu;
+    }
+
+    // channel が 0..3 なら R / G / B / A を灰色で、それ以外なら RGB をそのまま。
+    D3D12_GPU_DESCRIPTOR_HANDLE ChannelHandle(int channel) const {
+        if (channel < 0 || channel >= 4 || !channelSrv[channel].IsValid()) {
+            return PreviewHandle();
+        }
+        return channelSrv[channel].gpu;
     }
 };
 
@@ -68,6 +86,9 @@ private:
     // リニアなテクスチャを sRGB へ直した表示用テクスチャを作る。
     bool BuildPreview(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                       LibraryTexture& entry);
+    // チャンネルを分けて見るための SRV を張る。表示用テクスチャを作った後に呼ぶこと。
+    void CreateChannelViews(rhi::Device& device, LibraryTexture& entry);
+    void ReleaseChannelViews(rhi::Device& device, LibraryTexture& entry);
 
     std::vector<LibraryTexture> m_entries;
     TextureId m_nextId = 1;

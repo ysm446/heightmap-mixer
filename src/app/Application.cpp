@@ -2393,8 +2393,20 @@ void Application::DrawTextureLibraryPanel() {
     // ビューポートの下の横長の帯に置くことを前提に、一覧と詳細を左右に分ける。
     // 縦に積むと、帯の高さでは両方が見えない。
     // 幅が足りないとき（左カラムへドッキングし直したときなど）は縦に積む。
-    const float detailWidth = ui::Scaled(300.0f);
-    const bool sideBySide = ImGui::GetContentRegionAvail().x > detailWidth * 2.0f;
+    //
+    // **拡大プレビューの大きさは帯の高さで決まる。** 帯は横に広く縦に狭いので、
+    // 縦に積むと数十ピクセルしか残らない。プレビューは高さいっぱいに取り、
+    // プロパティ行はその横へ回す。帯をドラッグで広げれば、そのまま大きくなる。
+    const float previewSize =
+        std::clamp(ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing(),
+                   ui::Scaled(64.0f), ui::Scaled(400.0f));
+    // プロパティ行に必ず残す幅。ここを削ると「2048 x 2048」すら入らなくなる。
+    constexpr float kDetailRowsWidth = 240.0f;
+    const float detailWidth = previewSize + ui::Scaled(kDetailRowsWidth) +
+                              ImGui::GetStyle().ItemSpacing.x;
+    // 一覧にもサムネイルが数枚並ぶだけの幅が残るときだけ左右に分ける。
+    const bool sideBySide =
+        ImGui::GetContentRegionAvail().x > detailWidth + ui::Scaled(220.0f);
     const ImVec2 gridSize =
         sideBySide ? ImVec2(-(detailWidth + ImGui::GetStyle().ItemSpacing.x), 0.0f)
                    : ImVec2(0.0f, ui::Scaled(180.0f));
@@ -2463,8 +2475,27 @@ void Application::DrawTextureLibraryPanel() {
     }
 
     const compositor::LibraryTexture& selected = entries[static_cast<size_t>(m_selectedTexture)];
+    // 拡大プレビュー。サムネイル（72）では中身を確かめられないため置く。
+    //
+    // コンボは 0 が RGB なので、1 つずらして R / G / B / A の SRV を引く。
+    // 0（RGB）のときは -1 になり、ChannelHandle が通常の表示用を返す。
+    if (sideBySide) {
+        ImGui::Image(static_cast<ImTextureID>(selected.ChannelHandle(m_previewChannel - 1).ptr),
+                     ImVec2(previewSize, previewSize));
+        ImGui::SameLine();
+        ImGui::BeginChild("textureDetailRows", ImVec2(0.0f, previewSize));
+    }
+
     ui::SectionHeader("選択中");
     if (ui::BeginPropertyTable("textureRows")) {
+        // ORD のように 1 枚へ複数のマップを詰めたテクスチャは、RGB のまま見ても
+        // 意味が読めない。チャンネルを分けて確かめられるようにする。
+        static const char* const kPreviewChannelLabels[] = {"RGB", "R", "G", "B", "A"};
+        ui::PropertyCombo("チャンネル", &m_previewChannel, kPreviewChannelLabels,
+                          IM_ARRAYSIZE(kPreviewChannelLabels), 0,
+                          "1 枚に複数のマップを詰めたテクスチャ（ORD など）の中身を確かめる。"
+                          "R / G / B を選ぶとそのチャンネルだけを灰色で出す");
+
         char nameBuffer[128] = {};
         std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", selected.name.c_str());
         if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer),
@@ -2492,6 +2523,8 @@ void Application::DrawTextureLibraryPanel() {
     ui::HintText("サムネイルをマテリアルのマップ欄へドラッグすると割り当てられる");
 
     if (sideBySide) {
+        // プロパティ行の枠と、詳細の枠の 2 つを閉じる。
+        ImGui::EndChild();
         ImGui::EndChild();
     }
     ImGui::End();

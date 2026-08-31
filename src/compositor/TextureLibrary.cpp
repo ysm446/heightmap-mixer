@@ -18,8 +18,9 @@ namespace {
 
 constexpr uint32_t kGroupSize = 8;
 
-// 一覧に出す表示用テクスチャの一辺。サムネイルの表示サイズに対して十分な大きさ。
-constexpr uint32_t kPreviewSize = 128;
+// 表示用テクスチャの一辺。一覧のサムネイル（72）だけでなく、
+// 「選択中」の拡大プレビューにも使うので、拡大に耐える大きさにしてある。
+constexpr uint32_t kPreviewSize = 512;
 
 uint32_t MipCountFor(uint32_t width, uint32_t height) {
     uint32_t size = std::max(width, height);
@@ -75,6 +76,7 @@ void ReleaseTexture(rhi::Device& device, rhi::GpuTexture& texture) {
 
 void TextureLibrary::Destroy(rhi::Device& device) {
     for (LibraryTexture& entry : m_entries) {
+        ReleaseChannelViews(device, entry);
         ReleaseTexture(device, entry.preview);
         // float は sRGB 用の SRV を別に張っていない（linear と同じものを指す）。
         // 二重解放しないよう、別に張ったときだけ返す。
@@ -140,6 +142,7 @@ void TextureLibrary::Remove(rhi::Device& device, TextureId id) {
         return;
     }
 
+    ReleaseChannelViews(device, *it);
     ReleaseTexture(device, it->preview);
     // Destroy と同じ理由で、別に張ったときだけ返す。
     if (!it->isFloat && it->srgbSrvIndex != kInvalidTextureIndex) {
@@ -287,9 +290,50 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
         BuildPreview(device, pipelineCache, entry);
     }
 
+    // チャンネルを分けて見る SRV は、描く相手が決まってから張る。
+    CreateChannelViews(device, entry);
+
     entry.id = m_nextId++;
     m_entries.push_back(std::move(entry));
     return m_entries.back().id;
+}
+
+// 1 チャンネルだけを灰色で読む SRV を 4 本張る。
+//
+// リソースは一覧に描くのと同じもの（表示用があればそれ、無ければ元のテクスチャ）。
+// どちらも RGBA8 の UNORM なので、書式は共通でよい。
+void TextureLibrary::CreateChannelViews(rhi::Device& device, LibraryTexture& entry) {
+    const rhi::GpuTexture& source = entry.preview.IsValid() ? entry.preview : entry.texture;
+    if (!source.IsValid()) {
+        return;
+    }
+
+    for (int channel = 0; channel < 4; ++channel) {
+        const rhi::DescriptorHandle handle = device.SrvHeap().Allocate();
+        if (!handle.IsValid()) {
+            return;
+        }
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        // 選んだチャンネルを RGB の 3 つへ配り、アルファは 1 に固定する。
+        // 5 は「定数 1」を意味する（4 なら定数 0）。
+        srvDesc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+            channel, channel, channel, 5);
+        srvDesc.Texture2D.MipLevels = source.mipLevels;
+        device.GetDevice()->CreateShaderResourceView(source.resource.Get(), &srvDesc, handle.cpu);
+        entry.channelSrv[channel] = handle;
+    }
+}
+
+void TextureLibrary::ReleaseChannelViews(rhi::Device& device, LibraryTexture& entry) {
+    for (rhi::DescriptorHandle& handle : entry.channelSrv) {
+        if (handle.IsValid()) {
+            device.SrvHeap().Free(handle);
+            handle = rhi::DescriptorHandle{};
+        }
+    }
 }
 
 bool TextureLibrary::BuildPreview(rhi::Device& device, rhi::PipelineCache& pipelineCache,

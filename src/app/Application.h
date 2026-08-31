@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "compositor/MaterialLibrary.h"
 #include "compositor/MaterialStack.h"
@@ -166,6 +166,9 @@ private:
     float m_strokeLastY = 0.0f;
     int m_selectedLayer = 0;
     int m_selectedTexture = 0;
+    // 拡大プレビューで出すチャンネル。0 = RGB、1..4 = R / G / B / A。
+    // ORD のように 1 枚へ複数のマップを詰めたテクスチャの中身を確かめるためのもの。
+    int m_previewChannel = 0;
     // 読み込んだ直後のテクスチャを一覧に見せるための要求。
     // 一覧はスクロールするので、追加しただけでは枠外に入って気づけない。
     bool m_scrollToSelectedTexture = false;
