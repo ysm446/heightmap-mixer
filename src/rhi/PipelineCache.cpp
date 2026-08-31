@@ -7,13 +7,14 @@ namespace hm::rhi {
 namespace {
 
 D3D12_STATIC_SAMPLER_DESC MakeStaticSampler(UINT shaderRegister, D3D12_FILTER filter,
-                                            D3D12_TEXTURE_ADDRESS_MODE addressMode,
+                                            D3D12_TEXTURE_ADDRESS_MODE addressU,
+                                            D3D12_TEXTURE_ADDRESS_MODE addressV,
                                             UINT maxAnisotropy = 1) {
     D3D12_STATIC_SAMPLER_DESC desc = {};
     desc.Filter = filter;
-    desc.AddressU = addressMode;
-    desc.AddressV = addressMode;
-    desc.AddressW = addressMode;
+    desc.AddressU = addressU;
+    desc.AddressV = addressV;
+    desc.AddressW = addressU;
     desc.MaxAnisotropy = maxAnisotropy;
     desc.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
     desc.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
@@ -91,10 +92,17 @@ bool PipelineCache::CreateGlobalRootSignature() {
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     const D3D12_STATIC_SAMPLER_DESC samplers[] = {
-        MakeStaticSampler(0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP),
-        MakeStaticSampler(1, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP),
-        MakeStaticSampler(2, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP),
-        MakeStaticSampler(3, D3D12_FILTER_ANISOTROPIC, D3D12_TEXTURE_ADDRESS_MODE_WRAP, 16),
+        MakeStaticSampler(0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+                          D3D12_TEXTURE_ADDRESS_MODE_CLAMP),
+        MakeStaticSampler(1, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+                          D3D12_TEXTURE_ADDRESS_MODE_CLAMP),
+        MakeStaticSampler(2, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP,
+                          D3D12_TEXTURE_ADDRESS_MODE_WRAP),
+        MakeStaticSampler(3, D3D12_FILTER_ANISOTROPIC, D3D12_TEXTURE_ADDRESS_MODE_WRAP,
+                          D3D12_TEXTURE_ADDRESS_MODE_WRAP, 16),
+        // equirectangular 用。経度方向はラップ、天頂方向はクランプ。
+        MakeStaticSampler(4, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP,
+                          D3D12_TEXTURE_ADDRESS_MODE_CLAMP),
     };
 
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC desc = {};

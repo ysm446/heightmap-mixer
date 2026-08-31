@@ -70,7 +70,9 @@ void SetDefaultWindowRect(bool apply, float relativeX, float relativeY, float re
 
 }  // namespace
 
-bool Application::Initialize() {
+bool Application::Initialize(const StartupOptions& options) {
+    m_options = options;
+
     // ウィンドウ生成より前に済ませる必要がある。
     ImGuiLayer::EnableDpiAwareness();
 
@@ -96,7 +98,7 @@ bool Application::Initialize() {
     if (!m_pipelineCache.Create(m_device.GetDevice(), &m_shaderCompiler)) {
         return false;
     }
-    if (!m_renderer.Initialize(m_device)) {
+    if (!m_renderer.Initialize(m_device, m_pipelineCache)) {
         return false;
     }
     if (!m_renderer.Resize(m_device, m_requestedViewportWidth, m_requestedViewportHeight)) {
@@ -118,6 +120,10 @@ bool Application::Initialize() {
     m_window.SetResizeCallback([this](uint32_t width, uint32_t height) {
         m_device.Resize(width, height);
     });
+
+    if (!options.hdriPath.empty()) {
+        m_renderer.RequestHdrLoad(options.hdriPath);
+    }
 
     HM_LOG_INFO("heightmap-mixer %s を起動しました", HM_APP_VERSION);
     return true;
@@ -159,6 +165,9 @@ int Application::Run() {
 
         PollShaderHotReload();
 
+        // 環境マップの作り直しは GPU 待機を伴うため、フレームの外で処理する。
+        m_renderer.ProcessPendingEnvironment(m_device, m_pipelineCache);
+
         // ビューポートの作り直しは GPU 待機を伴うため、フレームの外で行う。
         if (m_requestedViewportWidth != m_renderer.Width() ||
             m_requestedViewportHeight != m_renderer.Height()) {
@@ -182,6 +191,13 @@ int Application::Run() {
         m_imgui.EndFrame(commandList);
         m_device.EndFrame(m_vsync);
         ++m_frameCounter;
+
+        // 開発用のスクリーンショット。書き出したら終了する。
+        if (!m_options.screenshotPath.empty() && m_frameCounter >= m_options.screenshotFrame) {
+            m_device.WaitForGpu();
+            m_renderer.SaveOutputToPng(m_device, m_options.screenshotPath);
+            break;
+        }
     }
     return 0;
 }
@@ -321,6 +337,32 @@ void Application::DrawLightingPanel(bool applyLayout) {
                                ImGuiSliderFlags_Logarithmic);
         }
         ImGui::Text("EV100 = %.2f  /  exposure = %.3e", exposure.Ev100(), exposure.Exposure());
+
+        ImGui::SeparatorText("環境 (IBL)");
+        ImGui::Text("環境: %s", m_renderer.GetEnvironment().SourceName().c_str());
+        ImGui::Text("equirect: %u x %u", m_renderer.GetEnvironment().EquirectWidth(),
+                    m_renderer.GetEnvironment().EquirectHeight());
+        ImGui::SliderFloat("環境光の強さ", &m_renderer.IblIntensity(), 0.0f, 4.0f);
+        ImGui::Checkbox("背景を表示", &m_renderer.ShowSkybox());
+
+        renderer::SkySettings& sky = m_renderer.Sky();
+        bool skyChanged = false;
+        skyChanged |= ImGui::ColorEdit3("天頂色", &sky.zenithColor.x);
+        skyChanged |= ImGui::ColorEdit3("地平色", &sky.horizonColor.x);
+        skyChanged |= ImGui::ColorEdit3("地面色", &sky.groundColor.x);
+        skyChanged |= ImGui::DragFloat("空の輝度 (cd/m2)", &sky.intensity, 50.0f, 0.0f, 100000.0f,
+                                       "%.0f");
+        if (skyChanged || ImGui::Button("手続き的な空に戻す")) {
+            m_renderer.RequestSkyRebuild();
+        }
+
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(-120.0f);
+        ImGui::InputText("HDRI のパス", m_hdrPathBuffer, IM_ARRAYSIZE(m_hdrPathBuffer));
+        if (ImGui::Button("HDRI を読み込む") && m_hdrPathBuffer[0] != 0) {
+            m_renderer.RequestHdrLoad(std::filesystem::path(m_hdrPathBuffer));
+        }
+        ImGui::TextDisabled("Radiance HDR (.hdr) に対応");
 
         ImGui::SeparatorText("トーンマップ");
         static const char* const kTonemapLabels[] = {"なし", "Reinhard", "ACES"};

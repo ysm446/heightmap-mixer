@@ -10,6 +10,7 @@
     "winpixevent",
     "d3d12-memory-allocator",
     "directx-dxc",
+    "stb",
     {
       "name": "imgui",
       "features": [

@@ -1,6 +1,12 @@
 #include "app/Application.h"
 
+#include "core/Log.h"
+
 #include <Windows.h>
+#include <shellapi.h>
+
+#include <cstdlib>
+#include <string>
 
 // --- DirectX 12 Agility SDK ------------------------------------------------
 // 実行ファイルからエクスポートすることで、D3D12/ 配下の新しいランタイムが使われる。
@@ -9,9 +15,46 @@ __declspec(dllexport) extern const UINT D3D12SDKVersion = 619;
 __declspec(dllexport) extern const char* D3D12SDKPath = ".\\D3D12\\";
 }
 
+namespace {
+
+// 使い方:
+//   heightmap_mixer.exe [--hdri <path>] [--screenshot <path>] [--screenshot-frame <n>]
+hm::StartupOptions ParseCommandLine() {
+    hm::StartupOptions options;
+
+    int argc = 0;
+    LPWSTR* argv = ::CommandLineToArgvW(::GetCommandLineW(), &argc);
+    if (argv == nullptr) {
+        return options;
+    }
+
+    for (int i = 1; i < argc; ++i) {
+        const std::wstring argument = argv[i];
+        if (argument == L"--hdri" && (i + 1) < argc) {
+            options.hdriPath = argv[i + 1];
+            ++i;
+        } else if (argument == L"--screenshot" && (i + 1) < argc) {
+            options.screenshotPath = argv[i + 1];
+            ++i;
+        } else if (argument == L"--screenshot-frame" && (i + 1) < argc) {
+            options.screenshotFrame = static_cast<uint32_t>(::_wtoi(argv[i + 1]));
+            ++i;
+        } else {
+            HM_LOG_WARN("不明な引数です: %ls", argument.c_str());
+        }
+    }
+
+    ::LocalFree(argv);
+    return options;
+}
+
+}  // namespace
+
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+    const hm::StartupOptions options = ParseCommandLine();
+
     hm::Application app;
-    if (!app.Initialize()) {
+    if (!app.Initialize(options)) {
         app.Shutdown();
         return 1;
     }

@@ -45,7 +45,7 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
     resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     resourceDesc.Width = desc.width;
     resourceDesc.Height = desc.height;
-    resourceDesc.DepthOrArraySize = 1;
+    resourceDesc.DepthOrArraySize = static_cast<UINT16>(desc.isCube ? 6 : desc.arraySize);
     resourceDesc.MipLevels = static_cast<UINT16>(desc.mipLevels);
     resourceDesc.Format = desc.format;
     resourceDesc.SampleDesc.Count = 1;
@@ -96,6 +96,8 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
     outTexture.width = desc.width;
     outTexture.height = desc.height;
     outTexture.mipLevels = desc.mipLevels;
+    outTexture.arraySize = desc.isCube ? 6 : desc.arraySize;
+    outTexture.isCube = desc.isCube;
     outTexture.format = desc.format;
     outTexture.state = desc.initialState;
 
@@ -110,22 +112,79 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
         }
         D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
         srvDesc.Format = (desc.srvFormat != DXGI_FORMAT_UNKNOWN) ? desc.srvFormat : desc.format;
-        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        srvDesc.Texture2D.MipLevels = desc.mipLevels;
+        if (desc.isCube) {
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+            srvDesc.TextureCube.MipLevels = desc.mipLevels;
+        } else if (outTexture.arraySize > 1) {
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+            srvDesc.Texture2DArray.MipLevels = desc.mipLevels;
+            srvDesc.Texture2DArray.ArraySize = outTexture.arraySize;
+        } else {
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            srvDesc.Texture2D.MipLevels = desc.mipLevels;
+        }
         m_device->CreateShaderResourceView(outTexture.resource.Get(), &srvDesc, outTexture.srv.cpu);
     }
 
     if (desc.allowUnorderedAccess && m_srvHeap != nullptr) {
-        outTexture.uav = m_srvHeap->Allocate();
-        if (!outTexture.uav.IsValid()) {
-            return false;
+        // 配列・キューブは TEXTURE2DARRAY として書き込む。
+        const bool asArray = (outTexture.arraySize > 1);
+        const uint32_t uavMipCount = desc.createMipUavs ? desc.mipLevels : 1;
+
+        outTexture.mipUavs.resize(uavMipCount);
+        for (uint32_t mip = 0; mip < uavMipCount; ++mip) {
+            DescriptorHandle handle = m_srvHeap->Allocate();
+            if (!handle.IsValid()) {
+                return false;
+            }
+
+            D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+            uavDesc.Format = desc.format;
+            if (asArray) {
+                uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+                uavDesc.Texture2DArray.MipSlice = mip;
+                uavDesc.Texture2DArray.ArraySize = outTexture.arraySize;
+            } else {
+                uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+                uavDesc.Texture2D.MipSlice = mip;
+            }
+            m_device->CreateUnorderedAccessView(outTexture.resource.Get(), nullptr, &uavDesc,
+                                                handle.cpu);
+            outTexture.mipUavs[mip] = handle;
         }
-        D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-        uavDesc.Format = desc.format;
-        uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-        m_device->CreateUnorderedAccessView(outTexture.resource.Get(), nullptr, &uavDesc,
-                                            outTexture.uav.cpu);
+        outTexture.uav = outTexture.mipUavs[0];
+    }
+
+    if (desc.createMipSrvs && m_srvHeap != nullptr) {
+        outTexture.mipSrvs.resize(desc.mipLevels);
+        for (uint32_t mip = 0; mip < desc.mipLevels; ++mip) {
+            DescriptorHandle handle = m_srvHeap->Allocate();
+            if (!handle.IsValid()) {
+                return false;
+            }
+
+            D3D12_SHADER_RESOURCE_VIEW_DESC mipSrvDesc = {};
+            mipSrvDesc.Format =
+                (desc.srvFormat != DXGI_FORMAT_UNKNOWN) ? desc.srvFormat : desc.format;
+            mipSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            if (desc.isCube) {
+                mipSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+                mipSrvDesc.TextureCube.MostDetailedMip = mip;
+                mipSrvDesc.TextureCube.MipLevels = 1;
+            } else if (outTexture.arraySize > 1) {
+                mipSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+                mipSrvDesc.Texture2DArray.MostDetailedMip = mip;
+                mipSrvDesc.Texture2DArray.MipLevels = 1;
+                mipSrvDesc.Texture2DArray.ArraySize = outTexture.arraySize;
+            } else {
+                mipSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+                mipSrvDesc.Texture2D.MostDetailedMip = mip;
+                mipSrvDesc.Texture2D.MipLevels = 1;
+            }
+            m_device->CreateShaderResourceView(outTexture.resource.Get(), &mipSrvDesc, handle.cpu);
+            outTexture.mipSrvs[mip] = handle;
+        }
     }
 
     if (desc.allowRenderTarget && m_rtvHeap != nullptr) {
@@ -228,10 +287,57 @@ bool ResourceAllocator::CreateUploadBuffer(uint64_t sizeInBytes, const wchar_t* 
     return true;
 }
 
+bool ResourceAllocator::CreateReadbackBuffer(uint64_t sizeInBytes, const wchar_t* debugName,
+                                            GpuBuffer& outBuffer) {
+    if (!m_allocator || sizeInBytes == 0) {
+        return false;
+    }
+
+    D3D12_RESOURCE_DESC resourceDesc = {};
+    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    resourceDesc.Width = sizeInBytes;
+    resourceDesc.Height = 1;
+    resourceDesc.DepthOrArraySize = 1;
+    resourceDesc.MipLevels = 1;
+    resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
+    resourceDesc.SampleDesc.Count = 1;
+    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    D3D12MA::ALLOCATION_DESC allocDesc = {};
+    allocDesc.HeapType = D3D12_HEAP_TYPE_READBACK;
+
+    D3D12MA::Allocation* allocation = nullptr;
+    ID3D12Resource* resource = nullptr;
+    if (!HM_CHECK_HR(m_allocator->CreateResource(&allocDesc, &resourceDesc,
+                                                 D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                 &allocation, IID_PPV_ARGS(&resource)))) {
+        return false;
+    }
+
+    outBuffer = GpuBuffer{};
+    outBuffer.allocation.Attach(allocation);
+    outBuffer.resource.Attach(resource);
+    outBuffer.sizeInBytes = sizeInBytes;
+    outBuffer.state = D3D12_RESOURCE_STATE_COPY_DEST;
+    if (debugName != nullptr) {
+        outBuffer.resource->SetName(debugName);
+    }
+    return true;
+}
+
 void ResourceAllocator::ReleaseDescriptors(GpuTexture& texture) {
     if (m_srvHeap != nullptr) {
         m_srvHeap->Free(texture.srv);
-        m_srvHeap->Free(texture.uav);
+        // uav は mipUavs[0] と同じハンドルなので、二重解放しないよう mipUavs だけ返す。
+        for (const DescriptorHandle& handle : texture.mipUavs) {
+            m_srvHeap->Free(handle);
+        }
+        texture.mipUavs.clear();
+        for (const DescriptorHandle& handle : texture.mipSrvs) {
+            m_srvHeap->Free(handle);
+        }
+        texture.mipSrvs.clear();
     }
     if (m_rtvHeap != nullptr) {
         m_rtvHeap->Free(texture.rtv);

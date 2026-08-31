@@ -1,6 +1,7 @@
 #pragma once
 
 #include "renderer/Camera.h"
+#include "renderer/Environment.h"
 #include "renderer/Mesh.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
@@ -54,8 +55,13 @@ struct MaterialSettings {
 // シーンを HDR で描き、露出とトーンマップを通して表示用テクスチャへ書き出す。
 class PreviewRenderer {
 public:
-    bool Initialize(rhi::Device& device);
+    bool Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache);
     void Shutdown(rhi::Device& device);
+
+    // 環境マップの作り直しは GPU 待機を伴うため、フレームの外で呼ぶこと。
+    void RequestSkyRebuild() { m_skyRebuildRequested = true; }
+    void RequestHdrLoad(const std::filesystem::path& path) { m_pendingHdrPath = path; }
+    void ProcessPendingEnvironment(rhi::Device& device, rhi::PipelineCache& pipelineCache);
 
     // 表示先のサイズに合わせてレンダーターゲットを作り直す。
     bool Resize(rhi::Device& device, uint32_t width, uint32_t height);
@@ -69,6 +75,13 @@ public:
     MaterialSettings& Material() { return m_material; }
     PreviewShape& Shape() { return m_shape; }
     TonemapMode& Tonemap() { return m_tonemap; }
+    SkySettings& Sky() { return m_sky; }
+    const Environment& GetEnvironment() const { return m_environment; }
+    float& IblIntensity() { return m_iblIntensity; }
+    bool& ShowSkybox() { return m_showSkybox; }
+
+    // 表示用テクスチャを PNG に書き出す。フレームの外で呼ぶこと。
+    bool SaveOutputToPng(rhi::Device& device, const std::filesystem::path& path);
 
     bool HasOutput() const { return m_output.IsValid(); }
     D3D12_GPU_DESCRIPTOR_HANDLE OutputHandle() const { return m_output.srv.gpu; }
@@ -91,8 +104,14 @@ private:
     ExposureSettings m_exposure;
     LightSettings m_light;
     MaterialSettings m_material;
+    Environment m_environment;
+    SkySettings m_sky;
     PreviewShape m_shape = PreviewShape::Sphere;
     TonemapMode m_tonemap = TonemapMode::Aces;
+    float m_iblIntensity = 1.0f;
+    bool m_showSkybox = true;
+    bool m_skyRebuildRequested = false;
+    std::filesystem::path m_pendingHdrPath;
 
     uint32_t m_width = 0;
     uint32_t m_height = 0;

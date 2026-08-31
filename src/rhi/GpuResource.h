@@ -6,7 +6,7 @@
 
 #include <D3D12MemAlloc.h>
 
-#include <string>
+#include <vector>
 
 namespace hm::rhi {
 
@@ -32,26 +32,51 @@ struct GpuTexture {
     uint32_t width = 0;
     uint32_t height = 0;
     uint32_t mipLevels = 1;
+    uint32_t arraySize = 1;
+    bool isCube = false;
     DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
     DescriptorHandle srv;
-    DescriptorHandle uav;
+    DescriptorHandle uav;  // ミップ 0 の UAV
     DescriptorHandle rtv;
     DescriptorHandle dsv;
+    // ミップごとの UAV。プリフィルタのようにミップ単位で書き込むときに使う。
+    std::vector<DescriptorHandle> mipUavs;
+    // ミップごとの SRV。ミップ連鎖の生成中に、書き込み中のミップと
+    // 読み出すミップをサブリソース単位で別状態にするために使う。
+    std::vector<DescriptorHandle> mipSrvs;
 
     bool IsValid() const { return resource != nullptr; }
 
     // bindless 用のインデックス。シェーダへはこの値を渡す。
     uint32_t SrvIndex() const { return srv.index; }
     uint32_t UavIndex() const { return uav.index; }
+    uint32_t MipUavIndex(uint32_t mip) const {
+        return (mip < mipUavs.size()) ? mipUavs[mip].index : kInvalidDescriptorIndex;
+    }
+    uint32_t MipSrvIndex(uint32_t mip) const {
+        return (mip < mipSrvs.size()) ? mipSrvs[mip].index : kInvalidDescriptorIndex;
+    }
+
+    // ミップ mip の全スライスに対応するサブリソース番号。
+    uint32_t SubresourceIndex(uint32_t mip, uint32_t slice) const {
+        return mip + slice * mipLevels;
+    }
 };
 
 struct TextureDesc {
     uint32_t width = 1;
     uint32_t height = 1;
     uint32_t mipLevels = 1;
+    // キューブマップは arraySize = 6, isCube = true にする。
+    uint32_t arraySize = 1;
+    bool isCube = false;
     DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
     bool allowUnorderedAccess = false;
+    // ミップごとの UAV も作る。プリフィルタのようにミップ単位で書き込む場合に必要。
+    bool createMipUavs = false;
+    // ミップごとの SRV も作る。ミップ連鎖の生成に必要。
+    bool createMipSrvs = false;
     bool allowRenderTarget = false;
     bool allowDepthStencil = false;
     bool createSrv = true;
@@ -84,6 +109,10 @@ public:
     // DEFAULT ヒープ上のバッファ。頂点・インデックス・構造化バッファ用。
     bool CreateDefaultBuffer(uint64_t sizeInBytes, D3D12_RESOURCE_STATES initialState,
                              const wchar_t* debugName, GpuBuffer& outBuffer);
+
+    // READBACK ヒープ上のバッファ。GPU の結果を CPU 側へ持ってくる用途に使う。
+    bool CreateReadbackBuffer(uint64_t sizeInBytes, const wchar_t* debugName,
+                              GpuBuffer& outBuffer);
 
     // ディスクリプタを解放してから、リソース本体を呼び出し側の削除キューへ渡せる状態にする。
     void ReleaseDescriptors(GpuTexture& texture);

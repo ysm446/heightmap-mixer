@@ -1,14 +1,14 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-08-31 10:46
+更新日時: 2026-08-31 11:13
 
 ## 現在の状況
 
-**M2a（PBR プレビューレンダラ / 直接光まで）完了。** Debug / Release ともに
-ビルドが通り、起動して球・平面・キューブを GGX 直接光で描画し、
-物理カメラの露出（EV100）と ACES トーンマップを通してビューポートに表示できる。
-次は M2b（IBL）。
+**M2 完了（M2a: 直接光 / M2b: IBL）。** Debug / Release ともにビルドが通り、
+球・平面・キューブを GGX 直接光 + IBL で描画し、物理カメラの露出（EV100）と
+ACES トーンマップを通してビューポートに表示できる。
+HDRI の読み込みとスカイボックス表示にも対応済み。次は M3（合成エンジン v1）。
 
 ## 完了済み
 
@@ -48,6 +48,17 @@
   - M1 の疎通確認用 `shaders/SmokeTest.hlsl` は役目を終えたため削除
     （同じ経路をトーンマップパスが通る）
 
+- 2026-08-31 11:13 — **M2b 完了**。
+  - `renderer/Environment`: equirect → キューブ → irradiance / プリフィルタ / BRDF LUT
+  - `core/ImageIo`: stb による Radiance HDR (.hdr) の読み込みと PNG 書き出し
+  - `rhi/GpuResource` をキューブマップ、配列、ミップ別 UAV / SRV に対応
+  - `rhi/ResourceAllocator` に READBACK バッファを追加
+  - シェーダ: `EnvCommon.hlsli`、`EnvSky`、`EnvEquirectToCube`、`EnvDownsample`、
+    `EnvIrradiance`、`EnvPrefilter`、`EnvBrdfLut`、`Skybox`
+  - `MeshPbr.hlsl` の暫定環境光を分割和近似の IBL に差し替え
+  - グローバルルートシグネチャに equirect 用サンプラ（U ラップ / V クランプ）を追加
+  - 開発用コマンドライン `--hdri` / `--screenshot` / `--screenshot-frame` を追加
+
 ## 環境の実測値（2026-08-31 時点）
 
 - Visual Studio Community 2026 (18.7.11925.98) / MSVC 14.51.36231
@@ -61,16 +72,16 @@
 
 ## 次にやること
 
-M2b（IBL）。
+M3（合成エンジン v1）。
 
-1. HDRI（.hdr / .exr）の読み込み。stb_image か tinyexr を vcpkg に追加する。
-2. equirectangular → キューブマップ変換（コンピュート）。
-3. irradiance キューブマップの生成（拡散）。
-4. prefiltered specular キューブマップの生成（ラフネス別ミップ）。
-5. BRDF LUT の生成。
-6. スカイボックス表示と、`MeshPbr.hlsl` の暫定環境光を IBL に差し替え。
+1. レイヤースタックのデータモデル（レイヤー、マスク、ブレンドモード）。
+2. GPU 評価器。出力タイル矩形と解像度を引数に取る形を最初から通す。
+3. チャンネル 4 枚（BaseColor / Normal / Surface / Height）への評価。
+4. ハイトベースブレンドと RNM。
+5. 評価結果を M2 のプレビューマテリアルへ直結。
+6. レイヤー UI。
 
-キューブマップを扱うため、`GpuTexture` を配列・キューブ・ミップ別 UAV に対応させる必要がある。
+評価結果をメッシュに貼るため、`MeshPbr.hlsl` をテクスチャ参照（bindless）に対応させる。
 
 - 2026-08-31 10:12 — **M1 完了**。
   - `rhi/GpuResource`（D3D12MemoryAllocator によるテクスチャ / バッファ生成とディスクリプタ確保）
@@ -83,6 +94,23 @@ M2b（IBL）。
     ImGui のプレビューウィンドウへ表示
 
 ## 注意点
+
+- **キューブのミップ連鎖はサブリソース単位で遷移させる**: 読むミップを
+  読み取り状態、書くミップを UAV 状態にする必要がある。リソース全体を覆う SRV では
+  状態が混在してしまうため、`createMipSrvs` で作ったミップ別 SRV を使う。
+
+- **irradiance マップの中身は `E / pi`**: 余弦重み付きサンプリングの平均放射輝度。
+  シェーディング側で `diffuseColor` を掛けるだけでよい。pi を二重に割らないこと。
+
+- **環境マップに太陽を入れない**: ディレクショナルライトと二重計上になるうえ、
+  256^2 のキューブでは点光源がエイリアスとファイアフライの原因になる。
+
+- **環境の再構築はフレームの外で行う**: `Device::ExecuteImmediate` は GPU 待機を伴うため、
+  UI からの要求はフラグに積み、次フレームの頭で `ProcessPendingEnvironment` が処理する。
+
+- **描画結果の確認は `--screenshot` を使う**: リモートデスクトップ経由だと
+  画面キャプチャが失敗することがある。アプリ側でビューポートを PNG に書き出せるので、
+  そちらを使うほうが確実。`--hdri` と併用すれば環境の確認もできる。
 
 - **グローバルルートシグネチャに `ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT` が必須**:
   入力レイアウトを使うグラフィックス PSO は、このフラグが無いと

@@ -1,5 +1,6 @@
 #include "renderer/PreviewRenderer.h"
 
+#include "core/ImageIo.h"
 #include "core/Log.h"
 
 #include <pix3.h>
@@ -35,7 +36,26 @@ struct MeshConstants {
     float roughness;
 
     float metallic;
-    float pad2[3];
+    float iblIntensity;
+    uint32_t prefilteredMipCount;
+    float pad2;
+
+    uint32_t irradianceIndex;
+    uint32_t prefilteredIndex;
+    uint32_t brdfLutIndex;
+    uint32_t pad3;
+};
+
+// GPU 側の SkyboxConstants と一致させること。
+struct SkyboxConstants {
+    XMFLOAT4X4 inverseViewProjection;
+
+    XMFLOAT3 cameraPosition;
+    float intensity;
+
+    uint32_t environmentIndex;
+    uint32_t mipLevel;
+    float pad0[2];
 };
 
 struct TonemapConstants {
@@ -80,7 +100,7 @@ XMFLOAT3 LightSettings::Direction() const {
                     cosElevation * std::cos(azimuth)};
 }
 
-bool PreviewRenderer::Initialize(rhi::Device& device) {
+bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache) {
     if (!m_sphere.Create(device, MakeSphere(64, 32, 1.0f), L"SphereMesh")) {
         return false;
     }
@@ -90,14 +110,38 @@ bool PreviewRenderer::Initialize(rhi::Device& device) {
     if (!m_cube.Create(device, MakeCube(1.4f), L"CubeMesh")) {
         return false;
     }
+    if (!m_environment.Initialize(device, pipelineCache)) {
+        return false;
+    }
     return true;
 }
 
 void PreviewRenderer::Shutdown(rhi::Device& device) {
+    m_environment.Shutdown(device);
     m_sphere.Release(device);
     m_plane.Release(device);
     m_cube.Release(device);
     ReleaseTargets(device);
+}
+
+void PreviewRenderer::ProcessPendingEnvironment(rhi::Device& device,
+                                                rhi::PipelineCache& pipelineCache) {
+    if (!m_pendingHdrPath.empty()) {
+        const std::filesystem::path path = m_pendingHdrPath;
+        m_pendingHdrPath.clear();
+        if (!m_environment.BuildFromHdrFile(device, pipelineCache, path)) {
+            // 読み込みに失敗したら手続き的な空へ戻す。
+            HM_LOG_WARN("HDRI の読み込みに失敗したため、手続き的な空に戻します");
+            m_environment.BuildFromSky(device, pipelineCache, m_sky);
+        }
+        m_skyRebuildRequested = false;
+        return;
+    }
+
+    if (m_skyRebuildRequested) {
+        m_skyRebuildRequested = false;
+        m_environment.BuildFromSky(device, pipelineCache, m_sky);
+    }
 }
 
 const Mesh& PreviewRenderer::CurrentMesh() const {
@@ -122,6 +166,56 @@ void PreviewRenderer::ReleaseTargets(rhi::Device& device) {
     }
     m_width = 0;
     m_height = 0;
+}
+
+bool PreviewRenderer::SaveOutputToPng(rhi::Device& device, const std::filesystem::path& path) {
+    if (!m_output.IsValid()) {
+        return false;
+    }
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT rowCount = 0;
+    UINT64 rowSizeInBytes = 0;
+    UINT64 totalBytes = 0;
+    const D3D12_RESOURCE_DESC resourceDesc = m_output.resource->GetDesc();
+    device.GetDevice()->GetCopyableFootprints(&resourceDesc, 0, 1, 0, &footprint, &rowCount,
+                                              &rowSizeInBytes, &totalBytes);
+
+    rhi::GpuBuffer readback;
+    if (!device.Allocator().CreateReadbackBuffer(totalBytes, L"PreviewReadback", readback)) {
+        return false;
+    }
+
+    const D3D12_RESOURCE_STATES previousState = m_output.state;
+    const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+        TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_COPY_SOURCE);
+
+        const CD3DX12_TEXTURE_COPY_LOCATION destination(readback.resource.Get(), footprint);
+        const CD3DX12_TEXTURE_COPY_LOCATION source(m_output.resource.Get(), 0);
+        commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+
+        TransitionIfNeeded(commandList, m_output, previousState);
+    });
+    if (!executed) {
+        return false;
+    }
+
+    void* mapped = nullptr;
+    const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(totalBytes)};
+    if (!HM_CHECK_HR(readback.resource->Map(0, &readRange, &mapped))) {
+        return false;
+    }
+
+    const bool saved =
+        SaveRgba8Png(path, m_width, m_height, footprint.Footprint.RowPitch,
+                     static_cast<const uint8_t*>(mapped) + footprint.Offset);
+
+    const D3D12_RANGE writtenRange = {0, 0};
+    readback.resource->Unmap(0, &writtenRange);
+
+    device.Defer(readback.resource);
+    device.Defer(readback.allocation);
+    return saved;
 }
 
 bool PreviewRenderer::Resize(rhi::Device& device, uint32_t width, uint32_t height) {
@@ -247,6 +341,11 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.baseColor = m_material.baseColor;
     constants.roughness = m_material.roughness;
     constants.metallic = m_material.metallic;
+    constants.iblIntensity = m_environment.IsReady() ? m_iblIntensity : 0.0f;
+    constants.prefilteredMipCount = m_environment.PrefilteredMipCount();
+    constants.irradianceIndex = m_environment.IrradianceSrvIndex();
+    constants.prefilteredIndex = m_environment.PrefilteredSrvIndex();
+    constants.brdfLutIndex = m_environment.BrdfLutSrvIndex();
 
     const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(MeshConstants), 256);
     if (!cb.IsValid()) {
@@ -261,6 +360,48 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     mesh.Draw(commandList);
 
     PIXEndEvent(commandList);
+
+    // --- スカイボックス ----------------------------------------------------
+    // メッシュのあとに描く。深度は書かず、まだ何も描かれていない画素だけを埋める。
+    if (m_showSkybox && m_environment.IsReady()) {
+        rhi::GraphicsPipelineDesc skyboxPipelineDesc;
+        skyboxPipelineDesc.shaderPath = L"Skybox.hlsl";
+        skyboxPipelineDesc.vertexEntry = L"VsMain";
+        skyboxPipelineDesc.pixelEntry = L"PsMain";
+        skyboxPipelineDesc.rtvFormat = kSceneColorFormat;
+        skyboxPipelineDesc.dsvFormat = kDepthFormat;
+        skyboxPipelineDesc.layout = rhi::VertexLayout::None;
+        skyboxPipelineDesc.cullMode = D3D12_CULL_MODE_NONE;
+        skyboxPipelineDesc.depthTest = true;
+        skyboxPipelineDesc.depthWrite = false;
+
+        ID3D12PipelineState* skyboxPipeline = pipelineCache.GetGraphics(skyboxPipelineDesc);
+        const rhi::UploadAllocation skyboxCb =
+            device.Upload().Allocate(sizeof(SkyboxConstants), 256);
+
+        if (skyboxPipeline != nullptr && skyboxCb.IsValid()) {
+            PIXBeginEvent(commandList, PIX_COLOR(120, 160, 220), "PreviewSkybox");
+
+            SkyboxConstants skyboxConstants = {};
+            // メッシュ側と同じ理由で転置は入れない。
+            XMStoreFloat4x4(&skyboxConstants.inverseViewProjection,
+                            XMMatrixInverse(nullptr, XMMatrixMultiply(view, projection)));
+            skyboxConstants.cameraPosition = m_camera.Position();
+            skyboxConstants.intensity = m_iblIntensity;
+            skyboxConstants.environmentIndex = m_environment.EnvironmentSrvIndex();
+            skyboxConstants.mipLevel = 0;
+            std::memcpy(skyboxCb.cpu, &skyboxConstants, sizeof(skyboxConstants));
+
+            commandList->SetPipelineState(skyboxPipeline);
+            commandList->SetGraphicsRootConstantBufferView(1, skyboxCb.gpuAddress);
+            commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            commandList->IASetVertexBuffers(0, 0, nullptr);
+            commandList->IASetIndexBuffer(nullptr);
+            commandList->DrawInstanced(3, 1, 0, 0);
+
+            PIXEndEvent(commandList);
+        }
+    }
 
     PIXBeginEvent(commandList, PIX_COLOR(200, 120, 80), "PreviewTonemap");
 

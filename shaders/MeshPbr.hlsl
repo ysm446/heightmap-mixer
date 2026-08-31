@@ -2,6 +2,7 @@
 // 出力はトーンマップ前の線形放射輝度で、露出は後段の TonemapPass で掛ける。
 
 #include "Brdf.hlsli"
+#include "EnvCommon.hlsli"
 
 struct MeshConstants
 {
@@ -22,7 +23,14 @@ struct MeshConstants
     float roughness;
 
     float metallic;
-    float3 pad2;
+    float iblIntensity;
+    uint prefilteredMipCount;
+    float pad2;
+
+    uint irradianceIndex;    // irradiance キューブの SRV
+    uint prefilteredIndex;   // プリフィルタ済みキューブの SRV
+    uint brdfLutIndex;       // 環境 BRDF の LUT
+    uint pad3;
 };
 
 ConstantBuffer<MeshConstants> g_mesh : register(b1);
@@ -71,13 +79,31 @@ float4 PsMain(VsOutput input) : SV_Target
                                             normalize(g_mesh.lightDirection), g_mesh.lightColor,
                                             g_mesh.lightIlluminance, diffuseColor, f0, roughness);
 
-    // IBL 導入までの繋ぎ。空と地面をおおまかに模した環境光を足しておく。
-    // M2b で prefiltered environment に置き換える。
-    const float upness = normal.y * 0.5f + 0.5f;
-    const float3 skyColor = float3(0.30f, 0.42f, 0.60f);
-    const float3 groundColor = float3(0.18f, 0.16f, 0.14f);
-    const float3 ambient = lerp(groundColor, skyColor, upness) * g_mesh.lightIlluminance * 0.03f;
-    radiance += diffuseColor * ambient * DiffuseLambert();
+    // --- IBL（分割和近似） -------------------------------------------------
+    const float nDotV = saturate(dot(normal, viewDirection)) + 1e-5f;
+
+    TextureCube<float4> irradianceMap = ResourceDescriptorHeap[g_mesh.irradianceIndex];
+    TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[g_mesh.prefilteredIndex];
+    Texture2D<float2> brdfLut = ResourceDescriptorHeap[g_mesh.brdfLutIndex];
+
+    // irradiance マップには E / pi（平均放射輝度）が入っているので、
+    // diffuseColor を掛けるだけでよい。
+    const float3 irradiance = irradianceMap.SampleLevel(g_samplerLinearClamp, normal, 0.0f).rgb;
+
+    const float3 fresnel = FresnelSchlickRoughness(f0, nDotV, roughness);
+    const float3 kD = 1.0f - fresnel;
+    const float3 diffuseIbl = kD * diffuseColor * irradiance;
+
+    const float3 reflectionDirection = reflect(-viewDirection, normal);
+    const float mipLevel = roughness * float(max(g_mesh.prefilteredMipCount, 1u) - 1u);
+    const float3 prefiltered =
+        prefilteredMap.SampleLevel(g_samplerLinearClamp, reflectionDirection, mipLevel).rgb;
+
+    const float2 environmentBrdf =
+        brdfLut.SampleLevel(g_samplerLinearClamp, float2(nDotV, roughness), 0.0f);
+    const float3 specularIbl = prefiltered * (f0 * environmentBrdf.x + environmentBrdf.y);
+
+    radiance += (diffuseIbl + specularIbl) * g_mesh.iblIntensity;
 
     return float4(radiance, 1.0f);
 }

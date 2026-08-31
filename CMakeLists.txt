@@ -73,6 +73,7 @@ find_package(winpixevent CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(D3D12MemoryAllocator CONFIG REQUIRED)
 find_package(directx-dxc CONFIG REQUIRED)
+find_package(Stb REQUIRED)
 
 set(hm_sources
     src/app/Main.cpp
@@ -80,6 +81,8 @@ set(hm_sources
     src/app/Application.h
     src/core/Log.cpp
     src/core/Log.h
+    src/core/ImageIo.cpp
+    src/core/ImageIo.h
     src/core/Window.cpp
     src/core/Window.h
     src/rhi/Common.cpp
@@ -100,6 +103,8 @@ set(hm_sources
     src/rhi/UploadRing.h
     src/renderer/Camera.cpp
     src/renderer/Camera.h
+    src/renderer/Environment.cpp
+    src/renderer/Environment.h
     src/renderer/Mesh.cpp
     src/renderer/Mesh.h
     src/renderer/PreviewRenderer.cpp
@@ -117,7 +122,10 @@ add_executable(heightmap_mixer WIN32 ${hm_sources} ${hm_shaders})
 
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" PREFIX "src" FILES ${hm_sources})
 
-target_include_directories(heightmap_mixer PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(heightmap_mixer PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${Stb_INCLUDE_DIR}"
+)
 
 target_compile_definitions(heightmap_mixer PRIVATE
     UNICODE
@@ -146,6 +154,7 @@ target_link_libraries(heightmap_mixer PRIVATE
     d3d12
     dxgi
     dxguid
+    shell32
 )
 
 # --- Agility SDK の DLL を実行ファイル横の D3D12/ に配置する ---------------
