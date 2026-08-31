@@ -9,6 +9,9 @@
 
 #define HM_SOURCE_CONSTANT 0
 #define HM_SOURCE_NOISE    1
+#define HM_SOURCE_TEXTURE  2
+
+static const uint kInvalidTextureIndex = 0xFFFFFFFFu;
 
 #define HM_FLAG_MASK_INVERT 0x1u
 #define HM_FLAG_BASE_LAYER  0x2u
@@ -27,28 +30,67 @@ struct LayerConstants
     float4 maskParams;     // constant, levelsLow, levelsHigh, maskSource
     float4 heightNoise;    // scale, amount, octaves, offset
     float4 maskNoise;      // scale, amount, octaves, offset
+
+    // 参照するテクスチャの SRV インデックス。kInvalidTextureIndex なら定数を使う。
+    uint4 textureIndices0;  // baseColor, normal, roughness, metallic
+    uint4 textureIndices1;  // ao, height, mask, 未使用
 };
 
 ConstantBuffer<LayerConstants> g_layer : register(b1);
 
-float SampleLayerHeight(float2 uv)
+// コンピュートシェーダでは暗黙の LOD が使えないため、出力テクセル 1 つが張る
+// UV 幅からミップレベルを求めて SampleLevel する。
+float TextureLod(Texture2D<float4> texture, float uvPerOutputTexel)
+{
+    uint width = 0;
+    uint height = 0;
+    uint mipCount = 0;
+    texture.GetDimensions(0, width, height, mipCount);
+
+    const float texelsPerOutputTexel = max(float(width) * uvPerOutputTexel, 1.0f);
+    return clamp(log2(texelsPerOutputTexel), 0.0f, float(max(mipCount, 1u) - 1u));
+}
+
+float4 SampleLayerTexture(uint index, float2 uv, float uvPerOutputTexel)
+{
+    Texture2D<float4> texture = ResourceDescriptorHeap[index];
+    return texture.SampleLevel(g_samplerLinearWrap, uv, TextureLod(texture, uvPerOutputTexel));
+}
+
+float SampleLayerHeight(float2 uv, float uvPerOutputTexel)
 {
     float height = g_layer.surfaceParams.w;
-    if (g_layer.blendParams.w == HM_SOURCE_NOISE)
+
+    const uint source = uint(g_layer.blendParams.w);
+    if (source == HM_SOURCE_NOISE)
     {
         const float2 p = uv * g_layer.heightNoise.x + g_layer.heightNoise.w;
         height += Fbm(p, int(g_layer.heightNoise.z)) * g_layer.heightNoise.y;
     }
+    else if (source == HM_SOURCE_TEXTURE && g_layer.textureIndices1.y != kInvalidTextureIndex)
+    {
+        const float sampled =
+            SampleLayerTexture(g_layer.textureIndices1.y, uv, uvPerOutputTexel).r;
+        height += sampled * g_layer.heightNoise.y;
+    }
+
     return height;
 }
 
-float SampleLayerMask(float2 uv)
+float SampleLayerMask(float2 uv, float uvPerOutputTexel)
 {
     float mask = g_layer.maskParams.x;
-    if (g_layer.maskParams.w == HM_SOURCE_NOISE)
+
+    const uint source = uint(g_layer.maskParams.w);
+    if (source == HM_SOURCE_NOISE)
     {
         const float2 p = uv * g_layer.maskNoise.x + g_layer.maskNoise.w;
         mask += (Fbm(p, int(g_layer.maskNoise.z)) - 0.5f) * g_layer.maskNoise.y;
+    }
+    else if (source == HM_SOURCE_TEXTURE && g_layer.textureIndices1.z != kInvalidTextureIndex)
+    {
+        // テクスチャの場合、定数は不透明度の倍率として働く。
+        mask *= SampleLayerTexture(g_layer.textureIndices1.z, uv, uvPerOutputTexel).r;
     }
 
     const bool invert = (g_layer.flags & HM_FLAG_MASK_INVERT) != 0u;
@@ -62,18 +104,28 @@ static const float kNormalGradientScale = 0.03f;
 
 // ハイトの勾配からタンジェント空間法線を作る。解像度に依らない値になるよう、
 // テクセル差ではなく UV 単位の微分を取る。
-float3 ComputeLayerNormal(float2 uv, float2 texelSize)
+// 法線テクスチャが指定されている場合はそちらを使う。
+float3 ComputeLayerNormal(float2 uv, float2 texelSize, float uvPerOutputTexel)
 {
     const float strength = g_layer.blendParams.y;
+
+    if (g_layer.textureIndices0.y != kInvalidTextureIndex)
+    {
+        const float3 sampled =
+            SampleLayerTexture(g_layer.textureIndices0.y, uv, uvPerOutputTexel).rgb;
+        const float3 tangentNormal = normalize(sampled * 2.0f - 1.0f);
+        return FlattenNormal(tangentNormal, strength);
+    }
+
     if (strength <= 0.0f)
     {
         return float3(0.0f, 0.0f, 1.0f);
     }
 
-    const float hx0 = SampleLayerHeight(uv - float2(texelSize.x, 0.0f));
-    const float hx1 = SampleLayerHeight(uv + float2(texelSize.x, 0.0f));
-    const float hy0 = SampleLayerHeight(uv - float2(0.0f, texelSize.y));
-    const float hy1 = SampleLayerHeight(uv + float2(0.0f, texelSize.y));
+    const float hx0 = SampleLayerHeight(uv - float2(texelSize.x, 0.0f), uvPerOutputTexel);
+    const float hx1 = SampleLayerHeight(uv + float2(texelSize.x, 0.0f), uvPerOutputTexel);
+    const float hy0 = SampleLayerHeight(uv - float2(0.0f, texelSize.y), uvPerOutputTexel);
+    const float hy1 = SampleLayerHeight(uv + float2(0.0f, texelSize.y), uvPerOutputTexel);
 
     // テクセル間隔で正規化した勾配。強さで倍率を掛ける。
     const float dx = (hx1 - hx0) * 0.5f / max(texelSize.x, 1e-6f);
@@ -102,20 +154,41 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float2 uv = (float2(texel) + 0.5f) * texelSize * g_layer.blendParams.z;
     const float2 noiseTexelSize = texelSize * g_layer.blendParams.z;
 
+    // 出力テクセル 1 つが張る UV 幅。テクスチャのミップ選択に使う。
+    const float uvPerOutputTexel = texelSize.x * g_layer.blendParams.z;
+
     // --- レイヤーの値 ------------------------------------------------------
-    const float3 layerBaseColor = g_layer.baseColor.rgb;
-    const float layerRoughness = g_layer.surfaceParams.x;
-    const float layerMetallic = g_layer.surfaceParams.y;
-    const float layerAo = g_layer.surfaceParams.z;
-    const float layerHeight = SampleLayerHeight(uv);
-    const float3 layerNormal = ComputeLayerNormal(uv, noiseTexelSize);
+    float3 layerBaseColor = g_layer.baseColor.rgb;
+    float layerRoughness = g_layer.surfaceParams.x;
+    float layerMetallic = g_layer.surfaceParams.y;
+    float layerAo = g_layer.surfaceParams.z;
+
+    if (g_layer.textureIndices0.x != kInvalidTextureIndex)
+    {
+        layerBaseColor *= SampleLayerTexture(g_layer.textureIndices0.x, uv, uvPerOutputTexel).rgb;
+    }
+    if (g_layer.textureIndices0.z != kInvalidTextureIndex)
+    {
+        layerRoughness = SampleLayerTexture(g_layer.textureIndices0.z, uv, uvPerOutputTexel).r;
+    }
+    if (g_layer.textureIndices0.w != kInvalidTextureIndex)
+    {
+        layerMetallic = SampleLayerTexture(g_layer.textureIndices0.w, uv, uvPerOutputTexel).r;
+    }
+    if (g_layer.textureIndices1.x != kInvalidTextureIndex)
+    {
+        layerAo = SampleLayerTexture(g_layer.textureIndices1.x, uv, uvPerOutputTexel).r;
+    }
+
+    const float layerHeight = SampleLayerHeight(uv, uvPerOutputTexel);
+    const float3 layerNormal = ComputeLayerNormal(uv, noiseTexelSize, uvPerOutputTexel);
 
     const bool isBaseLayer = (g_layer.flags & HM_FLAG_BASE_LAYER) != 0u;
 
     float weight = 1.0f;
     if (!isBaseLayer)
     {
-        const float mask = SampleLayerMask(uv);
+        const float mask = SampleLayerMask(uv, uvPerOutputTexel);
         const float destinationHeight = heightTarget[texel];
         weight = HeightBlendWeight(destinationHeight, layerHeight, mask, g_layer.blendParams.x);
     }

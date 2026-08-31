@@ -86,6 +86,8 @@ set(hm_sources
     src/compositor/MaterialLayer.h
     src/compositor/MaterialStack.cpp
     src/compositor/MaterialStack.h
+    src/compositor/TextureLibrary.cpp
+    src/compositor/TextureLibrary.h
     src/core/ImageIo.cpp
     src/core/ImageIo.h
     src/core/Window.cpp

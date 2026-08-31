@@ -18,7 +18,8 @@ __declspec(dllexport) extern const char* D3D12SDKPath = ".\\D3D12\\";
 namespace {
 
 // 使い方:
-//   heightmap_mixer.exe [--hdri <path>] [--screenshot <path>] [--screenshot-frame <n>]
+//   heightmap_mixer.exe [--hdri <path>] [--texture <path>]...
+//                       [--screenshot <path>] [--screenshot-frame <n>]
 hm::StartupOptions ParseCommandLine() {
     hm::StartupOptions options;
 
@@ -32,6 +33,9 @@ hm::StartupOptions ParseCommandLine() {
         const std::wstring argument = argv[i];
         if (argument == L"--hdri" && (i + 1) < argc) {
             options.hdriPath = argv[i + 1];
+            ++i;
+        } else if (argument == L"--texture" && (i + 1) < argc) {
+            options.texturePaths.emplace_back(argv[i + 1]);
             ++i;
         } else if (argument == L"--screenshot" && (i + 1) < argc) {
             options.screenshotPath = argv[i + 1];

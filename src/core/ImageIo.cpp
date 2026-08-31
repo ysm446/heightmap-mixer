@@ -10,6 +10,30 @@
 
 namespace hm {
 
+bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
+    outImage = LdrImage{};
+
+    const std::string utf8Path = path.string();
+
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    stbi_uc* data = ::stbi_load(utf8Path.c_str(), &width, &height, &channels, 4);
+    if (data == nullptr) {
+        HM_LOG_ERROR("画像を読み込めません: %s (%s)", utf8Path.c_str(), ::stbi_failure_reason());
+        return false;
+    }
+
+    outImage.width = static_cast<uint32_t>(width);
+    outImage.height = static_cast<uint32_t>(height);
+    outImage.pixels.assign(data, data + static_cast<size_t>(width) * height * 4);
+    ::stbi_image_free(data);
+
+    HM_LOG_INFO("画像を読み込みました: %s (%d x %d, %d ch)", utf8Path.c_str(), width, height,
+                channels);
+    return true;
+}
+
 bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {
     outImage = HdrImage{};
 

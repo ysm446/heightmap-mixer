@@ -36,6 +36,8 @@ struct LayerConstants {
     float maskParams[4];
     float heightNoise[4];
     float maskNoise[4];
+    uint32_t textureIndices0[4];
+    uint32_t textureIndices1[4];
 };
 
 uint32_t DispatchCount(uint32_t threads) {
@@ -121,7 +123,8 @@ bool MaterialEvaluator::Resize(rhi::Device& device, uint32_t resolution) {
 
 void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                  ID3D12GraphicsCommandList* commandList,
-                                 const MaterialStack& stack, const TileRect& tile) {
+                                 const MaterialStack& stack, const TextureLibrary& textures,
+                                 const TileRect& tile) {
     if (!m_textures.IsValid() || tile.width == 0 || tile.height == 0) {
         return;
     }
@@ -211,6 +214,16 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         constants.maskNoise[2] = static_cast<float>(layer.mask.noise.octaves);
         constants.maskNoise[3] = layer.mask.noise.offset;
 
+        // ベースカラーだけ sRGB として読む。それ以外はリニア。
+        constants.textureIndices0[0] = textures.SrvIndex(layer.textures.baseColor, true);
+        constants.textureIndices0[1] = textures.SrvIndex(layer.textures.normal, false);
+        constants.textureIndices0[2] = textures.SrvIndex(layer.textures.roughness, false);
+        constants.textureIndices0[3] = textures.SrvIndex(layer.textures.metallic, false);
+        constants.textureIndices1[0] = textures.SrvIndex(layer.textures.ambientOcclusion, false);
+        constants.textureIndices1[1] = textures.SrvIndex(layer.textures.height, false);
+        constants.textureIndices1[2] = textures.SrvIndex(layer.textures.mask, false);
+        constants.textureIndices1[3] = kInvalidTextureIndex;
+
         const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(LayerConstants), 256);
         if (!cb.IsValid()) {
             break;
@@ -245,7 +258,8 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
 
 void MaterialEvaluator::EvaluateIfDirty(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                         ID3D12GraphicsCommandList* commandList,
-                                        const MaterialStack& stack) {
+                                        const MaterialStack& stack,
+                                        const TextureLibrary& textures) {
     if (m_evaluatedRevision == stack.Revision()) {
         return;
     }
@@ -258,7 +272,7 @@ void MaterialEvaluator::EvaluateIfDirty(rhi::Device& device, rhi::PipelineCache&
             tile.y = y;
             tile.width = std::min(m_tileSize, m_resolution - x);
             tile.height = std::min(m_tileSize, m_resolution - y);
-            Evaluate(device, pipelineCache, commandList, stack, tile);
+            Evaluate(device, pipelineCache, commandList, stack, textures, tile);
             ++m_evaluatedTileCount;
         }
     }

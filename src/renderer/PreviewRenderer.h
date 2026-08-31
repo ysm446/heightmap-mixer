@@ -1,6 +1,7 @@
 #pragma once
 
 #include "compositor/MaterialEvaluator.h"
+#include "compositor/TextureLibrary.h"
 #include "renderer/Camera.h"
 #include "renderer/Environment.h"
 #include "renderer/Mesh.h"
@@ -70,7 +71,8 @@ public:
     bool Resize(rhi::Device& device, uint32_t width, uint32_t height);
 
     void Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                ID3D12GraphicsCommandList* commandList, const compositor::MaterialStack& stack);
+                ID3D12GraphicsCommandList* commandList, const compositor::MaterialStack& stack,
+                const compositor::TextureLibrary& textures);
 
     Camera& GetCamera() { return m_camera; }
     ExposureSettings& Exposure() { return m_exposure; }

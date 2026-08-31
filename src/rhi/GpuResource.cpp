@@ -140,7 +140,7 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
             }
 
             D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-            uavDesc.Format = desc.format;
+            uavDesc.Format = (desc.uavFormat != DXGI_FORMAT_UNKNOWN) ? desc.uavFormat : desc.format;
             if (asArray) {
                 uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
                 uavDesc.Texture2DArray.MipSlice = mip;

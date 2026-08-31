@@ -22,11 +22,26 @@ inline constexpr uint32_t ChannelBit(Channel channel) {
 
 inline constexpr uint32_t kAllChannelBits = 0xFu;
 
-// レイヤーの値の出どころ。M3a では定数とノイズのみ。
-// テクスチャは M3b で追加する。
+// レイヤーの値の出どころ。
 enum class ValueSource : uint32_t {
     Constant = 0,
     Noise = 1,
+    Texture = 2,
+};
+
+// テクスチャの ID。0 は「なし」。TextureLibrary が払い出す。
+using TextureId = uint32_t;
+inline constexpr TextureId kNoTexture = 0;
+
+// レイヤーが参照するテクスチャ。0 のスロットは定数値を使う。
+struct LayerTextures {
+    TextureId baseColor = kNoTexture;         // sRGB として読む
+    TextureId normal = kNoTexture;            // タンジェント空間法線（リニア）
+    TextureId roughness = kNoTexture;         // R チャンネル
+    TextureId metallic = kNoTexture;          // R チャンネル
+    TextureId ambientOcclusion = kNoTexture;  // R チャンネル
+    TextureId height = kNoTexture;            // R チャンネル
+    TextureId mask = kNoTexture;              // R チャンネル
 };
 
 // フラクタルノイズのパラメータ。ハイトとマスクで共通に使う。
@@ -69,6 +84,8 @@ struct MaterialLayer {
     float normalStrength = 1.0f;
 
     LayerMask mask;
+
+    LayerTextures textures;
 
     // ハイトブレンドの境界の柔らかさ。0 に近いほど硬い置き換えになる。
     float blendRange = 0.15f;

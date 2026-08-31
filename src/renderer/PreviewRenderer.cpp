@@ -295,13 +295,14 @@ bool PreviewRenderer::Resize(rhi::Device& device, uint32_t width, uint32_t heigh
 
 void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                              ID3D12GraphicsCommandList* commandList,
-                             const compositor::MaterialStack& stack) {
+                             const compositor::MaterialStack& stack,
+                             const compositor::TextureLibrary& textures) {
     if (!m_sceneColor.IsValid() || !m_output.IsValid()) {
         return;
     }
 
     // レイヤースタックに変更があれば、メッシュを描く前に評価し直す。
-    m_evaluator.EvaluateIfDirty(device, pipelineCache, commandList, stack);
+    m_evaluator.EvaluateIfDirty(device, pipelineCache, commandList, stack, textures);
 
     rhi::GraphicsPipelineDesc meshPipelineDesc;
     meshPipelineDesc.shaderPath = L"MeshPbr.hlsl";

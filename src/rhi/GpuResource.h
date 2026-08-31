@@ -80,8 +80,10 @@ struct TextureDesc {
     bool allowRenderTarget = false;
     bool allowDepthStencil = false;
     bool createSrv = true;
-    // 深度テクスチャは SRV とリソースでフォーマットが異なるため個別に指定する。
+    // TYPELESS で作る場合など、ビューのフォーマットをリソースと変えたいときに指定する。
+    // 深度テクスチャも SRV とリソースでフォーマットが異なる。
     DXGI_FORMAT srvFormat = DXGI_FORMAT_UNKNOWN;
+    DXGI_FORMAT uavFormat = DXGI_FORMAT_UNKNOWN;
     float clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
     float clearDepth = 1.0f;
     D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COMMON;

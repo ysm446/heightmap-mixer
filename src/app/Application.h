@@ -1,6 +1,7 @@
 #pragma once
 
 #include "compositor/MaterialStack.h"
+#include "compositor/TextureLibrary.h"
 #include "core/Window.h"
 #include "renderer/PreviewRenderer.h"
 #include "rhi/Device.h"
@@ -9,6 +10,7 @@
 #include "ui/ImGuiLayer.h"
 
 #include <filesystem>
+#include <vector>
 
 namespace hm {
 
@@ -16,6 +18,8 @@ namespace hm {
 struct StartupOptions {
     // 起動時に読み込む HDRI。空なら手続き的な空を使う。
     std::filesystem::path hdriPath;
+    // 起動時にテクスチャライブラリへ読み込む画像。--texture を繰り返し指定できる。
+    std::vector<std::filesystem::path> texturePaths;
     // 指定すると、数フレーム描いてからビューポートを PNG に書き出して終了する。
     // 画面キャプチャに頼らず描画結果を確認するための開発用オプション。
     std::filesystem::path screenshotPath;
@@ -44,7 +48,11 @@ private:
     rhi::PipelineCache m_pipelineCache;
     renderer::PreviewRenderer m_renderer;
     compositor::MaterialStack m_materialStack;
+    compositor::TextureLibrary m_textureLibrary;
     int m_selectedLayer = 0;
+    // テクスチャ読み込みの入力欄と、フレーム外で処理するための保留パス。
+    char m_texturePathBuffer[512] = {};
+    std::filesystem::path m_pendingTexturePath;
     ImGuiLayer m_imgui;
 
     // ビューポートの表示サイズ。UI 側で決まり、次のフレーム頭で反映する。

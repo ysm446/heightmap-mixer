@@ -76,6 +76,35 @@ void SetDefaultWindowRect(bool apply, float relativeX, float relativeY, float re
 
 }  // namespace
 
+// テクスチャスロットの選択 UI。ライブラリの一覧からコンボで選ぶ。
+static bool DrawTextureSlot(const char* label, compositor::TextureId& slot,
+                            const compositor::TextureLibrary& library) {
+    const std::vector<compositor::LibraryTexture>& entries = library.Entries();
+
+    std::string preview = "なし";
+    if (const compositor::LibraryTexture* current = library.Find(slot); current != nullptr) {
+        preview = current->name;
+    }
+
+    bool changed = false;
+    if (ImGui::BeginCombo(label, preview.c_str())) {
+        if (ImGui::Selectable("なし", slot == compositor::kNoTexture)) {
+            slot = compositor::kNoTexture;
+            changed = true;
+        }
+        for (const compositor::LibraryTexture& entry : entries) {
+            ImGui::PushID(static_cast<int>(entry.id));
+            if (ImGui::Selectable(entry.name.c_str(), slot == entry.id)) {
+                slot = entry.id;
+                changed = true;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
 bool Application::Initialize(const StartupOptions& options) {
     m_options = options;
 
@@ -122,6 +151,13 @@ bool Application::Initialize(const StartupOptions& options) {
         m_device.Resize(width, height);
     });
 
+    for (const std::filesystem::path& texturePath : options.texturePaths) {
+        m_textureLibrary.Load(m_device, m_pipelineCache, texturePath);
+    }
+    if (!options.texturePaths.empty()) {
+        m_materialStack.MarkDirty();
+    }
+
     if (!options.hdriPath.empty()) {
         m_renderer.RequestHdrLoad(options.hdriPath);
     }
@@ -132,6 +168,7 @@ bool Application::Initialize(const StartupOptions& options) {
 
 void Application::Shutdown() {
     m_device.WaitForGpu();
+    m_textureLibrary.Destroy(m_device);
     m_renderer.Shutdown(m_device);
     m_imgui.Shutdown();
     m_pipelineCache.Destroy();
@@ -170,6 +207,16 @@ int Application::Run() {
         // フレームの外で処理する。
         m_renderer.ProcessPendingWork(m_device, m_pipelineCache);
 
+        // テクスチャ読み込みも GPU 待機を伴うため、フレームの外で処理する。
+        if (!m_pendingTexturePath.empty()) {
+            const std::filesystem::path path = m_pendingTexturePath;
+            m_pendingTexturePath.clear();
+            if (m_textureLibrary.Load(m_device, m_pipelineCache, path) !=
+                compositor::kNoTexture) {
+                m_materialStack.MarkDirty();
+            }
+        }
+
         // ビューポートの作り直しは GPU 待機を伴うため、フレームの外で行う。
         if (m_requestedViewportWidth != m_renderer.Width() ||
             m_requestedViewportHeight != m_renderer.Height()) {
@@ -186,7 +233,8 @@ int Application::Run() {
             continue;
         }
 
-        m_renderer.Render(m_device, m_pipelineCache, commandList, m_materialStack);
+        m_renderer.Render(m_device, m_pipelineCache, commandList, m_materialStack,
+                          m_textureLibrary);
 
         // レンダラがターゲットを差し替えているので、ImGui を描く前に戻す。
         m_device.BindBackBuffer(commandList);
@@ -489,7 +537,7 @@ void Application::DrawLayerPanel(bool applyLayout) {
     changed |= ImGui::SliderFloat("UV スケール", &layer.uvScale, 0.25f, 16.0f);
 
     ImGui::SeparatorText("ハイト");
-    static const char* const kSourceLabels[] = {"定数", "ノイズ"};
+    static const char* const kSourceLabels[] = {"定数", "ノイズ", "テクスチャ"};
     int heightSource = static_cast<int>(layer.heightSource);
     if (ImGui::Combo("ハイトの出どころ", &heightSource, kSourceLabels,
                      IM_ARRAYSIZE(kSourceLabels))) {
@@ -521,6 +569,24 @@ void Application::DrawLayerPanel(bool applyLayout) {
     changed |= ImGui::SliderFloat("レベル下限", &layer.mask.levelsLow, 0.0f, 1.0f);
     changed |= ImGui::SliderFloat("レベル上限", &layer.mask.levelsHigh, 0.0f, 1.0f);
     changed |= ImGui::Checkbox("反転", &layer.mask.invert);
+
+    ImGui::SeparatorText("テクスチャ");
+    ImGui::SetNextItemWidth(-90.0f);
+    ImGui::InputText("パス", m_texturePathBuffer, IM_ARRAYSIZE(m_texturePathBuffer));
+    if (ImGui::Button("読み込む") && m_texturePathBuffer[0] != 0) {
+        m_pendingTexturePath = std::filesystem::path(m_texturePathBuffer);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%zu 枚)", m_textureLibrary.Entries().size());
+
+    changed |= DrawTextureSlot("ベースカラー##t", layer.textures.baseColor, m_textureLibrary);
+    changed |= DrawTextureSlot("法線##t", layer.textures.normal, m_textureLibrary);
+    changed |= DrawTextureSlot("ラフネス##t", layer.textures.roughness, m_textureLibrary);
+    changed |= DrawTextureSlot("メタルネス##t", layer.textures.metallic, m_textureLibrary);
+    changed |= DrawTextureSlot("AO##t", layer.textures.ambientOcclusion, m_textureLibrary);
+    changed |= DrawTextureSlot("ハイト##t", layer.textures.height, m_textureLibrary);
+    changed |= DrawTextureSlot("マスク##t", layer.textures.mask, m_textureLibrary);
+    ImGui::TextDisabled("ハイト / マスクは出どころを「テクスチャ」にすると有効");
 
     ImGui::SeparatorText("合成");
     changed |= ImGui::SliderFloat("境界の柔らかさ", &layer.blendRange, 0.0f, 1.0f);

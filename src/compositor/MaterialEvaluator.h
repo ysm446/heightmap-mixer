@@ -1,6 +1,7 @@
 #pragma once
 
 #include "compositor/MaterialStack.h"
+#include "compositor/TextureLibrary.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 
@@ -39,13 +40,14 @@ public:
     // タイル矩形ぶんを評価する。呼び出し前後の状態遷移もここで行う。
     void Evaluate(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                   ID3D12GraphicsCommandList* commandList, const MaterialStack& stack,
-                  const TileRect& tile);
+                  const TextureLibrary& textures, const TileRect& tile);
 
     // スタックに変更があったときだけ全体を評価し直す。
     // 全体はタイルに分割して評価する。エクスポート時と同じ経路を常に通しておくことで、
     // タイル評価が壊れたままになるのを防ぐ。
     void EvaluateIfDirty(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                         ID3D12GraphicsCommandList* commandList, const MaterialStack& stack);
+                         ID3D12GraphicsCommandList* commandList, const MaterialStack& stack,
+                         const TextureLibrary& textures);
 
     uint32_t TileSize() const { return m_tileSize; }
     void SetTileSize(uint32_t tileSize) { m_tileSize = (tileSize > 0) ? tileSize : 1; }
