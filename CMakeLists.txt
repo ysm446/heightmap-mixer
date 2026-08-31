@@ -75,6 +75,7 @@ find_package(D3D12MemoryAllocator CONFIG REQUIRED)
 find_package(directx-dxc CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(tinyexr CONFIG REQUIRED)
 
 set(hm_sources
     src/app/Main.cpp
@@ -168,6 +169,7 @@ target_link_libraries(heightmap_mixer PRIVATE
     GPUOpen::D3D12MemoryAllocator
     imgui::imgui
     nlohmann_json::nlohmann_json
+    unofficial::tinyexr::tinyexr
     d3d12
     dxgi
     dxguid

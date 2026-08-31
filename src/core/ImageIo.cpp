@@ -8,6 +8,10 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
+// tinyexr は miniz を同梱の実装から使う。vcpkg 版はライブラリとして提供されるので、
+// ここでは実装マクロを定義しない。
+#include <tinyexr.h>
+
 namespace hm {
 
 bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
@@ -55,6 +59,35 @@ bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {
 
     HM_LOG_INFO("HDR 画像を読み込みました: %s (%d x %d, %d ch)", utf8Path.c_str(), width, height,
                 channels);
+    return true;
+}
+
+bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage) {
+    outImage = HdrImage{};
+
+    const std::string utf8Path = path.string();
+
+    float* data = nullptr;
+    int width = 0;
+    int height = 0;
+    const char* error = nullptr;
+    // LoadEXR は常に RGBA の 4 チャンネルで返す。
+    const int result = ::LoadEXR(&data, &width, &height, utf8Path.c_str(), &error);
+    if (result != TINYEXR_SUCCESS) {
+        HM_LOG_ERROR("EXR を読み込めません: %s (%s)", utf8Path.c_str(),
+                     (error != nullptr) ? error : "原因不明");
+        if (error != nullptr) {
+            ::FreeEXRErrorMessage(error);
+        }
+        return false;
+    }
+
+    outImage.width = static_cast<uint32_t>(width);
+    outImage.height = static_cast<uint32_t>(height);
+    outImage.pixels.assign(data, data + static_cast<size_t>(width) * height * 4);
+    ::free(data);
+
+    HM_LOG_INFO("EXR を読み込みました: %s (%d x %d)", utf8Path.c_str(), width, height);
     return true;
 }
 

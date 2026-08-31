@@ -42,6 +42,7 @@ struct LayerConstants {
     float maskCurve[4];
     uint32_t noiseTypes[4];
     uint32_t paintParams[4];
+    uint32_t mapChannels[4];
 };
 
 // GPU 側の MaskConstants と一致させること。
@@ -305,19 +306,26 @@ void MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 (material != nullptr) ? textures.SrvIndex(material->normal, false)
                                       : kInvalidTextureIndex;
             constants.textureIndices0[2] =
-                (material != nullptr) ? textures.SrvIndex(material->roughness, false)
+                (material != nullptr) ? textures.SrvIndex(material->roughness.texture, false)
                                       : kInvalidTextureIndex;
             constants.textureIndices0[3] =
-                (material != nullptr) ? textures.SrvIndex(material->metallic, false)
+                (material != nullptr) ? textures.SrvIndex(material->metallic.texture, false)
                                       : kInvalidTextureIndex;
             constants.textureIndices1[0] =
-                (material != nullptr) ? textures.SrvIndex(material->ambientOcclusion, false)
-                                      : kInvalidTextureIndex;
+                (material != nullptr)
+                    ? textures.SrvIndex(material->ambientOcclusion.texture, false)
+                    : kInvalidTextureIndex;
             constants.textureIndices1[1] =
-                (material != nullptr) ? textures.SrvIndex(material->height, false)
+                (material != nullptr) ? textures.SrvIndex(material->height.texture, false)
                                       : kInvalidTextureIndex;
             // マスク用テクスチャはレイヤー固有。マテリアルのマップとは用途が別。
-            constants.textureIndices1[2] = textures.SrvIndex(layer.mask.texture, false);
+            constants.textureIndices1[2] = textures.SrvIndex(layer.mask.texture.texture, false);
+
+            // スカラーのマップは「どのチャンネルを読むか」も渡す。
+            // Megascans の _ORD のように 1 枚へ詰めたテクスチャに対応するため。
+            constants.mapChannels[0] =
+                ((material != nullptr) ? PackMaterialChannels(*material) : 0u) |
+                PackChannel(layer.mask.texture.channel, 4);
             constants.textureIndices1[3] =
                 useDerivedMask ? m_textures.maskScratch.SrvIndex() : kInvalidTextureIndex;
 

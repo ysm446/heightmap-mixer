@@ -44,6 +44,30 @@ inline constexpr MaterialAssetId kNoMaterialAsset = 0;
 // シェーダへ渡す「参照しない」を表すインデックス。
 inline constexpr uint32_t kInvalidTextureIndex = 0xFFFFFFFFu;
 
+// テクスチャのどのチャンネルを読むか。シェーダの SelectChannel と一致させること。
+//
+// Megascans の `_ORD` のように、1 枚のテクスチャへ複数のマップを詰めたものがある
+// （O = Occlusion / R = Roughness / D = Displacement）。
+// スカラーのマップはどれも「テクスチャ + チャンネル」で指定する。
+enum class TextureChannel : uint32_t {
+    R = 0,
+    G = 1,
+    B = 2,
+    A = 3,
+};
+
+// スカラーのマップ 1 つぶん。
+struct MapSlot {
+    TextureId texture = kNoTexture;
+    TextureChannel channel = TextureChannel::R;
+};
+
+// チャンネル指定をまとめてシェーダへ渡すための詰め方。4bit ずつ、最大 8 スロット。
+// 並びはシェーダの HM_CHANNEL_* と一致させること。
+inline constexpr uint32_t PackChannel(TextureChannel channel, uint32_t slotIndex) {
+    return static_cast<uint32_t>(channel) << (slotIndex * 4u);
+}
+
 // ノイズの種類。シェーダの HM_NOISE_* と一致させること。
 enum class NoiseType : uint32_t {
     Fbm = 0,     // 一般的なフラクタルノイズ
@@ -97,7 +121,7 @@ struct LayerMask {
     PaintMaskId paint = kNoPaintMask;
     // マスク用テクスチャ。source が Texture のときだけ参照する。
     // マテリアルのマップとは用途が別なので、レイヤー側で持つ。
-    TextureId texture = kNoTexture;
+    MapSlot texture;
 };
 
 // 1 レイヤーぶんの設定。

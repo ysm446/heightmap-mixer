@@ -12,6 +12,7 @@
     "directx-dxc",
     "stb",
     "nlohmann-json",
+    "tinyexr",
     {
       "name": "imgui",
       "features": [

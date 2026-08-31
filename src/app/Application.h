@@ -72,6 +72,8 @@ private:
     compositor::MaterialLibrary m_materialLibrary;
     compositor::PaintMaskStore m_paintMasks;
     int m_selectedMaterial = 0;
+    // ORD をまとめて割り当てるときに選ぶテクスチャ（UI の一時状態）。
+    compositor::TextureId m_ordTexture = compositor::kNoTexture;
     compositor::BrushSettings m_brush;
     // ペイントモード中はビューポートの左ドラッグがブラシになる。
     bool m_paintMode = false;

@@ -158,20 +158,17 @@ bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& slot,
     return changed;
 }
 
-// テクスチャスロットを選ぶ行。ライブラリの一覧から選ぶ。
-bool DrawTextureSlotRow(const char* label, compositor::TextureId& slot,
-                        const compositor::TextureLibrary& library) {
-    ui::PropertyLabel(label, "「なし」なら定数値を使う");
-
+// テクスチャを選ぶコンボ。行の中に置く部品。
+bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
+                      const compositor::TextureLibrary& library, float width) {
     std::string preview = "なし";
     if (const compositor::LibraryTexture* current = library.Find(slot); current != nullptr) {
         preview = current->name;
     }
 
     bool changed = false;
-    ImGui::SetNextItemWidth(
-        std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x));
-    if (ImGui::BeginCombo("##value", preview.c_str())) {
+    ImGui::SetNextItemWidth(width);
+    if (ImGui::BeginCombo(id, preview.c_str())) {
         if (ImGui::Selectable("なし", slot == compositor::kNoTexture)) {
             slot = compositor::kNoTexture;
             changed = true;
@@ -186,6 +183,47 @@ bool DrawTextureSlotRow(const char* label, compositor::TextureId& slot,
         }
         ImGui::EndCombo();
     }
+    return changed;
+}
+
+// テクスチャスロットを選ぶ行。RGB をそのまま使うマップ（ベースカラー / 法線）用。
+bool DrawTextureSlotRow(const char* label, compositor::TextureId& slot,
+                        const compositor::TextureLibrary& library) {
+    ui::PropertyLabel(label, "「なし」なら定数値を使う");
+    const float width =
+        std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x);
+    const bool changed = DrawTextureCombo("##value", slot, library, width);
+    ui::PropertyEnd();
+    return changed;
+}
+
+// スカラーのマップを選ぶ行。テクスチャに加えて、どのチャンネルを読むかも選ぶ。
+// Megascans の _ORD のように 1 枚へ複数のマップを詰めたテクスチャがあるため。
+bool DrawMapSlotRow(const char* label, compositor::MapSlot& slot,
+                    const compositor::TextureLibrary& library) {
+    ui::PropertyLabel(label, "「なし」なら定数値を使う。右は読むチャンネル");
+
+    const float channelWidth = ui::Scaled(52.0f);
+    const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+    const float available = ImGui::GetContentRegionAvail().x;
+    const float comboWidth =
+        std::max(ui::Scaled(60.0f),
+                 std::min(ui::Scaled(ui::kComboMaxWidth), available) - channelWidth - spacing);
+
+    bool changed = DrawTextureCombo("##texture", slot.texture, library, comboWidth);
+
+    if (slot.texture != compositor::kNoTexture) {
+        ImGui::SameLine(0.0f, spacing);
+        static const char* const kTextureChannelLabels[] = {"R", "G", "B", "A"};
+        int channel = static_cast<int>(slot.channel);
+        ImGui::SetNextItemWidth(channelWidth);
+        if (ImGui::Combo("##channel", &channel, kTextureChannelLabels,
+                         IM_ARRAYSIZE(kTextureChannelLabels))) {
+            slot.channel = static_cast<compositor::TextureChannel>(channel);
+            changed = true;
+        }
+    }
+
     ui::PropertyEnd();
     return changed;
 }
@@ -356,6 +394,7 @@ int Application::Run() {
         }
 
         PollShaderHotReload();
+
 
 
         // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
@@ -1007,7 +1046,7 @@ void Application::DrawLayerPanel() {
                                      "出どころの値に掛ける係数", "%.2f");
 
         if (layer.mask.source == compositor::MaskSource::Texture) {
-            changed |= DrawTextureSlotRow("画像", layer.mask.texture, m_textureLibrary);
+            changed |= DrawMapSlotRow("画像", layer.mask.texture, m_textureLibrary);
         }
         if (layer.mask.source == compositor::MaskSource::Noise) {
             changed |= DrawNoiseRows(layer.mask.noise, kDefaultLayer.mask.noise);
@@ -1300,12 +1339,32 @@ void Application::DrawMaterialLibraryPanel() {
     if (ui::BeginPropertyTable("materialMapRows")) {
         changed |= DrawTextureSlotRow("ベースカラー", asset.baseColor, m_textureLibrary);
         changed |= DrawTextureSlotRow("法線", asset.normal, m_textureLibrary);
-        changed |= DrawTextureSlotRow("ラフネス", asset.roughness, m_textureLibrary);
-        changed |= DrawTextureSlotRow("メタルネス", asset.metallic, m_textureLibrary);
-        changed |= DrawTextureSlotRow("AO", asset.ambientOcclusion, m_textureLibrary);
-        changed |= DrawTextureSlotRow("ハイト", asset.height, m_textureLibrary);
+        changed |= DrawMapSlotRow("ラフネス", asset.roughness, m_textureLibrary);
+        changed |= DrawMapSlotRow("メタルネス", asset.metallic, m_textureLibrary);
+        changed |= DrawMapSlotRow("AO", asset.ambientOcclusion, m_textureLibrary);
+        changed |= DrawMapSlotRow("ハイト", asset.height, m_textureLibrary);
+
+        // 1 枚に AO / ラフネス / ハイトを詰めたテクスチャをまとめて割り当てる。
+        ui::PropertyLabel("ORD", "1 枚に AO / ラフネス / ハイトを詰めたテクスチャ");
+        const float ordButtonWidth = ui::Scaled(ui::kButtonWidth);
+        const float ordSpacing = ImGui::GetStyle().ItemInnerSpacing.x;
+        const float ordComboWidth = std::max(
+            ui::Scaled(60.0f),
+            std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x) -
+                ordButtonWidth - ordSpacing);
+        DrawTextureCombo("##ord", m_ordTexture, m_textureLibrary, ordComboWidth);
+        ImGui::SameLine(0.0f, ordSpacing);
+        ImGui::BeginDisabled(m_ordTexture == compositor::kNoTexture);
+        if (ui::Button("割り当て")) {
+            m_materialLibrary.AssignOrdTexture(asset.id, m_ordTexture);
+            changed = true;
+        }
+        ImGui::EndDisabled();
+        ui::PropertyEnd();
+
         ui::EndPropertyTable();
     }
+    ui::HintText("ORD は AO=R / ラフネス=G / ハイト=B に割り当てる（Megascans の並び）");
     ui::HintText("ハイトはレイヤーの「ハイトの出どころ」をテクスチャにすると効く");
 
     if (changed) {

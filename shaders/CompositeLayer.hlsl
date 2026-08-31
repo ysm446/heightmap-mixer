@@ -42,6 +42,8 @@ struct LayerConstants
     float4 maskCurve;   // contrast, derivedScale, 未使用, 未使用
     uint4 noiseTypes;   // height, mask, 未使用, 未使用
     uint4 paintParams;  // ペイントマスクの SRV, 未使用 x3
+    // スカラーのマップのチャンネル指定。4bit ずつ HM_CHANNEL_SLOT_* の順で詰めてある。
+    uint4 mapChannels;  // x にすべて入る。yzw は未使用
 };
 
 ConstantBuffer<LayerConstants> g_layer : register(b1);
@@ -65,6 +67,13 @@ float4 SampleLayerTexture(uint index, float2 uv, float uvPerOutputTexel)
     return texture.SampleLevel(g_samplerLinearWrap, uv, TextureLod(texture, uvPerOutputTexel));
 }
 
+// スカラーのマップを 1 つ読む。指定されたチャンネルだけを取り出す。
+float SampleLayerScalar(uint index, uint channelSlot, float2 uv, float uvPerOutputTexel)
+{
+    const float4 sampled = SampleLayerTexture(index, uv, uvPerOutputTexel);
+    return SelectChannel(sampled, UnpackChannel(g_layer.mapChannels.x, channelSlot));
+}
+
 float SampleLayerHeight(float2 uv, float uvPerOutputTexel)
 {
     float height = g_layer.surfaceParams.w;
@@ -78,8 +87,8 @@ float SampleLayerHeight(float2 uv, float uvPerOutputTexel)
     }
     else if (source == HM_SOURCE_TEXTURE && g_layer.textureIndices1.y != kInvalidTextureIndex)
     {
-        const float sampled =
-            SampleLayerTexture(g_layer.textureIndices1.y, uv, uvPerOutputTexel).r;
+        const float sampled = SampleLayerScalar(g_layer.textureIndices1.y,
+                                                HM_CHANNEL_SLOT_HEIGHT, uv, uvPerOutputTexel);
         height += sampled * g_layer.heightNoise.y;
     }
 
@@ -117,8 +126,9 @@ float SampleMaskSourceValue(float2 uv, float2 paintUv, uint2 texel, float uvPerO
         {
             return g_layer.maskParams.x;
         }
-        return g_layer.maskParams.x *
-               SampleLayerTexture(g_layer.textureIndices1.z, uv, uvPerOutputTexel).r;
+        return g_layer.maskParams.x * SampleLayerScalar(g_layer.textureIndices1.z,
+                                                       HM_CHANNEL_SLOT_MASK, uv,
+                                                       uvPerOutputTexel);
     }
 
     if (source >= HM_SOURCE_DERIVED)
@@ -217,15 +227,18 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
     if (g_layer.textureIndices0.z != kInvalidTextureIndex)
     {
-        layerRoughness = SampleLayerTexture(g_layer.textureIndices0.z, uv, uvPerOutputTexel).r;
+        layerRoughness = SampleLayerScalar(g_layer.textureIndices0.z,
+                                           HM_CHANNEL_SLOT_ROUGHNESS, uv, uvPerOutputTexel);
     }
     if (g_layer.textureIndices0.w != kInvalidTextureIndex)
     {
-        layerMetallic = SampleLayerTexture(g_layer.textureIndices0.w, uv, uvPerOutputTexel).r;
+        layerMetallic = SampleLayerScalar(g_layer.textureIndices0.w, HM_CHANNEL_SLOT_METALLIC,
+                                          uv, uvPerOutputTexel);
     }
     if (g_layer.textureIndices1.x != kInvalidTextureIndex)
     {
-        layerAo = SampleLayerTexture(g_layer.textureIndices1.x, uv, uvPerOutputTexel).r;
+        layerAo = SampleLayerScalar(g_layer.textureIndices1.x, HM_CHANNEL_SLOT_AO, uv,
+                                    uvPerOutputTexel);
     }
 
     const float layerHeight = SampleLayerHeight(uv, uvPerOutputTexel);

@@ -16,15 +16,20 @@ struct LibraryTexture {
     std::filesystem::path path;
     rhi::GpuTexture texture;
     // 同じリソースに対する 2 つの SRV。用途に応じて使い分ける。
+    // float テクスチャ（EXR）は中身がすでにリニアなので、両方とも同じ SRV を指す。
     uint32_t linearSrvIndex = kInvalidTextureIndex;
     uint32_t srgbSrvIndex = kInvalidTextureIndex;
+    // 16bit float（EXR 由来）かどうか。破棄のときに SRV を二重解放しないためにも使う。
+    bool isFloat = false;
 };
 
 // 読み込んだテクスチャを保持し、bindless インデックスを払い出す。
 //
-// ベースカラーは sRGB、ラフネスやハイトはリニアとして読む必要があるため、
-// リソースは TYPELESS で作り、UNORM と UNORM_SRGB の 2 つの SRV を用意する。
-// 同じ画像をどちらの用途にも使えるようにするため。
+// 8bit の画像（PNG / TGA / JPG）は、ベースカラーを sRGB、ラフネスやハイトをリニアとして
+// 読む必要があるため、リソースを TYPELESS で作り UNORM と UNORM_SRGB の 2 つの SRV を張る。
+//
+// EXR は 16bit float のまま持つ。8bit へ落とすとハイトに階段が出る。
+// 中身はすでにリニアなので SRV は 1 つでよい。
 class TextureLibrary {
 public:
     void Destroy(rhi::Device& device);

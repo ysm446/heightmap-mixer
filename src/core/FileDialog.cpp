@@ -60,7 +60,9 @@ ComPtr<IFileDialog> CreateFileDialog(const CLSID& clsid, const wchar_t* title,
 
 std::vector<FileFilter> ImageFileFilters() {
     return {
-        {L"画像 (*.png;*.jpg;*.jpeg;*.tga;*.bmp)", L"*.png;*.jpg;*.jpeg;*.tga;*.bmp"},
+        {L"画像 (*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.exr)",
+         L"*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.exr"},
+        {L"OpenEXR (*.exr)", L"*.exr"},
         {L"すべてのファイル (*.*)", L"*.*"},
     };
 }

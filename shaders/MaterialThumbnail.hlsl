@@ -26,7 +26,8 @@ struct ThumbnailConstants
     float metallicValue;
     float aoValue;
     float uvScale;
-    float pad0;
+    // スカラーのマップのチャンネル指定。4bit ずつ HM_CHANNEL_SLOT_* の順。
+    uint mapChannels;
 };
 
 ConstantBuffer<ThumbnailConstants> g_thumbnail : register(b0);
@@ -40,6 +41,13 @@ float4 SampleMap(uint index, float2 uv)
 {
     Texture2D<float4> map = ResourceDescriptorHeap[index];
     return map.SampleLevel(g_samplerLinearWrap, uv, 0.0f);
+}
+
+// スカラーのマップを 1 つ読む。指定されたチャンネルだけを取り出す。
+float SampleScalarMap(uint index, uint channelSlot, float2 uv)
+{
+    return SelectChannel(SampleMap(index, uv),
+                         UnpackChannel(g_thumbnail.mapChannels, channelSlot));
 }
 
 [numthreads(8, 8, 1)]
@@ -83,19 +91,20 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     float roughness = g_thumbnail.roughnessValue;
     if (g_thumbnail.roughnessIndex != kInvalidTextureIndex)
     {
-        roughness = SampleMap(g_thumbnail.roughnessIndex, uv).r;
+        roughness = SampleScalarMap(g_thumbnail.roughnessIndex,
+                                    HM_CHANNEL_SLOT_ROUGHNESS, uv);
     }
 
     float metallic = g_thumbnail.metallicValue;
     if (g_thumbnail.metallicIndex != kInvalidTextureIndex)
     {
-        metallic = SampleMap(g_thumbnail.metallicIndex, uv).r;
+        metallic = SampleScalarMap(g_thumbnail.metallicIndex, HM_CHANNEL_SLOT_METALLIC, uv);
     }
 
     float ambientOcclusion = g_thumbnail.aoValue;
     if (g_thumbnail.aoIndex != kInvalidTextureIndex)
     {
-        ambientOcclusion = SampleMap(g_thumbnail.aoIndex, uv).r;
+        ambientOcclusion = SampleScalarMap(g_thumbnail.aoIndex, HM_CHANNEL_SLOT_AO, uv);
     }
 
     // 球の接空間は、正面を向いているので x が接線、y が従法線でよい。

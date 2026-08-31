@@ -32,6 +32,10 @@ bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage);
 // Radiance HDR (.hdr) を読み込む。失敗したら false を返し、理由はログへ出す。
 bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage);
 
+// OpenEXR (.exr) を読み込む。失敗したら false を返し、理由はログへ出す。
+// Megascans のテクスチャは EXR で配られることが多い。
+bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage);
+
 // RGBA8 のピクセル列を PNG として保存する。rowPitch はバイト単位。
 bool SaveRgba8Png(const std::filesystem::path& path, uint32_t width, uint32_t height,
                   uint32_t rowPitch, const uint8_t* pixels);

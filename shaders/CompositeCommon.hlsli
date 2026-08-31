@@ -9,6 +9,30 @@
 //   Surface   : R8G8B8A8_UNORM    R=Roughness, G=Metallic, B=AO
 //   Height    : R16_FLOAT         高さ（合成の駆動値かつ Displacement）
 
+// スカラーのマップは「テクスチャ + どのチャンネルを読むか」で指定する。
+// Megascans の _ORD のように 1 枚へ複数のマップを詰めたテクスチャがあるため。
+// C++ 側の TextureChannel と一致させること。
+float SelectChannel(float4 value, uint channel)
+{
+    if (channel == 1u) { return value.g; }
+    if (channel == 2u) { return value.b; }
+    if (channel == 3u) { return value.a; }
+    return value.r;
+}
+
+// チャンネル指定は 4bit ずつ 1 つの uint へ詰めて渡す。
+// ルート定数の枠を節約するため。スロットの並びは C++ 側と一致させること。
+uint UnpackChannel(uint packed, uint slotIndex)
+{
+    return (packed >> (slotIndex * 4u)) & 0xFu;
+}
+
+#define HM_CHANNEL_SLOT_ROUGHNESS 0u
+#define HM_CHANNEL_SLOT_METALLIC  1u
+#define HM_CHANNEL_SLOT_AO        2u
+#define HM_CHANNEL_SLOT_HEIGHT    3u
+#define HM_CHANNEL_SLOT_MASK      4u
+
 float3 DecodeTangentNormal(float2 xy)
 {
     const float z = sqrt(saturate(1.0f - dot(xy, xy)));

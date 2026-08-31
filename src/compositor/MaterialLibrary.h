@@ -20,12 +20,15 @@ struct MaterialAsset {
     std::string name;
 
     // 未指定のスロットは下の定数を使う。
-    TextureId baseColor = kNoTexture;         // sRGB として読む
-    TextureId normal = kNoTexture;            // タンジェント空間法線（リニア）
-    TextureId roughness = kNoTexture;         // R チャンネル
-    TextureId metallic = kNoTexture;          // R チャンネル
-    TextureId ambientOcclusion = kNoTexture;  // R チャンネル
-    TextureId height = kNoTexture;            // R チャンネル
+    // ベースカラーと法線は RGB をそのまま使うのでチャンネル指定は要らない。
+    TextureId baseColor = kNoTexture;  // sRGB として読む
+    TextureId normal = kNoTexture;     // タンジェント空間法線（リニア）
+    // スカラーのマップは「テクスチャ + チャンネル」で指定する。
+    // Megascans の _ORD のように 1 枚へ詰めたテクスチャを使えるようにするため。
+    MapSlot roughness;
+    MapSlot metallic;
+    MapSlot ambientOcclusion;
+    MapSlot height;
 
     DirectX::XMFLOAT3 baseColorTint = {0.5f, 0.5f, 0.5f};
     float roughnessValue = 0.5f;
@@ -36,6 +39,9 @@ struct MaterialAsset {
     rhi::GpuTexture thumbnail;
     bool thumbnailDirty = true;
 };
+
+// チャンネル指定をシェーダへ渡す形へ詰める。並びは HM_CHANNEL_SLOT_* と一致させること。
+uint32_t PackMaterialChannels(const MaterialAsset& asset);
 
 // マテリアルを保持し、サムネイルを作る。
 class MaterialLibrary {
@@ -53,6 +59,10 @@ public:
 
     // サムネイルの作り直しを予約する。マップやパラメータを変えたら呼ぶ。
     void MarkThumbnailDirty(MaterialAssetId id);
+
+    // 1 枚の ORD テクスチャを AO(R) / ラフネス(G) / ハイト(B) へまとめて割り当てる。
+    // Megascans の `_ORD` の並びに合わせてある。
+    void AssignOrdTexture(MaterialAssetId id, TextureId texture);
 
     // 予約されたサムネイルを作る。GPU 待機を伴うため、フレームの外で呼ぶ。
     void ProcessPendingWork(rhi::Device& device, rhi::PipelineCache& pipelineCache,

@@ -33,8 +33,18 @@ struct ThumbnailConstants {
     float metallicValue;
     float aoValue;
     float uvScale;
-    float pad0;
+    uint32_t mapChannels;
 };
+
+}  // namespace
+
+uint32_t PackMaterialChannels(const MaterialAsset& asset) {
+    // 並びは HM_CHANNEL_SLOT_* と一致させること。
+    return PackChannel(asset.roughness.channel, 0) | PackChannel(asset.metallic.channel, 1) |
+           PackChannel(asset.ambientOcclusion.channel, 2) | PackChannel(asset.height.channel, 3);
+}
+
+namespace {
 
 uint32_t DispatchCount(uint32_t threads) {
     return (threads + kGroupSize - 1) / kGroupSize;
@@ -111,6 +121,18 @@ MaterialAsset* MaterialLibrary::FindMutable(MaterialAssetId id) {
     return const_cast<MaterialAsset*>(Find(id));
 }
 
+void MaterialLibrary::AssignOrdTexture(MaterialAssetId id, TextureId texture) {
+    MaterialAsset* asset = FindMutable(id);
+    if (asset == nullptr) {
+        return;
+    }
+    // Megascans の `_ORD` は O = Occlusion(R) / R = Roughness(G) / D = Displacement(B)。
+    asset->ambientOcclusion = MapSlot{texture, TextureChannel::R};
+    asset->roughness = MapSlot{texture, TextureChannel::G};
+    asset->height = MapSlot{texture, TextureChannel::B};
+    asset->thumbnailDirty = true;
+}
+
 void MaterialLibrary::MarkThumbnailDirty(MaterialAssetId id) {
     if (MaterialAsset* asset = FindMutable(id); asset != nullptr) {
         asset->thumbnailDirty = true;
@@ -175,10 +197,11 @@ bool MaterialLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pi
     // ベースカラーだけ sRGB として読む。それ以外はリニア。
     constants.baseColorIndex = textures.SrvIndex(asset.baseColor, true);
     constants.normalIndex = textures.SrvIndex(asset.normal, false);
-    constants.roughnessIndex = textures.SrvIndex(asset.roughness, false);
-    constants.metallicIndex = textures.SrvIndex(asset.metallic, false);
-    constants.aoIndex = textures.SrvIndex(asset.ambientOcclusion, false);
-    constants.heightIndex = textures.SrvIndex(asset.height, false);
+    constants.roughnessIndex = textures.SrvIndex(asset.roughness.texture, false);
+    constants.metallicIndex = textures.SrvIndex(asset.metallic.texture, false);
+    constants.aoIndex = textures.SrvIndex(asset.ambientOcclusion.texture, false);
+    constants.heightIndex = textures.SrvIndex(asset.height.texture, false);
+    constants.mapChannels = PackMaterialChannels(asset);
     constants.baseColorTint[0] = asset.baseColorTint.x;
     constants.baseColorTint[1] = asset.baseColorTint.y;
     constants.baseColorTint[2] = asset.baseColorTint.z;

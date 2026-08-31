@@ -5,8 +5,13 @@
 
 #include <pix3.h>
 
+#include <DirectXPackedVector.h>
+
 #include <algorithm>
+#include <cctype>
 #include <cstring>
+#include <string>
+#include <vector>
 
 namespace hm::compositor {
 namespace {
@@ -27,6 +32,25 @@ uint32_t DispatchCount(uint32_t threads) {
     return (threads + kGroupSize - 1) / kGroupSize;
 }
 
+bool IsExrPath(const std::filesystem::path& path) {
+    std::string extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return extension == ".exr";
+}
+
+// EXR の float RGBA を half RGBA へ詰め直す。
+// 8bit だとハイトの階段が見えるので、EXR は 16bit float のまま持つ。
+std::vector<uint8_t> ConvertToHalf4(const HdrImage& image) {
+    const size_t texelCount = static_cast<size_t>(image.width) * image.height;
+    std::vector<uint8_t> packed(texelCount * 4 * sizeof(uint16_t));
+    auto* destination = reinterpret_cast<DirectX::PackedVector::HALF*>(packed.data());
+    for (size_t i = 0; i < texelCount * 4; ++i) {
+        destination[i] = DirectX::PackedVector::XMConvertFloatToHalf(image.pixels[i]);
+    }
+    return packed;
+}
+
 void TransitionMip(ID3D12GraphicsCommandList* commandList, const rhi::GpuTexture& texture,
                    uint32_t mip, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
     const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -38,7 +62,9 @@ void TransitionMip(ID3D12GraphicsCommandList* commandList, const rhi::GpuTexture
 
 void TextureLibrary::Destroy(rhi::Device& device) {
     for (LibraryTexture& entry : m_entries) {
-        if (entry.srgbSrvIndex != kInvalidTextureIndex) {
+        // float は sRGB 用の SRV を別に張っていない（linear と同じものを指す）。
+        // 二重解放しないよう、別に張ったときだけ返す。
+        if (!entry.isFloat && entry.srgbSrvIndex != kInvalidTextureIndex) {
             device.SrvHeap().Free(device.SrvHeap().At(entry.srgbSrvIndex));
         }
         device.Allocator().ReleaseDescriptors(entry.texture);
@@ -72,7 +98,8 @@ void TextureLibrary::Remove(rhi::Device& device, TextureId id) {
         return;
     }
 
-    if (it->srgbSrvIndex != kInvalidTextureIndex) {
+    // Destroy と同じ理由で、別に張ったときだけ返す。
+    if (!it->isFloat && it->srgbSrvIndex != kInvalidTextureIndex) {
         device.SrvHeap().Free(device.SrvHeap().At(it->srgbSrvIndex));
     }
     device.Allocator().ReleaseDescriptors(it->texture);
@@ -83,23 +110,53 @@ void TextureLibrary::Remove(rhi::Device& device, TextureId id) {
 
 TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                const std::filesystem::path& path) {
-    LdrImage image;
-    if (!LoadLdrImage(path, image)) {
-        return kNoTexture;
+    // EXR は 16bit float のまま持つ。8bit へ落とすとハイトに階段が出る。
+    // それ以外（PNG / TGA / JPG）は 8bit で読む。
+    const bool isFloat = IsExrPath(path);
+
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::vector<uint8_t> pixels;  // 出力フォーマットへ詰め直したもの
+    size_t sourceRowPitch = 0;
+
+    if (isFloat) {
+        HdrImage image;
+        if (!LoadExrImage(path, image)) {
+            return kNoTexture;
+        }
+        width = image.width;
+        height = image.height;
+        pixels = ConvertToHalf4(image);
+        sourceRowPitch = static_cast<size_t>(width) * 4 * sizeof(uint16_t);
+    } else {
+        LdrImage image;
+        if (!LoadLdrImage(path, image)) {
+            return kNoTexture;
+        }
+        width = image.width;
+        height = image.height;
+        pixels = std::move(image.pixels);
+        sourceRowPitch = static_cast<size_t>(width) * 4;
     }
 
     LibraryTexture entry;
     entry.path = path;
     entry.name = path.filename().string();
+    entry.isFloat = isFloat;
 
-    // sRGB / リニアの両方の SRV を張れるよう TYPELESS で作る。
     rhi::TextureDesc desc;
-    desc.width = image.width;
-    desc.height = image.height;
-    desc.mipLevels = MipCountFor(image.width, image.height);
-    desc.format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
-    desc.srvFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-    desc.uavFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.width = width;
+    desc.height = height;
+    desc.mipLevels = MipCountFor(width, height);
+    if (isFloat) {
+        // float は 1 つのビューで足りる。中身はすでにリニア。
+        desc.format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    } else {
+        // sRGB / リニアの両方の SRV を張れるよう TYPELESS で作る。
+        desc.format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
+        desc.srvFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.uavFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+    }
     desc.allowUnorderedAccess = true;
     desc.createMipUavs = true;
     desc.createMipSrvs = true;
@@ -111,19 +168,24 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
     }
     entry.linearSrvIndex = entry.texture.SrvIndex();
 
-    // sRGB 用の SRV を追加で張る。
-    const rhi::DescriptorHandle srgbHandle = device.SrvHeap().Allocate();
-    if (!srgbHandle.IsValid()) {
-        return kNoTexture;
+    if (isFloat) {
+        // EXR の中身はリニアなので、sRGB として読む必要がない。同じ SRV を指す。
+        entry.srgbSrvIndex = entry.linearSrvIndex;
+    } else {
+        // sRGB 用の SRV を追加で張る。
+        const rhi::DescriptorHandle srgbHandle = device.SrvHeap().Allocate();
+        if (!srgbHandle.IsValid()) {
+            return kNoTexture;
+        }
+        D3D12_SHADER_RESOURCE_VIEW_DESC srgbSrvDesc = {};
+        srgbSrvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+        srgbSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srgbSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srgbSrvDesc.Texture2D.MipLevels = desc.mipLevels;
+        device.GetDevice()->CreateShaderResourceView(entry.texture.resource.Get(), &srgbSrvDesc,
+                                                     srgbHandle.cpu);
+        entry.srgbSrvIndex = srgbHandle.index;
     }
-    D3D12_SHADER_RESOURCE_VIEW_DESC srgbSrvDesc = {};
-    srgbSrvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-    srgbSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-    srgbSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srgbSrvDesc.Texture2D.MipLevels = desc.mipLevels;
-    device.GetDevice()->CreateShaderResourceView(entry.texture.resource.Get(), &srgbSrvDesc,
-                                                 srgbHandle.cpu);
-    entry.srgbSrvIndex = srgbHandle.index;
 
     // ミップ 0 をアップロードする。
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
@@ -147,7 +209,7 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
     auto* destination = static_cast<uint8_t*>(mapped) + footprint.Offset;
     for (uint32_t row = 0; row < rowCount; ++row) {
         std::memcpy(destination + static_cast<size_t>(row) * footprint.Footprint.RowPitch,
-                    image.pixels.data() + static_cast<size_t>(row) * image.RowPitchInBytes(),
+                    pixels.data() + static_cast<size_t>(row) * sourceRowPitch,
                     static_cast<size_t>(rowSizeInBytes));
     }
     staging.resource->Unmap(0, nullptr);

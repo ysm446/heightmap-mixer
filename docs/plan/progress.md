@@ -1,13 +1,14 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-08-31 17:12
+更新日時: 2026-08-31 18:04
 
 ## 現在の状況
 
 **M5a（マテリアルライブラリ）完了。**
 マップ一式に名前を付けた「マテリアル」を持てるようになり、レイヤーはそれを 1 つ参照する。
 サムネイル付きの一覧から選べ、テクスチャはファイル選択ダイアログで読み込む。
+Megascans の ORD（チャンネルパック）と EXR にも対応した。
 次は M5b（プロジェクトの保存と読み込み）。
 
 **M4（マスク生成）完了。**
@@ -174,6 +175,15 @@ UI はグレー基調に整理し、ルールを [design/design-guide.md](../des
   - M5b に向けた土台も入れた（`nlohmann-json`、`SaveGray8Png`、
     `PaintMaskStore::ReadPixels/AddFromPixels/Clear`、`CameraState`、`Window::RequestClose`）
 
+- 2026-08-31 18:04 — **チャンネルパックと EXR**（M5a への追加）。
+  - スカラーのマップを `MapSlot`（テクスチャ + `TextureChannel`）に変更。
+    Megascans の `_ORD`（O=AO / R=Roughness / D=Displacement）を 1 枚のまま使える
+  - `MaterialLibrary::AssignOrdTexture` と、マテリアルパネルの `ORD` 行
+  - チャンネル指定は 4bit ずつ 1 つの uint へ詰めてシェーダへ渡す
+    （`HM_CHANNEL_SLOT_*` / `PackChannel`）
+  - `core/ImageIo` に `LoadExrImage`（tinyexr）を追加
+  - `TextureLibrary` が EXR を `R16G16B16A16_FLOAT` のまま保持する
+
 ## 環境の実測値（2026-08-31 時点）
 
 - Visual Studio Community 2026 (18.7.11925.98) / MSVC 14.51.36231
@@ -322,6 +332,10 @@ M5b（プロジェクトの保存と読み込み）。土台は M5a で入れて
 - **サムネイルは変更があったときだけ作り直す**。生成は `ExecuteImmediate` を使うので
   フレームの外。毎フレーム作ると GPU 待機が入って描画が止まる。
 - **`CreateDialog` という名前は使えない**。Windows のマクロ（`CreateDialogW`）と衝突する。
+- **EXR は 8bit へ落とさない**。ハイトに階段が出る。`R16G16B16A16_FLOAT` のまま持つ。
+- **float テクスチャは sRGB 用の SRV を別に張らない**（中身がすでにリニアなので）。
+  linear と同じインデックスを返しているので、破棄のときに二重解放しないよう
+  `isFloat` で分岐する。
 
 ### 開発環境（リモートデスクトップ）
 
