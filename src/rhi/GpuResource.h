@@ -84,6 +84,8 @@ struct TextureDesc {
     // 深度テクスチャも SRV とリソースでフォーマットが異なる。
     DXGI_FORMAT srvFormat = DXGI_FORMAT_UNKNOWN;
     DXGI_FORMAT uavFormat = DXGI_FORMAT_UNKNOWN;
+    // 深度を SRV としても読むときに指定する（リソースは TYPELESS で作る）。
+    DXGI_FORMAT dsvFormat = DXGI_FORMAT_UNKNOWN;
     float clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
     float clearDepth = 1.0f;
     D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COMMON;

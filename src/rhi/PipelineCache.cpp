@@ -46,6 +46,10 @@ std::wstring GraphicsPipelineDesc::MakeKey() const {
     key += L"#";
     key += pixelEntry;
     key += L"#";
+    key += hullEntry;
+    key += L"#";
+    key += domainEntry;
+    key += L"#";
     key += std::to_wstring(static_cast<int>(rtvFormat));
     key += L"#";
     key += std::to_wstring(static_cast<int>(rtvFormat1));
@@ -194,19 +198,43 @@ ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc
         m_graphicsPipelines.emplace(key, nullptr);
         return nullptr;
     }
-    ComPtr<IDxcBlob> pixelBlob =
-        m_compiler->Compile(desc.shaderPath, desc.pixelEntry.c_str(), L"ps_6_6");
-    if (!pixelBlob) {
-        m_graphicsPipelines.emplace(key, nullptr);
-        return nullptr;
+    // ピクセルシェーダは省略できる。深度だけを描くパスで使う。
+    ComPtr<IDxcBlob> pixelBlob;
+    if (!desc.pixelEntry.empty()) {
+        pixelBlob = m_compiler->Compile(desc.shaderPath, desc.pixelEntry.c_str(), L"ps_6_6");
+        if (!pixelBlob) {
+            m_graphicsPipelines.emplace(key, nullptr);
+            return nullptr;
+        }
+    }
+
+    // テセレーションはハルとドメインの両方がそろっているときだけ使う。
+    const bool useTessellation = !desc.hullEntry.empty() && !desc.domainEntry.empty();
+    ComPtr<IDxcBlob> hullBlob;
+    ComPtr<IDxcBlob> domainBlob;
+    if (useTessellation) {
+        hullBlob = m_compiler->Compile(desc.shaderPath, desc.hullEntry.c_str(), L"hs_6_6");
+        domainBlob = m_compiler->Compile(desc.shaderPath, desc.domainEntry.c_str(), L"ds_6_6");
+        if (!hullBlob || !domainBlob) {
+            m_graphicsPipelines.emplace(key, nullptr);
+            return nullptr;
+        }
     }
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
     psoDesc.pRootSignature = m_rootSignature.Get();
     psoDesc.VS.pShaderBytecode = vertexBlob->GetBufferPointer();
     psoDesc.VS.BytecodeLength = vertexBlob->GetBufferSize();
-    psoDesc.PS.pShaderBytecode = pixelBlob->GetBufferPointer();
-    psoDesc.PS.BytecodeLength = pixelBlob->GetBufferSize();
+    if (pixelBlob) {
+        psoDesc.PS.pShaderBytecode = pixelBlob->GetBufferPointer();
+        psoDesc.PS.BytecodeLength = pixelBlob->GetBufferSize();
+    }
+    if (useTessellation) {
+        psoDesc.HS.pShaderBytecode = hullBlob->GetBufferPointer();
+        psoDesc.HS.BytecodeLength = hullBlob->GetBufferSize();
+        psoDesc.DS.pShaderBytecode = domainBlob->GetBufferPointer();
+        psoDesc.DS.BytecodeLength = domainBlob->GetBufferSize();
+    }
 
     psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
     psoDesc.SampleMask = UINT_MAX;
@@ -230,7 +258,9 @@ ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc
         psoDesc.InputLayout.NumElements = _countof(kMeshStandardLayout);
     }
 
-    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    // テセレーションを使うときは、IA へパッチとして渡す。
+    psoDesc.PrimitiveTopologyType = useTessellation ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH
+                                                    : D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     psoDesc.NumRenderTargets = (desc.rtvFormat != DXGI_FORMAT_UNKNOWN) ? 1 : 0;
     psoDesc.RTVFormats[0] = desc.rtvFormat;
     if (desc.rtvFormat1 != DXGI_FORMAT_UNKNOWN) {

@@ -99,11 +99,13 @@ void Mesh::Release(rhi::Device& device) {
     m_vertexCount = 0;
 }
 
-void Mesh::Draw(ID3D12GraphicsCommandList* commandList) const {
+void Mesh::Draw(ID3D12GraphicsCommandList* commandList, bool asPatches) const {
     if (m_indexCount == 0) {
         return;
     }
-    commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    commandList->IASetPrimitiveTopology(asPatches
+                                            ? D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST
+                                            : D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
     commandList->IASetIndexBuffer(&m_indexBufferView);
     commandList->DrawIndexedInstanced(m_indexCount, 1, 0, 0, 0);

@@ -49,6 +49,21 @@ struct MeshConstants
     // ハイトを形状に反映する量。0 なら押し出さない。
     float displacementScale;
     float pad4;
+
+    float4x4 lightViewProjection;
+
+    uint shadowIndex;  // 0xFFFFFFFF なら影を落とさない
+    float shadowTexelSize;
+    float shadowBias;
+    float pad5;
+
+    // テセレーションの分割量を画面上の辺の長さから決めるために使う。
+    // **シャドウパスでも本描画と同じ値を渡す。** 分割が違うと形がずれ、
+    // 自分の影が自分に落ちて縞（シャドウアクネ）になる。
+    float4x4 tessellationViewProjection;
+    float2 viewportSize;
+    float tessellationMaxFactor;
+    float pad6;
 };
 
 // ビューポートの表示モード。C++ 側の renderer::DebugView と一致させること。
@@ -82,6 +97,50 @@ struct VsOutput
     float2 uv            : TEXCOORD0;
 };
 
+// ライトから見た深度と比べて、この画素が影の中かを返す（1 = 当たっている）。
+//
+// 深度は普通の Texture2D として読む（比較サンプラは使わない）。
+// 3x3 のポイントサンプルで平均を取り、境界のジャギーを和らげる。
+float SampleShadow(float3 worldPosition, float nDotL, uint shadowIndex, float texelSize,
+                   float bias, float4x4 lightViewProjection)
+{
+    if (shadowIndex == 0xFFFFFFFFu)
+    {
+        return 1.0f;
+    }
+
+    const float4 lightClip = mul(lightViewProjection, float4(worldPosition, 1.0f));
+    if (lightClip.w <= 0.0f)
+    {
+        return 1.0f;
+    }
+    const float3 ndc = lightClip.xyz / lightClip.w;
+    const float2 uv = ndc.xy * float2(0.5f, -0.5f) + 0.5f;
+    // 範囲の外は影を落とさない（シャドウマップが覆っていない）。
+    if (any(uv < 0.0f) || any(uv > 1.0f) || ndc.z > 1.0f)
+    {
+        return 1.0f;
+    }
+
+    // 斜めに当たっているほど自己遮蔽しやすいので、下駄を増やす。
+    const float slopeBias = bias * (1.0f + 3.0f * (1.0f - saturate(nDotL)));
+
+    Texture2D<float> shadowMap = ResourceDescriptorHeap[shadowIndex];
+    float visibility = 0.0f;
+    [unroll]
+    for (int y = -1; y <= 1; ++y)
+    {
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+        {
+            const float2 offset = float2(x, y) * texelSize;
+            const float depth = shadowMap.SampleLevel(g_samplerPointClamp, uv + offset, 0.0f);
+            visibility += (ndc.z - slopeBias <= depth) ? 1.0f : 0.0f;
+        }
+    }
+    return visibility / 9.0f;
+}
+
 VsOutput VsMain(VsInput input)
 {
     VsOutput output;
@@ -107,6 +166,116 @@ VsOutput VsMain(VsInput input)
     output.tangentSign = input.tangent.w;
     output.uv = input.uv;
 
+    return output;
+}
+
+// --- テセレーション -------------------------------------------------------
+//
+// 分割量は**画面上の辺の長さ**から決める。細かいメッシュではそのまま 1 になり、
+// 近づいて 1 辺が伸びたときだけ細かく割る。ディスプレイスメントは
+// ドメインシェーダで掛ける（分割後の点で高さを引くため）。
+
+// 1 辺をおよそ何ピクセルに保つか。小さいほど細かく割る。
+static const float kTessellationTargetPixels = 10.0f;
+
+struct HsControlPoint
+{
+    float3 worldPosition : WORLDPOSITION;
+    float3 worldNormal   : NORMAL;
+    float3 worldTangent  : TANGENT;
+    float tangentSign    : TANGENTSIGN;
+    float2 uv            : TEXCOORD0;
+};
+
+struct HsPatchConstants
+{
+    float edges[3]  : SV_TessFactor;
+    float inside    : SV_InsideTessFactor;
+};
+
+// 投影も変位もせず、ワールド空間の制御点を出すだけ。
+HsControlPoint VsControl(VsInput input)
+{
+    HsControlPoint output;
+    output.worldPosition = mul(g_mesh.model, float4(input.position, 1.0f)).xyz;
+    output.worldNormal = mul((float3x3)g_mesh.normalMatrix, input.normal);
+    output.worldTangent = mul((float3x3)g_mesh.model, input.tangent.xyz);
+    output.tangentSign = input.tangent.w;
+    output.uv = input.uv;
+    return output;
+}
+
+// ワールド空間の 2 点が画面上で何ピクセル離れるか。
+float ScreenEdgeFactor(float3 a, float3 b)
+{
+    const float4 clipA = mul(g_mesh.tessellationViewProjection, float4(a, 1.0f));
+    const float4 clipB = mul(g_mesh.tessellationViewProjection, float4(b, 1.0f));
+    // カメラの後ろに回った辺は判断できないので、最大まで割る。
+    if (clipA.w <= 0.0f || clipB.w <= 0.0f)
+    {
+        return g_mesh.tessellationMaxFactor;
+    }
+
+    const float2 screenA = (clipA.xy / clipA.w) * 0.5f * g_mesh.viewportSize;
+    const float2 screenB = (clipB.xy / clipB.w) * 0.5f * g_mesh.viewportSize;
+    const float pixels = length(screenA - screenB);
+    return clamp(pixels / kTessellationTargetPixels, 1.0f, g_mesh.tessellationMaxFactor);
+}
+
+HsPatchConstants HsConstant(InputPatch<HsControlPoint, 3> patch)
+{
+    HsPatchConstants output;
+    // SV_TessFactor[i] は「制御点 i の向かい側の辺」に対応する。
+    output.edges[0] = ScreenEdgeFactor(patch[1].worldPosition, patch[2].worldPosition);
+    output.edges[1] = ScreenEdgeFactor(patch[2].worldPosition, patch[0].worldPosition);
+    output.edges[2] = ScreenEdgeFactor(patch[0].worldPosition, patch[1].worldPosition);
+    output.inside = (output.edges[0] + output.edges[1] + output.edges[2]) / 3.0f;
+    return output;
+}
+
+[domain("tri")]
+[partitioning("fractional_odd")]
+[outputtopology("triangle_cw")]
+[outputcontrolpoints(3)]
+[patchconstantfunc("HsConstant")]
+HsControlPoint HsMain(InputPatch<HsControlPoint, 3> patch, uint id : SV_OutputControlPointID)
+{
+    return patch[id];
+}
+
+[domain("tri")]
+VsOutput DsMain(HsPatchConstants patchConstants, float3 barycentric : SV_DomainLocation,
+                const OutputPatch<HsControlPoint, 3> patch)
+{
+    VsOutput output;
+
+    float3 worldPosition = patch[0].worldPosition * barycentric.x +
+                           patch[1].worldPosition * barycentric.y +
+                           patch[2].worldPosition * barycentric.z;
+    const float3 worldNormal = normalize(patch[0].worldNormal * barycentric.x +
+                                         patch[1].worldNormal * barycentric.y +
+                                         patch[2].worldNormal * barycentric.z);
+    const float3 worldTangent = patch[0].worldTangent * barycentric.x +
+                                patch[1].worldTangent * barycentric.y +
+                                patch[2].worldTangent * barycentric.z;
+    const float2 uv = patch[0].uv * barycentric.x + patch[1].uv * barycentric.y +
+                      patch[2].uv * barycentric.z;
+
+    // 分割後の点で高さを引いて押し出す。頂点シェーダ側と同じ式にすること。
+    if (g_mesh.useMaterialTextures != 0u && g_mesh.displacementScale != 0.0f)
+    {
+        Texture2D<float> heightMap = ResourceDescriptorHeap[g_mesh.materialHeightIndex];
+        const float height =
+            heightMap.SampleLevel(g_samplerLinearWrap, uv * g_mesh.materialUvScale, 0.0f);
+        worldPosition += worldNormal * ((height - 0.5f) * g_mesh.displacementScale);
+    }
+
+    output.worldPosition = worldPosition;
+    output.clipPosition = mul(g_mesh.viewProjection, float4(worldPosition, 1.0f));
+    output.worldNormal = worldNormal;
+    output.worldTangent = worldTangent;
+    output.tangentSign = patch[0].tangentSign;
+    output.uv = uv;
     return output;
 }
 
@@ -220,9 +389,16 @@ PsOutput PsMain(VsOutput input)
 
     const float roughness = clamp(roughnessValue, 0.03f, 1.0f);
 
-    float3 radiance = ShadeDirectionalLight(normal, viewDirection,
-                                            normalize(g_mesh.lightDirection), g_mesh.lightColor,
-                                            g_mesh.lightIlluminance, diffuseColor, f0, roughness);
+    const float3 lightDirection = normalize(g_mesh.lightDirection);
+    // 影は直接光にだけ掛ける。環境光（IBL）は別に扱う。
+    const float shadow = SampleShadow(input.worldPosition, dot(normal, lightDirection),
+                                      g_mesh.shadowIndex, g_mesh.shadowTexelSize,
+                                      g_mesh.shadowBias, g_mesh.lightViewProjection);
+
+    float3 radiance = ShadeDirectionalLight(normal, viewDirection, lightDirection,
+                                            g_mesh.lightColor, g_mesh.lightIlluminance,
+                                            diffuseColor, f0, roughness) *
+                      shadow;
 
     // --- IBL（分割和近似） -------------------------------------------------
     const float nDotV = saturate(dot(normal, viewDirection)) + 1e-5f;

@@ -66,7 +66,9 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
     D3D12_CLEAR_VALUE clearValue = {};
     const D3D12_CLEAR_VALUE* clearValuePtr = nullptr;
     if (desc.allowDepthStencil) {
-        clearValue.Format = desc.format;
+        // TYPELESS のままではクリア値にも DSV にも使えない。
+        clearValue.Format =
+            (desc.dsvFormat != DXGI_FORMAT_UNKNOWN) ? desc.dsvFormat : desc.format;
         clearValue.DepthStencil.Depth = desc.clearDepth;
         clearValue.DepthStencil.Stencil = 0;
         clearValuePtr = &clearValue;
@@ -201,7 +203,7 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
             return false;
         }
         D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
-        dsvDesc.Format = desc.format;
+        dsvDesc.Format = (desc.dsvFormat != DXGI_FORMAT_UNKNOWN) ? desc.dsvFormat : desc.format;
         dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
         m_device->CreateDepthStencilView(outTexture.resource.Get(), &dsvDesc, outTexture.dsv.cpu);
     }

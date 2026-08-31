@@ -20,6 +20,17 @@ constexpr DXGI_FORMAT kOutputFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 // （1.0 付近でも刻みは 2^-11 で、2K のペイントマスクの 1 テクセルに収まる）。
 constexpr DXGI_FORMAT kMaterialUvFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 
+// シャドウマップの解像度。プレビューの被写体 1 個ぶんなのでこれで足りる。
+constexpr uint32_t kShadowMapSize = 2048;
+constexpr DXGI_FORMAT kShadowDsvFormat = DXGI_FORMAT_D32_FLOAT;
+// 影を落とす範囲。プレビューのメッシュ（最大でも半径 1.5 程度）を囲む。
+constexpr float kShadowRadius = 2.2f;
+constexpr float kShadowDistance = 6.0f;
+// 自己遮蔽（シャドウアクネ）を避けるための下駄。傾きに応じてシェーダ側で増やす。
+constexpr float kShadowBias = 0.0018f;
+// シェーダの「影を落とさない」印。
+constexpr uint32_t kNoShadowIndex = 0xFFFFFFFFu;
+
 // GPU 側の MeshConstants と一致させること。
 struct MeshConstants {
     XMFLOAT4X4 viewProjection;
@@ -57,6 +68,18 @@ struct MeshConstants {
     uint32_t debugView;
     float displacementScale;
     float pad4;
+
+    XMFLOAT4X4 lightViewProjection;
+
+    uint32_t shadowIndex;  // 影を落とさないときは kNoShadowIndex
+    float shadowTexelSize;
+    float shadowBias;
+    float pad5;
+
+    XMFLOAT4X4 tessellationViewProjection;
+    float viewportSize[2];
+    float tessellationMaxFactor;
+    float pad6;
 };
 
 // GPU 側の SkyboxConstants と一致させること。
@@ -132,10 +155,46 @@ bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipeli
     if (!m_evaluator.Create(device, m_materialResolution)) {
         return false;
     }
+
+    // シャドウマップ。深度として書き、SRV としても読むので TYPELESS で作る。
+    rhi::TextureDesc shadowDesc;
+    shadowDesc.width = kShadowMapSize;
+    shadowDesc.height = kShadowMapSize;
+    shadowDesc.format = DXGI_FORMAT_R32_TYPELESS;
+    shadowDesc.dsvFormat = kShadowDsvFormat;
+    shadowDesc.srvFormat = DXGI_FORMAT_R32_FLOAT;
+    shadowDesc.allowDepthStencil = true;
+    shadowDesc.createSrv = true;
+    shadowDesc.clearDepth = 1.0f;
+    shadowDesc.initialState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    shadowDesc.debugName = L"ShadowMap";
+    if (!device.Allocator().CreateTexture2D(shadowDesc, m_shadowMap)) {
+        return false;
+    }
     return true;
 }
 
+// ライトから見たビュー×投影。プレビューの被写体を囲む平行投影で足りる。
+XMMATRIX PreviewRenderer::LightViewProjection() const {
+    const XMFLOAT3 direction = m_light.Direction();  // サーフェスから光源へ
+    const XMVECTOR lightDirection = XMVector3Normalize(XMLoadFloat3(&direction));
+    const XMVECTOR eye = XMVectorScale(lightDirection, kShadowDistance);
+    // 真上・真下からのときに上方向が縮退しないよう、軸を入れ替える。
+    const XMVECTOR up = (std::abs(direction.y) > 0.99f) ? XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f)
+                                                        : XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+    const XMMATRIX view = XMMatrixLookAtRH(eye, XMVectorZero(), up);
+    const XMMATRIX projection = XMMatrixOrthographicRH(kShadowRadius * 2.0f, kShadowRadius * 2.0f,
+                                                       0.05f, kShadowDistance + kShadowRadius);
+    return XMMatrixMultiply(view, projection);
+}
+
 void PreviewRenderer::Shutdown(rhi::Device& device) {
+    if (m_shadowMap.IsValid()) {
+        device.Allocator().ReleaseDescriptors(m_shadowMap);
+        device.Defer(m_shadowMap.resource);
+        device.Defer(m_shadowMap.allocation);
+        m_shadowMap = rhi::GpuTexture{};
+    }
     m_evaluator.Destroy(device);
     m_environment.Shutdown(device);
     m_sphere.Release(device);
@@ -361,6 +420,13 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     meshPipelineDesc.dsvFormat = kDepthFormat;
     meshPipelineDesc.layout = rhi::VertexLayout::MeshStandard;
     meshPipelineDesc.cullMode = D3D12_CULL_MODE_BACK;
+    // テセレーションを使うときは、頂点シェーダを制御点の出力だけに差し替える。
+    const bool useTessellation = m_tessellationEnabled;
+    if (useTessellation) {
+        meshPipelineDesc.vertexEntry = L"VsControl";
+        meshPipelineDesc.hullEntry = L"HsMain";
+        meshPipelineDesc.domainEntry = L"DsMain";
+    }
     // ワイヤーフレーム表示のときだけラスタライザを切り替える。
     if (m_debugView == DebugView::Wireframe) {
         meshPipelineDesc.fillMode = D3D12_FILL_MODE_WIREFRAME;
@@ -377,31 +443,6 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     if (!mesh.IsValid()) {
         return;
     }
-
-    PIXBeginEvent(commandList, PIX_COLOR(80, 200, 120), "PreviewScene");
-
-    TransitionIfNeeded(commandList, m_sceneColor, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    TransitionIfNeeded(commandList, m_materialUv, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    TransitionIfNeeded(commandList, m_depth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
-
-    const D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_sceneColor.rtv.cpu;
-    const D3D12_CPU_DESCRIPTOR_HANDLE dsv = m_depth.dsv.cpu;
-    const D3D12_CPU_DESCRIPTOR_HANDLE meshRtvs[] = {rtv, m_materialUv.rtv.cpu};
-    commandList->OMSetRenderTargets(_countof(meshRtvs), meshRtvs, FALSE, &dsv);
-
-    const float clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-    // UV バッファの被覆は z に入る。0 クリアで「メッシュに当たっていない」を表す。
-    const float clearUv[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    commandList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
-    commandList->ClearRenderTargetView(m_materialUv.rtv.cpu, clearUv, 0, nullptr);
-    commandList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-
-    const auto viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, static_cast<float>(m_width),
-                                           static_cast<float>(m_height));
-    const auto scissor = CD3DX12_RECT(0, 0, static_cast<LONG>(m_width),
-                                      static_cast<LONG>(m_height));
-    commandList->RSSetViewports(1, &viewport);
-    commandList->RSSetScissorRects(1, &scissor);
 
     // DirectXMath は行ベクトル規約、HLSL の行列は既定で列優先。
     // XMMATRIX をそのまま積むと HLSL 側では転置として解釈され、
@@ -440,6 +481,102 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.materialUvScale = m_materialUvScale;
     constants.debugView = static_cast<uint32_t>(m_debugView);
     constants.displacementScale = m_displacementScale;
+    // 分割量はカメラから見た見え方で決める。シャドウパスでも同じ値を使う。
+    XMStoreFloat4x4(&constants.tessellationViewProjection, XMMatrixMultiply(view, projection));
+    constants.viewportSize[0] = static_cast<float>(m_width);
+    constants.viewportSize[1] = static_cast<float>(m_height);
+    constants.tessellationMaxFactor = m_tessellationFactor;
+
+    // --- シャドウマップ ----------------------------------------------------
+    // ライトから深度だけを描く。同じ頂点シェーダを通るので、
+    // ディスプレイスメントで押し出した形がそのまま影になる。
+    constants.shadowIndex = kNoShadowIndex;
+    constants.shadowTexelSize = 1.0f / static_cast<float>(kShadowMapSize);
+    constants.shadowBias = kShadowBias;
+
+    if (m_shadowEnabled && m_shadowMap.IsValid()) {
+        const XMMATRIX lightViewProjection = LightViewProjection();
+        XMStoreFloat4x4(&constants.lightViewProjection, lightViewProjection);
+
+        rhi::GraphicsPipelineDesc shadowPipelineDesc;
+        shadowPipelineDesc.shaderPath = L"MeshPbr.hlsl";
+        shadowPipelineDesc.vertexEntry = L"VsMain";
+        // ピクセルシェーダは要らない。深度だけ書く。
+        shadowPipelineDesc.dsvFormat = kShadowDsvFormat;
+        shadowPipelineDesc.layout = rhi::VertexLayout::MeshStandard;
+        // 平面のような片面のメッシュも影を落とすので、両面を描く。
+        shadowPipelineDesc.cullMode = D3D12_CULL_MODE_NONE;
+        // 本描画と同じ分割で描く。違う形を影にすると自己遮蔽がずれる。
+        if (m_tessellationEnabled) {
+            shadowPipelineDesc.vertexEntry = L"VsControl";
+            shadowPipelineDesc.hullEntry = L"HsMain";
+            shadowPipelineDesc.domainEntry = L"DsMain";
+        }
+
+        ID3D12PipelineState* shadowPipeline = pipelineCache.GetGraphics(shadowPipelineDesc);
+        const rhi::UploadAllocation shadowCb =
+            device.Upload().Allocate(sizeof(MeshConstants), 256);
+
+        if (shadowPipeline != nullptr && shadowCb.IsValid()) {
+            // ライトから見た行列で描く。ほかの値は本描画と同じ。
+            MeshConstants shadowConstants = constants;
+            XMStoreFloat4x4(&shadowConstants.viewProjection, lightViewProjection);
+            std::memcpy(shadowCb.cpu, &shadowConstants, sizeof(shadowConstants));
+
+            PIXBeginEvent(commandList, PIX_COLOR(220, 200, 120), "PreviewShadow");
+            TransitionIfNeeded(commandList, m_shadowMap, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+
+            const D3D12_CPU_DESCRIPTOR_HANDLE shadowDsv = m_shadowMap.dsv.cpu;
+            commandList->OMSetRenderTargets(0, nullptr, FALSE, &shadowDsv);
+            commandList->ClearDepthStencilView(shadowDsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0,
+                                               nullptr);
+
+            const auto shadowViewport =
+                CD3DX12_VIEWPORT(0.0f, 0.0f, static_cast<float>(kShadowMapSize),
+                                 static_cast<float>(kShadowMapSize));
+            const auto shadowScissor = CD3DX12_RECT(0, 0, static_cast<LONG>(kShadowMapSize),
+                                                    static_cast<LONG>(kShadowMapSize));
+            commandList->RSSetViewports(1, &shadowViewport);
+            commandList->RSSetScissorRects(1, &shadowScissor);
+
+            commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
+            commandList->SetPipelineState(shadowPipeline);
+            commandList->SetGraphicsRootConstantBufferView(1, shadowCb.gpuAddress);
+            mesh.Draw(commandList, m_tessellationEnabled);
+
+            TransitionIfNeeded(commandList, m_shadowMap,
+                               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            PIXEndEvent(commandList);
+
+            constants.shadowIndex = m_shadowMap.SrvIndex();
+        }
+    }
+
+    PIXBeginEvent(commandList, PIX_COLOR(80, 200, 120), "PreviewScene");
+
+    TransitionIfNeeded(commandList, m_sceneColor, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    TransitionIfNeeded(commandList, m_materialUv, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    TransitionIfNeeded(commandList, m_depth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_sceneColor.rtv.cpu;
+    const D3D12_CPU_DESCRIPTOR_HANDLE dsv = m_depth.dsv.cpu;
+    const D3D12_CPU_DESCRIPTOR_HANDLE meshRtvs[] = {rtv, m_materialUv.rtv.cpu};
+    commandList->OMSetRenderTargets(_countof(meshRtvs), meshRtvs, FALSE, &dsv);
+
+    const float clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    // UV バッファの被覆は z に入る。0 クリアで「メッシュに当たっていない」を表す。
+    const float clearUv[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    commandList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
+    commandList->ClearRenderTargetView(m_materialUv.rtv.cpu, clearUv, 0, nullptr);
+    commandList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+    const auto viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, static_cast<float>(m_width),
+                                           static_cast<float>(m_height));
+    const auto scissor = CD3DX12_RECT(0, 0, static_cast<LONG>(m_width),
+                                      static_cast<LONG>(m_height));
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
+
 
     const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(MeshConstants), 256);
     if (!cb.IsValid()) {
@@ -451,7 +588,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
     commandList->SetPipelineState(meshPipeline);
     commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
-    mesh.Draw(commandList);
+    mesh.Draw(commandList, useTessellation);
 
     PIXEndEvent(commandList);
 

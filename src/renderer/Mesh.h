@@ -27,7 +27,8 @@ public:
     bool Create(rhi::Device& device, const MeshData& data, const wchar_t* debugName);
     void Release(rhi::Device& device);
 
-    void Draw(ID3D12GraphicsCommandList* commandList) const;
+    // asPatches が真なら 3 制御点のパッチとして描く（テセレーション用）。
+    void Draw(ID3D12GraphicsCommandList* commandList, bool asPatches = false) const;
 
     bool IsValid() const { return m_indexCount > 0; }
     uint32_t IndexCount() const { return m_indexCount; }

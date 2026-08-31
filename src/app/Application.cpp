@@ -1092,6 +1092,15 @@ void Application::DrawMaterialPanel() {
                                   "0 なら形は変わらない",
                                   "%.2f", 0, 0.01f);
 
+                ui::PropertyBool("テセレーション", &m_renderer.TessellationEnabled(), false,
+                                 "画面上の辺が長いところだけメッシュを細かく割る。"
+                                 "変位量を上げたときに形がなめらかになる");
+                if (m_renderer.TessellationEnabled()) {
+                    ui::PropertyFloat("分割の上限", &m_renderer.TessellationFactor(), 1.0f, 16.0f,
+                                      8.0f, "1 辺をこの回数まで割る。上げるほど重くなる",
+                                      "%.0f", 0, 1.0f);
+                }
+
                 int resolution = ResolutionIndex(m_renderer.MaterialResolution());
                 if (ui::PropertyCombo("合成解像度", &resolution, kResolutionLabels,
                                       IM_ARRAYSIZE(kResolutionLabels), 1,
@@ -1156,6 +1165,9 @@ void Application::DrawLightingPanel() {
                               kDefaultLight.illuminance,
                               "lux。晴天の直射日光がおよそ 100000 lux", "%.0f");
             ui::PropertyColor("光の色", &light.color.x, &kDefaultLight.color.x);
+            ui::PropertyBool("影", &m_renderer.ShadowEnabled(), true,
+                             "ディレクショナルライトの影を落とす。"
+                             "ディスプレイスメントで押し出した形にも落ちる");
             ui::EndPropertyTable();
         }
 

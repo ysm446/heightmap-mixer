@@ -113,6 +113,12 @@ public:
     const std::filesystem::path& HdriPath() const { return m_hdriPath; }
     float& IblIntensity() { return m_iblIntensity; }
     bool& ShowSkybox() { return m_showSkybox; }
+    // ディレクショナルライトの影を落とすか。落とさないとシャドウパスも走らない。
+    bool& ShadowEnabled() { return m_shadowEnabled; }
+    // テセレーション（画面上の辺の長さに応じた分割）を使うか。
+    bool& TessellationEnabled() { return m_tessellationEnabled; }
+    // 1 辺あたりの分割の上限。
+    float& TessellationFactor() { return m_tessellationFactor; }
     bool& UseMaterialTextures() { return m_useMaterialTextures; }
     float& MaterialUvScale() { return m_materialUvScale; }
     // ハイトを形状に反映する量（0 で反映しない）。頂点シェーダで押し出す。
@@ -132,6 +138,8 @@ public:
 
 private:
     const Mesh& CurrentMesh() const;
+    // ライトから見たビュー×投影。プレビューの被写体を囲む平行投影。
+    DirectX::XMMATRIX LightViewProjection() const;
     void ReleaseTargets(rhi::Device& device);
 
     Mesh m_sphere;
@@ -144,6 +152,8 @@ private:
     rhi::GpuTexture m_materialUv;
     rhi::GpuTexture m_depth;
     rhi::GpuTexture m_output;  // トーンマップ後の表示用
+    // ディレクショナルライトから見た深度。ビューポートの大きさとは無関係に固定。
+    rhi::GpuTexture m_shadowMap;
 
     Camera m_camera;
     ExposureSettings m_exposure;
@@ -162,6 +172,9 @@ private:
     uint32_t m_requestedMaterialResolution = 1024;
     bool m_useMaterialTextures = true;
     bool m_showSkybox = true;
+    bool m_shadowEnabled = true;
+    bool m_tessellationEnabled = false;
+    float m_tessellationFactor = 8.0f;
     bool m_skyRebuildRequested = false;
     std::filesystem::path m_pendingHdrPath;
     std::filesystem::path m_hdriPath;

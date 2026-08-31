@@ -28,7 +28,11 @@ enum class VertexLayout {
 struct GraphicsPipelineDesc {
     std::wstring shaderPath;
     std::wstring vertexEntry;
+    // 空ならピクセルシェーダ無し。深度だけを描くパス（シャドウマップ）で使う。
     std::wstring pixelEntry;
+    // 両方そろっていればテセレーションを使う。トポロジは 3 制御点のパッチになる。
+    std::wstring hullEntry;
+    std::wstring domainEntry;
     DXGI_FORMAT rtvFormat = DXGI_FORMAT_UNKNOWN;
     // 2 枚目のレンダーターゲット。UNKNOWN なら 1 枚だけ書く。
     DXGI_FORMAT rtvFormat1 = DXGI_FORMAT_UNKNOWN;

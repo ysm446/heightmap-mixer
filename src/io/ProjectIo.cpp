@@ -406,9 +406,12 @@ json WritePreview(renderer::PreviewRenderer& renderer, const fs::path& baseDir) 
     node["useMaterialTextures"] = renderer.UseMaterialTextures();
     node["materialUvScale"] = renderer.MaterialUvScale();
     node["displacementScale"] = renderer.DisplacementScale();
+    node["tessellation"] = renderer.TessellationEnabled();
+    node["tessellationFactor"] = renderer.TessellationFactor();
     node["materialResolution"] = renderer.MaterialResolution();
     node["iblIntensity"] = renderer.IblIntensity();
     node["showSkybox"] = renderer.ShowSkybox();
+    node["shadow"] = renderer.ShadowEnabled();
     // HDRI を読んでいなければ手続き的な空。null で区別する。
     node["hdri"] = renderer.HdriPath().empty()
                        ? json()
@@ -465,9 +468,12 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer, const fs
     renderer.UseMaterialTextures() = ReadBool(node, "useMaterialTextures", true);
     renderer.MaterialUvScale() = ReadFloat(node, "materialUvScale", 1.0f);
     renderer.DisplacementScale() = ReadFloat(node, "displacementScale", 0.0f);
+    renderer.TessellationEnabled() = ReadBool(node, "tessellation", false);
+    renderer.TessellationFactor() = ReadFloat(node, "tessellationFactor", 8.0f);
     renderer.RequestMaterialResolution(ReadUInt(node, "materialResolution", 1024));
     renderer.IblIntensity() = ReadFloat(node, "iblIntensity", 1.0f);
     renderer.ShowSkybox() = ReadBool(node, "showSkybox", true);
+    renderer.ShadowEnabled() = ReadBool(node, "shadow", true);
 
     if (const json* camera = FindMember(node, "camera");
         camera != nullptr && camera->is_object()) {
