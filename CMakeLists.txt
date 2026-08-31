@@ -81,6 +81,14 @@ set(mm_sources
     src/app/Main.cpp
     src/app/Application.cpp
     src/app/Application.h
+    src/app/ApplicationDocument.cpp
+    src/app/ApplicationFileWork.cpp
+    src/app/ApplicationLayerPanel.cpp
+    src/app/ApplicationMaterialPanel.cpp
+    src/app/ApplicationPreviewPanels.cpp
+    src/app/ApplicationTexturePanel.cpp
+    src/app/ApplicationUiHelpers.h
+    src/app/ApplicationViewport.cpp
     src/app/UndoHistory.cpp
     src/app/UndoHistory.h
     src/core/Log.cpp

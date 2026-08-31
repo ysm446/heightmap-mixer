@@ -1,0 +1,359 @@
+// ファイルメニュー、ショートカット、ドロップの受け付けと、
+// フレームの外で処理する保留ファイル作業（開く / 保存 / 削除）。
+
+#include "app/Application.h"
+
+#include "app/ApplicationUiHelpers.h"
+#include "core/FileDialog.h"
+#include "core/Log.h"
+#include "io/ProjectIo.h"
+#include "ui/UiStyle.h"
+
+#include <imgui.h>
+#include <imgui_internal.h>
+
+#include <DirectXMath.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <string>
+#include <vector>
+
+namespace mm {
+
+// ファイルメニュー。ここでは要求を積むだけで、実際の読み書きは
+// ProcessPendingFileWork がフレームの外で行う（GPU 待機を伴うため）。
+void Application::RequestOpenProject() {
+    const std::filesystem::path path =
+        ShowOpenFileDialog(L"プロジェクトを開く", ProjectFileFilters());
+    if (!path.empty()) {
+        m_pendingProjectOpen = path;
+    }
+}
+
+// saveAs が偽でも、まだ一度も保存していなければ保存先を聞く。
+void Application::RequestSaveProject(bool saveAs) {
+    if (!saveAs && !m_projectPath.empty()) {
+        m_pendingProjectSave = m_projectPath;
+        return;
+    }
+    const std::filesystem::path path = ShowSaveFileDialog(
+        L"プロジェクトを保存", ProjectFileFilters(), L"mmproj", m_projectPath);
+    if (!path.empty()) {
+        m_pendingProjectSave = path;
+    }
+}
+
+// キーボードショートカット。メニューと同じ入口（Request*）を通す。
+//
+// テキスト入力中でも効かせる（Ctrl + S は入力欄が食う操作ではない）。
+// 実際の読み書きはどれも保留されるので、押された時点では要求が積まれるだけ。
+void Application::HandleShortcuts() {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (!io.KeyCtrl || io.KeyAlt) {
+        return;
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+        m_pendingProjectNew = true;
+    } else if (ImGui::IsKeyPressed(ImGuiKey_O, false)) {
+        RequestOpenProject();
+    } else if (ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        // Ctrl + Shift + S は「名前を付けて保存」。
+        RequestSaveProject(io.KeyShift);
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+        // テキスト入力中は InputText 内部のアンドゥに任せる。
+        // 文書のアンドゥまで同時に走ると、無関係な編集が巻き戻る。
+        if (io.WantTextInput) {
+            return;
+        }
+        // Ctrl + Shift + Z も「やり直す」。Ctrl + Y と同じ。
+        if (io.KeyShift) {
+            if (m_undoHistory.CanRedo()) {
+                m_pendingHistoryStep = 1;
+            }
+        } else if (m_undoHistory.CanUndo()) {
+            m_pendingHistoryStep = -1;
+        }
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Y, false) && !io.WantTextInput &&
+               m_undoHistory.CanRedo()) {
+        m_pendingHistoryStep = 1;
+    }
+}
+
+// 最近使ったプロジェクト。名前を項目に、置き場所を右の列に出す。
+// 同じ名前のプロジェクトが別の場所にあっても見分けられるようにするため。
+void Application::DrawRecentMenu() {
+    const std::vector<std::filesystem::path>& entries = m_recentProjects.Entries();
+    if (!ImGui::BeginMenu("最近使ったプロジェクト", !entries.empty())) {
+        return;
+    }
+
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const std::filesystem::path& path = entries[i];
+        ImGui::PushID(static_cast<int>(i));
+
+        const std::string name = ToUtf8(path.filename());
+        const std::string directory = ToUtf8(path.parent_path());
+        if (ImGui::MenuItem(name.c_str(), directory.c_str())) {
+            m_pendingProjectOpen = path;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", ToUtf8(path).c_str());
+        }
+
+        ImGui::PopID();
+    }
+
+    ImGui::Separator();
+    if (ImGui::MenuItem("履歴を消す")) {
+        m_recentProjects.Clear();
+    }
+    ImGui::EndMenu();
+}
+
+void Application::DrawFileMenu() {
+    if (!ImGui::BeginMenu("ファイル")) {
+        return;
+    }
+
+    if (ImGui::MenuItem("新規", "Ctrl+N")) {
+        m_pendingProjectNew = true;
+    }
+    if (ImGui::MenuItem("開く…", "Ctrl+O")) {
+        RequestOpenProject();
+    }
+    DrawRecentMenu();
+    if (ImGui::MenuItem("保存", "Ctrl+S")) {
+        RequestSaveProject(false);
+    }
+    if (ImGui::MenuItem("名前を付けて保存…", "Ctrl+Shift+S")) {
+        RequestSaveProject(true);
+    }
+
+    ImGui::Separator();
+    if (ImGui::MenuItem("終了")) {
+        m_window.RequestClose();
+    }
+    ImGui::EndMenu();
+}
+
+void Application::HandleDroppedFiles(const std::vector<std::filesystem::path>& paths) {
+    size_t images = 0;
+    for (const std::filesystem::path& path : paths) {
+        std::string extension = path.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        // 拡張子で行き先を決める。読み込み自体はどれも保留し、フレームの外で処理する。
+        if (extension == ".mmproj") {
+            m_pendingProjectOpen = path;
+        } else if (extension == ".mmmat") {
+            m_pendingMaterialImport = path;
+        } else if (extension == ".hdr") {
+            m_renderer.RequestHdrLoad(path);
+        } else if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
+                   extension == ".tga" || extension == ".bmp" || extension == ".exr") {
+            m_pendingTexturePaths.push_back(path);
+            ++images;
+        } else {
+            MM_LOG_WARN("扱えない形式です: %s", ToUtf8(path.filename()).c_str());
+        }
+    }
+    if (images > 0) {
+        MM_LOG_INFO("%zu 枚の画像を読み込みます", images);
+    }
+}
+
+void Application::ResetProject() {
+    // どれも GPU 待機を伴う。フレームの外から呼ぶこと。
+    m_paintMasks.Clear(m_device);
+    m_materialLibrary.Clear(m_device);
+    m_textureLibrary.Clear(m_device);
+
+    // 既定のスタックへ戻す。MaterialStack を代入で作り直すと revision も 1 へ戻り、
+    // 評価器が「変わっていない」と判断してしまうので、中身だけ入れ替える。
+    const compositor::MaterialStack defaults;
+    m_materialStack.Layers() = defaults.Layers();
+    m_materialStack.MarkDirty();
+
+    m_selectedLayer = 0;
+    m_selectedMaterial = 0;
+    m_selectedTexture = 0;
+    m_ordTexture = compositor::kNoTexture;
+    m_paintMode = false;
+    m_strokeActive = false;
+
+    // 別の文書になるので履歴は捨てる。戻せてしまうと中身が混ざる。
+    m_undoHistory.Clear();
+    m_documentDirty = false;
+    m_pendingHistoryStep = 0;
+    m_committed = CaptureDocument();
+}
+
+void Application::UpdateWindowTitle() {
+    std::wstring title;
+    if (!m_projectPath.empty()) {
+        title = m_projectPath.filename().wstring() + L" - ";
+    }
+    title += L"Material Mixer";
+    m_window.SetTitle(title.c_str());
+}
+
+void Application::ProcessPendingFileWork() {
+    // どれもリソースの生成・破棄と GPU 待機を伴う。フレームの外で処理すること。
+
+    // アンドゥ / リドゥ。マテリアルの破棄を伴うのでここで処理する。
+    if (m_pendingHistoryStep != 0) {
+        const int step = m_pendingHistoryStep;
+        m_pendingHistoryStep = 0;
+
+        const DocumentSnapshot current = CaptureDocument();
+        if (step < 0 && m_undoHistory.CanUndo()) {
+            ApplyDocument(m_undoHistory.Undo(current));
+        } else if (step > 0 && m_undoHistory.CanRedo()) {
+            ApplyDocument(m_undoHistory.Redo(current));
+        }
+        m_committed = CaptureDocument();
+        m_pendingPaintSweep = true;
+    }
+
+    if (m_pendingPaintSweep) {
+        m_pendingPaintSweep = false;
+        SweepPaintMasks();
+    }
+
+    if (m_pendingProjectNew) {
+        m_pendingProjectNew = false;
+        ResetProject();
+        m_projectPath.clear();
+        UpdateWindowTitle();
+    }
+
+    if (!m_pendingProjectOpen.empty()) {
+        const std::filesystem::path path = m_pendingProjectOpen;
+        m_pendingProjectOpen.clear();
+
+        io::ProjectRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary, m_paintMasks,
+                             m_renderer};
+        if (io::LoadProject(path, m_device, m_pipelineCache, refs)) {
+            m_recentProjects.Add(path);
+            m_projectPath = path;
+            m_selectedLayer = 0;
+            m_selectedMaterial = 0;
+            m_selectedTexture = 0;
+            m_ordTexture = compositor::kNoTexture;
+            m_paintMode = false;
+            m_strokeActive = false;
+            // 読み込んだ文書が新しい起点になる。前の文書の履歴は捨てる。
+            m_undoHistory.Clear();
+            m_documentDirty = false;
+            m_pendingHistoryStep = 0;
+            m_committed = CaptureDocument();
+            UpdateWindowTitle();
+        } else {
+            // 消えた / 壊れたプロジェクトを履歴に残しても、選べるだけで意味がない。
+            m_recentProjects.Remove(path);
+        }
+    }
+
+    if (!m_pendingProjectSave.empty()) {
+        const std::filesystem::path path = m_pendingProjectSave;
+        m_pendingProjectSave.clear();
+
+        io::ProjectRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary, m_paintMasks,
+                             m_renderer};
+        if (io::SaveProject(path, m_device, refs)) {
+            m_recentProjects.Add(path);
+            m_projectPath = path;
+            UpdateWindowTitle();
+        }
+    }
+
+    if (!m_pendingMaterialExport.empty()) {
+        const std::filesystem::path path = m_pendingMaterialExport;
+        const compositor::MaterialAssetId id = m_pendingExportMaterial;
+        m_pendingMaterialExport.clear();
+        m_pendingExportMaterial = compositor::kNoMaterialAsset;
+
+        if (const compositor::MaterialAsset* asset = m_materialLibrary.Find(id);
+            asset != nullptr) {
+            io::SaveMaterial(path, *asset, m_textureLibrary);
+        }
+    }
+
+    if (!m_pendingMaterialImport.empty()) {
+        const std::filesystem::path path = m_pendingMaterialImport;
+        m_pendingMaterialImport.clear();
+
+        const compositor::MaterialAssetId id = io::LoadMaterial(
+            path, m_device, m_pipelineCache, m_textureLibrary, m_materialLibrary);
+        if (id != compositor::kNoMaterialAsset) {
+            m_selectedMaterial = static_cast<int>(m_materialLibrary.Entries().size()) - 1;
+        }
+    }
+
+    if (m_pendingTextureRemove != compositor::kNoTexture) {
+        const compositor::TextureId removed = m_pendingTextureRemove;
+        m_pendingTextureRemove = compositor::kNoTexture;
+
+        // 参照を先に外す。無効な ID を残すと、次に同じ番号が払い出されたときに
+        // 別の画像が割り当たってしまう。
+        const auto clearSlot = [removed](compositor::TextureId& slot) {
+            const bool hit = (slot == removed);
+            if (hit) {
+                slot = compositor::kNoTexture;
+            }
+            return hit;
+        };
+        const auto clearMap = [removed](compositor::MapSlot& slot) {
+            const bool hit = (slot.texture == removed);
+            if (hit) {
+                slot = compositor::MapSlot{};
+            }
+            return hit;
+        };
+
+        for (const compositor::MaterialAsset& entry : m_materialLibrary.Entries()) {
+            compositor::MaterialAsset* asset = m_materialLibrary.FindMutable(entry.id);
+            bool hit = clearSlot(asset->baseColor);
+            hit |= clearSlot(asset->normal);
+            hit |= clearMap(asset->roughness);
+            hit |= clearMap(asset->metallic);
+            hit |= clearMap(asset->ambientOcclusion);
+            hit |= clearMap(asset->height);
+            if (hit) {
+                asset->thumbnailDirty = true;
+            }
+        }
+        for (compositor::MaterialLayer& layer : m_materialStack.Layers()) {
+            clearMap(layer.mask.texture);
+        }
+        clearSlot(m_ordTexture);
+
+        // 解放は DeferRelease でフレーム同期後に行われるため、GPU 待機は不要。
+        m_textureLibrary.Remove(m_device, removed);
+        m_materialStack.MarkDirty();
+    }
+
+    if (m_pendingMaterialRemove != compositor::kNoMaterialAsset) {
+        const compositor::MaterialAssetId removed = m_pendingMaterialRemove;
+        m_pendingMaterialRemove = compositor::kNoMaterialAsset;
+
+        if (m_materialLibrary.Find(removed) != nullptr) {
+            m_materialLibrary.Remove(m_device, removed);
+            // 参照していたレイヤーは「なし」へ戻す。無効な ID を残さない。
+            for (compositor::MaterialLayer& layer : m_materialStack.Layers()) {
+                if (layer.material == removed) {
+                    layer.material = compositor::kNoMaterialAsset;
+                }
+            }
+            m_selectedMaterial = std::max(0, m_selectedMaterial - 1);
+            MarkDocumentChanged();
+        }
+    }
+}
+
+}  // namespace mm

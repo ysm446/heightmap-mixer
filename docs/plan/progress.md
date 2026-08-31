@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-01 07:28
+更新日時: 2026-09-01 07:43
 
 ## 現在の状況
 
@@ -26,12 +26,25 @@ UI はグレー基調に整理し、ルールを [design/design-guide.md](../des
 
 ## 完了済み
 
+- 2026-09-01 07:43 — **Application.cpp（約 3,000 行）を責務別に分割。**
+  クラス定義（Application.h）は変えず、メンバ関数の定義の置き場所だけを移した。
+  - コア（初期化 / フレームループ / レイアウト / ステータスバー / 設定 / 情報）は
+    `Application.cpp`（約 700 行）に残し、以下を新設:
+    `ApplicationViewport.cpp`（ビューポートと入力・ギズモ）、
+    `ApplicationPreviewPanels.cpp`（プレビュー設定 / ライティングと露出）、
+    `ApplicationLayerPanel.cpp` / `ApplicationMaterialPanel.cpp` /
+    `ApplicationTexturePanel.cpp`（各パネル）、
+    `ApplicationDocument.cpp`（アンドゥ文書）、
+    `ApplicationFileWork.cpp`（メニューと保留ファイル作業）。
+  - 匿名名前空間の共有ヘルパは `ApplicationUiHelpers.h`（内部ヘッダ、inline 化）へ集約。
+    コア専用の定数（ウィンドウ初期サイズなど）はコア側の匿名名前空間に残した。
+
 - 2026-09-01 07:28 — **コードレビューと不具合修正（全域）。**
   rhi / compositor / renderer / app・io・ui をレビューし、critical と bug を中心に修正。
   詳細は [changelog](../changelog.md) の同日時の項を参照。
   - ディスクリプタの遅延解放（`Device::DeferRelease`）を導入し、
     手動の `WaitForGpu` に頼る解放を全廃した。
-  - 未修正の改善候補（提案のみ）: `Application.cpp`（約 3,000 行）のパネル別分割、
+  - 未修正の改善候補（提案のみ）:
     `DispatchCount` / `TransitionIfNeeded` などの共通ヘルパの rhi への集約、
     `ToUtf8` / `FromUtf8` の一本化（core へ）、プレビュー既定値の構造体化、
     ラフネス下限の統一（0.03 / 0.05 / 1e-3 が混在）、

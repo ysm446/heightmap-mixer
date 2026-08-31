@@ -1,0 +1,330 @@
+// テクスチャパネル。一覧、詳細、削除の確認モーダル、参照箇所の収集。
+
+#include "app/Application.h"
+
+#include "app/ApplicationUiHelpers.h"
+#include "core/FileDialog.h"
+#include "core/Log.h"
+#include "io/ProjectIo.h"
+#include "ui/UiStyle.h"
+
+#include <imgui.h>
+#include <imgui_internal.h>
+
+#include <DirectXMath.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <string>
+#include <vector>
+
+namespace mm {
+
+// このテクスチャを使っている場所を、人が読める形で並べる。
+//
+// 削除の確認で「どこが壊れるか」を出すために使う。件数だけだと、
+// 消していいのか判断できない。
+std::vector<std::string> Application::CollectTextureUsers(compositor::TextureId id) const {
+    std::vector<std::string> users;
+    if (id == compositor::kNoTexture) {
+        return users;
+    }
+
+    for (const compositor::MaterialAsset& asset : m_materialLibrary.Entries()) {
+        const auto add = [&](const char* slotName) {
+            users.push_back("マテリアル「" + asset.name + "」の" + slotName);
+        };
+        if (asset.baseColor == id) {
+            add("ベースカラー");
+        }
+        if (asset.normal == id) {
+            add("法線");
+        }
+        if (asset.roughness.texture == id) {
+            add("ラフネス");
+        }
+        if (asset.metallic.texture == id) {
+            add("メタルネス");
+        }
+        if (asset.ambientOcclusion.texture == id) {
+            add("AO");
+        }
+        if (asset.height.texture == id) {
+            add("ハイト");
+        }
+    }
+
+    for (const compositor::MaterialLayer& layer : m_materialStack.Layers()) {
+        if (layer.mask.texture.texture == id) {
+            users.push_back("レイヤー「" + layer.name + "」のマスク");
+        }
+    }
+    return users;
+}
+
+size_t Application::CountTextureUsers(compositor::TextureId id) const {
+    if (id == compositor::kNoTexture) {
+        return 0;
+    }
+    size_t count = 0;
+    for (const compositor::MaterialAsset& asset : m_materialLibrary.Entries()) {
+        count += (asset.baseColor == id) ? 1 : 0;
+        count += (asset.normal == id) ? 1 : 0;
+        count += (asset.roughness.texture == id) ? 1 : 0;
+        count += (asset.metallic.texture == id) ? 1 : 0;
+        count += (asset.ambientOcclusion.texture == id) ? 1 : 0;
+        count += (asset.height.texture == id) ? 1 : 0;
+    }
+    for (const compositor::MaterialLayer& layer : m_materialStack.Layers()) {
+        count += (layer.mask.texture.texture == id) ? 1 : 0;
+    }
+    return count;
+}
+
+// 参照が残っているテクスチャを消そうとしたときの確認。
+//
+// 消しても壊れはしない（参照は削除時に「なし」へ落ちる）が、
+// **黙って落とすと、どのマテリアルが変わったのか分からなくなる。**
+// どこで使われているかを並べて、消すかどうかを決めてもらう。
+void Application::DrawTextureRemoveModal() {
+    // ビューポート中央に出す。ドックのどこにパネルがあっても同じ位置に出したい。
+    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (!ImGui::BeginPopupModal(kTextureRemoveModalTitle, nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+
+    const compositor::LibraryTexture* entry = m_textureLibrary.Find(m_textureRemoveCandidate);
+    const char* const name = (entry != nullptr) ? entry->name.c_str() : "?";
+
+    if (m_textureRemoveUsers.empty()) {
+        ImGui::Text("「%s」を削除します。", name);
+        ImGui::Spacing();
+        ui::HintText("どこからも使われていない。画像ファイルは消えない");
+    } else {
+        ImGui::Text("「%s」は %zu か所で使われています。", name, m_textureRemoveUsers.size());
+        ImGui::Spacing();
+
+        // 使用箇所。多いときは枠を作ってスクロールさせる（窓が縦に伸びきらないように）。
+        constexpr size_t kMaxRowsWithoutScroll = 8;
+        const bool scroll = m_textureRemoveUsers.size() > kMaxRowsWithoutScroll;
+        const float listHeight =
+            scroll ? ImGui::GetTextLineHeightWithSpacing() * kMaxRowsWithoutScroll : 0.0f;
+        if (ImGui::BeginChild("textureRemoveUsers", ImVec2(ui::Scaled(360.0f), listHeight),
+                              ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY)) {
+            for (const std::string& user : m_textureRemoveUsers) {
+                ImGui::BulletText("%s", user.c_str());
+            }
+        }
+        ImGui::EndChild();
+
+        ImGui::Spacing();
+        ui::HintText("削除すると、これらの割り当ては「なし」に戻る");
+    }
+    ImGui::Spacing();
+
+    const auto close = [this]() {
+        m_textureRemoveCandidate = compositor::kNoTexture;
+        m_textureRemoveUsers.clear();
+        ImGui::CloseCurrentPopup();
+    };
+
+    if (ui::Button("削除する", ui::kWideButtonWidth)) {
+        m_pendingTextureRemove = m_textureRemoveCandidate;
+        close();
+    }
+    ImGui::SameLine();
+    if (ui::Button("やめる", ui::kWideButtonWidth)) {
+        close();
+    }
+    // Esc でも閉じられるようにする。確認はいつでも降りられる方がよい。
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        close();
+    }
+
+    ImGui::EndPopup();
+}
+
+// 読み込んだ画像の一覧。マテリアルのマップはここから割り当てる。
+void Application::DrawTextureLibraryPanel() {
+    if (!ImGui::Begin("テクスチャ")) {
+        ImGui::End();
+        return;
+    }
+
+    const std::vector<compositor::LibraryTexture>& entries = m_textureLibrary.Entries();
+    const auto textureCount = static_cast<int>(entries.size());
+    m_selectedTexture = std::clamp(m_selectedTexture, 0, (textureCount > 0) ? textureCount - 1 : 0);
+
+    if (ui::Button("読み込む…", ui::kWideButtonWidth)) {
+        std::vector<std::filesystem::path> paths =
+            ShowOpenFilesDialog(L"テクスチャを開く", ImageFileFilters());
+        if (!paths.empty()) {
+            m_pendingTexturePaths.insert(m_pendingTexturePaths.end(), paths.begin(), paths.end());
+        }
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(textureCount == 0);
+    const bool deletePressed = ui::Button("削除");
+    ImGui::EndDisabled();
+
+    // Del キーでも消せる。**このパネルにフォーカスがあるときだけ**効かせ、
+    // 名前を打っている最中は無視する。
+    const bool deleteKey = textureCount > 0 && !ImGui::GetIO().WantTextInput &&
+                           ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+                           ImGui::IsKeyPressed(ImGuiKey_Delete, false);
+
+    if (deletePressed || deleteKey) {
+        // **参照が無くても必ず確認する。** テクスチャの削除は取り消せないため
+        // （アンドゥの対象はレイヤーとマテリアルだけ）。
+        m_textureRemoveCandidate = entries[static_cast<size_t>(m_selectedTexture)].id;
+        m_textureRemoveUsers = CollectTextureUsers(m_textureRemoveCandidate);
+        ImGui::OpenPopup(kTextureRemoveModalTitle);
+    }
+    DrawTextureRemoveModal();
+
+    // ビューポートの下の横長の帯に置くことを前提に、一覧と詳細を左右に分ける。
+    // 縦に積むと、帯の高さでは両方が見えない。
+    // 幅が足りないとき（左カラムへドッキングし直したときなど）は縦に積む。
+    //
+    // **拡大プレビューの大きさは帯の高さで決まる。** 帯は横に広く縦に狭いので、
+    // 縦に積むと数十ピクセルしか残らない。プレビューは高さいっぱいに取り、
+    // プロパティ行はその横へ回す。帯をドラッグで広げれば、そのまま大きくなる。
+    const float previewSize =
+        std::clamp(ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing(),
+                   ui::Scaled(64.0f), ui::Scaled(400.0f));
+    // プロパティ行に必ず残す幅。ここを削ると「2048 x 2048」すら入らなくなる。
+    constexpr float kDetailRowsWidth = 240.0f;
+    const float detailWidth = previewSize + ui::Scaled(kDetailRowsWidth) +
+                              ImGui::GetStyle().ItemSpacing.x;
+    // 一覧にもサムネイルが数枚並ぶだけの幅が残るときだけ左右に分ける。
+    const bool sideBySide =
+        ImGui::GetContentRegionAvail().x > detailWidth + ui::Scaled(220.0f);
+    const ImVec2 gridSize =
+        sideBySide ? ImVec2(-(detailWidth + ImGui::GetStyle().ItemSpacing.x), 0.0f)
+                   : ImVec2(0.0f, ui::Scaled(180.0f));
+
+    // サムネイルの一覧。枠の幅に入るだけ横に並べる。
+    // 読み込み時にミップを作ってあるので、元の画像をそのまま縮小して出せる。
+    const float thumbnailSize = ui::Scaled(72.0f);
+    if (ImGui::BeginChild("textureGrid", gridSize, ImGuiChildFlags_Borders)) {
+        const float step = thumbnailSize + ImGui::GetStyle().ItemSpacing.x;
+        const auto columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / step));
+
+        for (int i = 0; i < textureCount; ++i) {
+            const compositor::LibraryTexture& entry = entries[static_cast<size_t>(i)];
+            ImGui::PushID(static_cast<int>(entry.id));
+
+            ImGui::BeginGroup();
+            // リニアなテクスチャ（EXR）は表示用に焼き直したものを描く。
+            // 元のまま描くと極端に暗く、一覧で見分けられない。
+            //
+            // ThumbnailButton は ID を持つアイテムとして置く。ImGui::Image() では
+            // ID が無く、この後の BeginDragDropSource() がドラッグを始められない。
+            const ui::Thumbnail thumbnail =
+                ui::ThumbnailButton("##thumbnail",
+                                    static_cast<ImTextureID>(entry.PreviewHandle().ptr),
+                                    thumbnailSize, m_selectedTexture == i);
+            if (thumbnail.clicked) {
+                m_selectedTexture = i;
+            }
+            // 読み込んだ直後のものは枠内へ送る。一覧はスクロールするので、
+            // 追加しただけでは見えない位置に入ることがある。
+            if (m_selectedTexture == i && m_scrollToSelectedTexture) {
+                m_scrollToSelectedTexture = false;
+                ImGui::SetScrollHereY(1.0f);
+            }
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoHoldToOpenOthers)) {
+                // マテリアルのマップ欄へ落とすと、そのスロットに割り当たる。
+                ImGui::SetDragDropPayload(kTextureDragDropType, &entry.id,
+                                          sizeof(compositor::TextureId));
+                ImGui::TextUnformatted(entry.name.c_str());
+                ImGui::EndDragDropSource();
+            } else if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", entry.name.c_str());
+            }
+            ImGui::EndGroup();
+
+            ImGui::PopID();
+            if (((i + 1) % columns) != 0 && (i + 1) < textureCount) {
+                ImGui::SameLine();
+            }
+        }
+    }
+    ImGui::EndChild();
+
+    if (sideBySide) {
+        ImGui::SameLine();
+        ImGui::BeginChild("textureDetails", ImVec2(0.0f, 0.0f));
+    }
+
+    if (textureCount == 0) {
+        ui::HintText("「読み込む…」で画像を読み込む（PNG / JPG / TGA / EXR）");
+        if (sideBySide) {
+            ImGui::EndChild();
+        }
+        ImGui::End();
+        return;
+    }
+
+    const compositor::LibraryTexture& selected = entries[static_cast<size_t>(m_selectedTexture)];
+    // 拡大プレビュー。サムネイル（72）では中身を確かめられないため置く。
+    //
+    // コンボは 0 が RGB なので、1 つずらして R / G / B / A の SRV を引く。
+    // 0（RGB）のときは -1 になり、ChannelHandle が通常の表示用を返す。
+    if (sideBySide) {
+        ImGui::Image(static_cast<ImTextureID>(selected.ChannelHandle(m_previewChannel - 1).ptr),
+                     ImVec2(previewSize, previewSize));
+        ImGui::SameLine();
+        ImGui::BeginChild("textureDetailRows", ImVec2(0.0f, previewSize));
+    }
+
+    ui::SectionHeader("選択中");
+    if (ui::BeginPropertyTable("textureRows")) {
+        // ORD のように 1 枚へ複数のマップを詰めたテクスチャは、RGB のまま見ても
+        // 意味が読めない。チャンネルを分けて確かめられるようにする。
+        static const char* const kPreviewChannelLabels[] = {"RGB", "R", "G", "B", "A"};
+        ui::PropertyCombo("チャンネル", &m_previewChannel, kPreviewChannelLabels,
+                          IM_ARRAYSIZE(kPreviewChannelLabels), 0,
+                          "1 枚に複数のマップを詰めたテクスチャ（ORD など）の中身を確かめる。"
+                          "R / G / B を選ぶとそのチャンネルだけを灰色で出す");
+
+        char nameBuffer[128] = {};
+        std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", selected.name.c_str());
+        if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer),
+                                  "一覧とマップ欄に出る名前。画像ファイルの名前は変わらない")) {
+            if (compositor::LibraryTexture* mutableEntry =
+                    m_textureLibrary.FindMutable(selected.id);
+                mutableEntry != nullptr) {
+                mutableEntry->name = nameBuffer;
+            }
+        }
+        ui::PropertyValue("解像度", "%u x %u", selected.texture.width, selected.texture.height);
+        ui::PropertyValue("ミップ", "%u 段", selected.texture.mipLevels);
+        ui::PropertyValue("形式", "%s", TextureFormatLabel(selected));
+        ui::PropertyValue("参照", "%zu か所", CountTextureUsers(selected.id));
+
+        ui::PropertyLabel("場所", "プロジェクトにはここへの相対パスを記録する");
+        const std::string directory = ToUtf8(selected.path.parent_path());
+        ImGui::TextUnformatted(directory.c_str());
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", ToUtf8(selected.path).c_str());
+        }
+        ui::PropertyEnd();
+        ui::EndPropertyTable();
+    }
+    ui::HintText("サムネイルをマテリアルのマップ欄へドラッグすると割り当てられる");
+
+    if (sideBySide) {
+        // プロパティ行の枠と、詳細の枠の 2 つを閉じる。
+        ImGui::EndChild();
+        ImGui::EndChild();
+    }
+    ImGui::End();
+}
+
+}  // namespace mm
