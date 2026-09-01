@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-01 18:10
+更新日時: 2026-09-02 08:10
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -29,7 +29,7 @@
 ### 共通のヘッダ
 
 ```json
-{ "format": "material-mixer.project", "version": 2, "app": "0.1.0" }
+{ "format": "material-mixer.project", "version": 3, "app": "0.1.0" }
 ```
 
 - `format` — `material-mixer.project` または `material-mixer.material`。違えば読み込みを断る。
@@ -43,6 +43,7 @@
 | --- | --- |
 | 1 | 最初の形式 |
 | 2 | レイヤーのハイトに `gain` を追加し、`base` の意味を変えた（下記） |
+| 3 | レイヤーに `kind`（種類）を追加した（下記） |
 
 **版を上げる基準は「キーが増えたか」ではなく「既存のキーの意味が変わったか」。**
 キーが増えただけなら、古いビルドはそれを無視して正しく読める。意味が変わった場合は、
@@ -65,6 +66,21 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 定数はそもそも `src` の項が無いため、触ると逆にずれる。
 
 版ではなくキーの有無で判定しているのは、版が上がっても移行処理が正しく動くようにするため。
+
+#### 版 3 — レイヤーの種類
+
+レイヤーに `kind`（`surface` / `shape` / `liquid`）が付き、
+**高さの合成規則が種類ごとに変わる**（[design/compositing.md](../design/compositing.md) の
+「レイヤーの種類」）。`shape` と `liquid` では `height.base` / `blendRange` の
+解釈も変わる（持ち上げ / 水位、フェザー）。古いビルドはキーを無視して
+全レイヤーをサーフェスとして合成し、黙って違う絵を出すため版を上げた。
+
+`kind` の無い旧ファイルは全レイヤーを `surface` として読む。これは移行ではなく
+そのままの意味（版 2 以前にはサーフェスしか無い）。
+
+あわせて `height.texture`（レイヤー直結のハイトマップ。スカラーのマップと同じ
+「テクスチャ + チャンネル」の組）が増えた。シェイプがマテリアルを介さずに
+ハイトマップを読むためのもので、キーの追加だけなので版は分けない。
 
 ## `.mmproj`
 
@@ -160,6 +176,7 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 | 種別 | 値 |
 | --- | --- |
 | チャンネル指定 | `r` / `g` / `b` / `a` |
+| レイヤーの種類 | `surface` / `shape` / `liquid` |
 | ハイトのソース | `constant` / `noise` / `texture` |
 | ノイズ | `fbm` / `ridged` / `worley` |
 | マスクのソース | `constant` / `noise` / `texture` / `height` / `slope` / `curvature` / `cavity` / `paint` |
@@ -177,7 +194,7 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 ```json
 {
   "format": "material-mixer.material",
-  "version": 2,
+  "version": 3,
   "name": "砂利",
   "baseColorTint": [1.0, 1.0, 1.0],
   "roughness": 0.5, "metallic": 0.0, "ambientOcclusion": 1.0,

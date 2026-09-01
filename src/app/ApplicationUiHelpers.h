@@ -49,6 +49,50 @@ inline float WrapAngle(float radians) {
 
 // 既定値マーカーが参照する値。数値リテラルではなく設定構造体の初期値を使う。
 inline const compositor::MaterialLayer kDefaultLayer;
+
+// シェイプレイヤーの既定値。追加時の初期値と既定値マーカーの参照先を兼ねる。
+// 地形スケールの起伏が役割なので、ノイズは低周波にする。
+inline const compositor::MaterialLayer kDefaultShapeLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::Shape;
+    layer.name = "シェイプ";
+    layer.heightSource = compositor::ValueSource::Noise;
+    layer.heightBase = 0.5f;  // 0.5 で持ち上げなし
+    layer.heightGain = 0.6f;
+    layer.heightNoise = compositor::NoiseParams{compositor::NoiseType::Fbm, 3.0f, 1.0f, 5, 0.0f};
+    layer.normalStrength = 1.0f;
+    return layer;
+}();
+
+// 水面レイヤーの既定値。値の根拠は docs/design/compositing.md の「水面レイヤー」。
+// 水の拡散反射はほぼゼロで、見える色は水中の散乱・吸収の色（赤が最も吸収される）。
+inline const compositor::MaterialLayer kDefaultLiquidLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::Liquid;
+    layer.name = "水面";
+    layer.baseColor = {0.01f, 0.03f, 0.035f};
+    layer.roughness = 0.07f;
+    layer.metallic = 0.0f;
+    layer.heightSource = compositor::ValueSource::Constant;
+    layer.heightBase = 0.35f;   // 水位
+    layer.blendRange = 0.01f;   // 汀線のフェザー幅
+    layer.normalStrength = 0.0f;
+    return layer;
+}();
+
+inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind kind) {
+    switch (kind) {
+        case compositor::LayerKind::Shape:
+            return kDefaultShapeLayer;
+        case compositor::LayerKind::Liquid:
+            return kDefaultLiquidLayer;
+        default:
+            return kDefaultLayer;
+    }
+}
+
+// レイヤー一覧のツールチップなどで使う種類の表示名。LayerKind の並びと一致させること。
+inline const char* const kLayerKindLabels[] = {"サーフェス", "シェイプ", "水面"};
 inline const compositor::BrushSettings kDefaultBrush;
 inline const renderer::LightSettings kDefaultLight;
 inline const renderer::ExposureSettings kDefaultExposure;
@@ -138,8 +182,11 @@ inline bool DrawNoiseTypeRow(const char* label, compositor::NoiseType& type,
 inline bool DrawNoiseRows(compositor::NoiseParams& noise, const compositor::NoiseParams& defaults,
                    bool showAmount = true) {
     bool changed = DrawNoiseTypeRow("種類", noise.type, defaults.type);
-    changed |= ui::PropertyFloat("周波数", &noise.scale, 0.5f, 64.0f, defaults.scale,
-                                 "大きいほど細かい模様になる", "%.1f", 0, 0.5f);
+    // 周波数はタイルするよう整数へ丸めて評価される（Common.hlsli の SampleNoise）。
+    // スライダーの刻みも 1 にして、丸めと表示がずれないようにする。
+    changed |= ui::PropertyFloat("周波数", &noise.scale, 1.0f, 64.0f, defaults.scale,
+                                 "大きいほど細かい模様になる。タイルさせるため整数で使う",
+                                 "%.0f", 0, 1.0f);
     if (showAmount) {
         changed |= ui::PropertyFloat("量", &noise.amount, 0.0f, 3.0f, defaults.amount,
                                      "ノイズの寄与。0 で効かなくなる", "%.2f");

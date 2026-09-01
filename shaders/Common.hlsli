@@ -34,43 +34,54 @@ float Hash21(float2 p)
     return frac((p3.x + p3.y) * p3.z);
 }
 
-float ValueNoise(float2 p)
+// 合成はタイリング前提（wrap サンプラ、書き出した素材もタイルして使う）なので、
+// **ノイズも UV の 0 / 1 の境界で継ぎ目なく巻ける**必要がある。
+// 格子の座標を周期で巻いてからハッシュすることで周期化する。
+// 周期が整数のときだけ厳密にタイルする（シェーダ側で周波数を丸める）。
+float2 WrapCell(float2 cell, float period)
+{
+    return cell - period * floor(cell / period);
+}
+
+float ValueNoise(float2 p, float period)
 {
     float2 i = floor(p);
     float2 f = frac(p);
     float2 u = f * f * (3.0f - 2.0f * f);
 
-    float a = Hash21(i + float2(0.0f, 0.0f));
-    float b = Hash21(i + float2(1.0f, 0.0f));
-    float c = Hash21(i + float2(0.0f, 1.0f));
-    float d = Hash21(i + float2(1.0f, 1.0f));
+    float a = Hash21(WrapCell(i + float2(0.0f, 0.0f), period));
+    float b = Hash21(WrapCell(i + float2(1.0f, 0.0f), period));
+    float c = Hash21(WrapCell(i + float2(0.0f, 1.0f), period));
+    float d = Hash21(WrapCell(i + float2(1.0f, 1.0f), period));
 
     return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
 }
 
-float Fbm(float2 p, int octaves)
+float Fbm(float2 p, int octaves, float period)
 {
     float sum = 0.0f;
     float amplitude = 0.5f;
     for (int i = 0; i < octaves; ++i)
     {
-        sum += ValueNoise(p) * amplitude;
+        sum += ValueNoise(p, period) * amplitude;
         p *= 2.0f;
+        period *= 2.0f;
         amplitude *= 0.5f;
     }
     return sum;
 }
 
 // 尾根状のノイズ。値を折り返すことで稜線が立つ。地形や岩の割れ目に向く。
-float RidgedFbm(float2 p, int octaves)
+float RidgedFbm(float2 p, int octaves, float period)
 {
     float sum = 0.0f;
     float amplitude = 0.5f;
     for (int i = 0; i < octaves; ++i)
     {
-        const float ridge = 1.0f - abs(ValueNoise(p) * 2.0f - 1.0f);
+        const float ridge = 1.0f - abs(ValueNoise(p, period) * 2.0f - 1.0f);
         sum += ridge * ridge * amplitude;
         p *= 2.0f;
+        period *= 2.0f;
         amplitude *= 0.5f;
     }
     return saturate(sum);
@@ -85,7 +96,7 @@ float2 Hash22(float2 p)
 
 // Worley（セル）ノイズ。最近傍の特徴点までの距離を返す。
 // 石畳や砂利のような塊状のパターンに向く。
-float Worley(float2 p)
+float Worley(float2 p, float period)
 {
     const float2 cell = floor(p);
     const float2 local = frac(p);
@@ -96,23 +107,24 @@ float Worley(float2 p)
         for (int x = -1; x <= 1; ++x)
         {
             const float2 offset = float2(x, y);
-            const float2 feature = offset + Hash22(cell + offset);
+            const float2 feature = offset + Hash22(WrapCell(cell + offset, period));
             nearest = min(nearest, dot(local - feature, local - feature));
         }
     }
     return saturate(sqrt(nearest));
 }
 
-float WorleyFbm(float2 p, int octaves)
+float WorleyFbm(float2 p, int octaves, float period)
 {
     float sum = 0.0f;
     float amplitude = 0.5f;
     float weight = 0.0f;
     for (int i = 0; i < octaves; ++i)
     {
-        sum += Worley(p) * amplitude;
+        sum += Worley(p, period) * amplitude;
         weight += amplitude;
         p *= 2.0f;
+        period *= 2.0f;
         amplitude *= 0.5f;
     }
     return sum / max(weight, 1e-5f);
@@ -123,17 +135,22 @@ float WorleyFbm(float2 p, int octaves)
 #define MM_NOISE_RIDGED 1
 #define MM_NOISE_WORLEY 2
 
-float SampleNoise(uint type, float2 p, int octaves)
+// uv（0〜1 でタイル 1 枚）にスケールとオフセットを掛けて評価する。
+// タイルするよう、実際の周波数は**整数へ丸めた周期**を使う。
+// UV スケールが整数でないレイヤーではタイルしない（テクスチャと同じ制約）。
+float SampleNoise(uint type, float2 uv, float scale, float offset, int octaves)
 {
+    const float period = max(round(scale), 1.0f);
+    const float2 p = uv * period + offset;
     if (type == MM_NOISE_RIDGED)
     {
-        return RidgedFbm(p, octaves);
+        return RidgedFbm(p, octaves, period);
     }
     if (type == MM_NOISE_WORLEY)
     {
-        return WorleyFbm(p, octaves);
+        return WorleyFbm(p, octaves, period);
     }
-    return Fbm(p, octaves);
+    return Fbm(p, octaves, period);
 }
 
 #endif  // MM_COMMON_HLSLI

@@ -116,10 +116,17 @@ void Application::DrawLayerList(float height) {
             }
             x += eyeSize + gap;
 
-            // --- マテリアルのサムネイル ------------------------------------
+            // --- マテリアルのサムネイル / 種類アイコン ----------------------
+            // シェイプと水面はマテリアルを持たないので、サムネイルの場所に
+            // 種類のアイコン（山 / 波）を出す。一覧を流し見るだけで
+            // どの行が形や水なのかが分かる。
             const compositor::MaterialAsset* material = m_materialLibrary.Find(layer.material);
             ImGui::SetCursorScreenPos(ImVec2(x, centerY - thumbnailSize * 0.5f));
-            if (material != nullptr && material->thumbnail.IsValid()) {
+            if (layer.kind == compositor::LayerKind::Shape) {
+                ui::MountainIcon(thumbnailSize);
+            } else if (layer.kind == compositor::LayerKind::Liquid) {
+                ui::WavesIcon(thumbnailSize);
+            } else if (material != nullptr && material->thumbnail.IsValid()) {
                 ui::ThumbnailImage(static_cast<ImTextureID>(material->thumbnail.srv.gpu.ptr),
                                    thumbnailSize);
             } else {
@@ -132,8 +139,14 @@ void Application::DrawLayerList(float height) {
                                 thumbnailSize);
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("マテリアル: %s",
-                                  (material != nullptr) ? material->name.c_str() : "なし");
+                if (layer.kind == compositor::LayerKind::Surface) {
+                    ImGui::SetTooltip("マテリアル: %s",
+                                      (material != nullptr) ? material->name.c_str() : "なし");
+                } else {
+                    // シェイプと水面はマテリアルを持たないので、種類を出す。
+                    ImGui::SetTooltip("%s レイヤー",
+                                      kLayerKindLabels[static_cast<int>(layer.kind)]);
+                }
             }
             x += thumbnailSize + gap;
 
@@ -224,12 +237,31 @@ void Application::DrawLayerPanel() {
     const float paneWidth = ImGui::GetContentRegionAvail().x;
     ImGui::BeginChild("layerListPane", ImVec2(0.0f, listHeight));
 
+    // 種類で高さの合成規則が違うので、追加の時点で選ばせる（Mixer の
+    // Add Surface / Noise / Liquid と同型）。後から種類は変えられない。
     if (ui::Button("追加")) {
-        compositor::MaterialLayer layer;
-        layer.name = "レイヤー " + std::to_string(layers.size() + 1);
-        m_materialStack.Add(layer);
-        m_selectedLayer = static_cast<int>(layers.size()) - 1;
-        MarkDocumentChanged();
+        ImGui::OpenPopup("addLayerKind");
+    }
+    if (ImGui::BeginPopup("addLayerKind")) {
+        struct AddItem {
+            compositor::LayerKind kind;
+            const char* label;
+        };
+        static constexpr AddItem kAddItems[] = {
+            {compositor::LayerKind::Surface, "サーフェス — 素材を高さで張り合わせる"},
+            {compositor::LayerKind::Shape, "シェイプ — 高さへ起伏を加算する"},
+            {compositor::LayerKind::Liquid, "水面 — 水位より低い所に水を張る"},
+        };
+        for (const AddItem& item : kAddItems) {
+            if (ImGui::Selectable(item.label)) {
+                compositor::MaterialLayer layer = DefaultLayerFor(item.kind);
+                layer.name += " " + std::to_string(layers.size() + 1);
+                m_materialStack.Add(layer);
+                m_selectedLayer = static_cast<int>(layers.size()) - 1;
+                MarkDocumentChanged();
+            }
+        }
+        ImGui::EndPopup();
     }
     ImGui::SameLine();
     if (ui::Button("複製") && layerCount > 0) {
@@ -277,6 +309,10 @@ void Application::DrawLayerPanel() {
     }
 
     compositor::MaterialLayer& layer = layers[static_cast<size_t>(m_selectedLayer)];
+    // 既定値マーカーは種類ごとの既定値を参照する（追加時の初期値と揃える）。
+    const compositor::MaterialLayer& defaults = DefaultLayerFor(layer.kind);
+    const bool isShape = (layer.kind == compositor::LayerKind::Shape);
+    const bool isLiquid = (layer.kind == compositor::LayerKind::Liquid);
     bool changed = false;
 
     ui::SectionHeader("基本");
@@ -290,53 +326,88 @@ void Application::DrawLayerPanel() {
         }
         // マテリアルを割り当てているときは、見た目はマテリアル側の値で決まる。
         // 同じ意味の値を 2 か所に置くと、どちらが効いているのか分からなくなる。
+        // シェイプは色を書かないので、色とサーフェスの行そのものを出さない。
         const bool hasMaterial = (layer.material != compositor::kNoMaterialAsset);
-        if (!hasMaterial) {
+        if (!isShape && !hasMaterial) {
             changed |= ui::PropertyColorLinear("ベースカラー", &layer.baseColor.x,
-                                               &kDefaultLayer.baseColor.x);
+                                               &defaults.baseColor.x);
             changed |= ui::PropertyFloat("ラフネス", &layer.roughness, 0.0f, 1.0f,
-                                         kDefaultLayer.roughness, nullptr, "%.2f");
+                                         defaults.roughness, nullptr, "%.2f");
             changed |= ui::PropertyFloat("メタルネス", &layer.metallic, 0.0f, 1.0f,
-                                         kDefaultLayer.metallic, nullptr, "%.2f");
+                                         defaults.metallic, nullptr, "%.2f");
             changed |= ui::PropertyFloat("AO", &layer.ambientOcclusion, 0.0f, 1.0f,
-                                         kDefaultLayer.ambientOcclusion, nullptr, "%.2f");
+                                         defaults.ambientOcclusion, nullptr, "%.2f");
         }
-        changed |= ui::PropertyFloat("UV スケール", &layer.uvScale, 0.25f, 16.0f,
-                                     kDefaultLayer.uvScale,
-                                     "このレイヤーの模様を何回並べるか", "%.2f", 0, 0.25f);
+        if (!isShape && !isLiquid) {
+            changed |= ui::PropertyFloat("UV スケール", &layer.uvScale, 0.25f, 16.0f,
+                                         defaults.uvScale,
+                                         "このレイヤーの模様を何回並べるか", "%.2f", 0, 0.25f);
+        }
         ui::EndPropertyTable();
     }
-    if (layer.material != compositor::kNoMaterialAsset) {
+    if (!isShape && layer.material != compositor::kNoMaterialAsset) {
         ui::HintText("色とサーフェスの値はマテリアル側で決まる");
     }
 
-    ui::SectionHeader("ハイト");
-    if (ui::BeginPropertyTable("layerHeightRows")) {
-        int heightSource = static_cast<int>(layer.heightSource);
-        if (ui::PropertyCombo("ソース", &heightSource, kValueSourceLabels,
-                              IM_ARRAYSIZE(kValueSourceLabels),
-                              static_cast<int>(kDefaultLayer.heightSource))) {
-            layer.heightSource = static_cast<compositor::ValueSource>(heightSource);
-            changed = true;
+    if (isLiquid) {
+        // 水位は絶対値で、下地の高さと比べて「低い所」にだけ水が張る。
+        // 重みは水位と下地の差だけで決まるので、水位を動かしても下地は変形しない。
+        ui::SectionHeader("水面");
+        if (ui::BeginPropertyTable("layerLiquidRows")) {
+            changed |= ui::PropertyFloat("水位", &layer.heightBase, 0.0f, 1.0f,
+                                         defaults.heightBase,
+                                         "この高さより低い所に水面が張る", "%.2f");
+            changed |= ui::PropertyFloat("フェザー", &layer.blendRange, 0.0f, 0.2f,
+                                         defaults.blendRange,
+                                         "汀線の柔らかさ。0 に近いほど硬い水際になる", "%.3f");
+            ui::EndPropertyTable();
         }
-        changed |= ui::PropertyFloat("基準の高さ", &layer.heightBase, -2.0f, 2.0f,
-                                     kDefaultLayer.heightBase,
-                                     "このレイヤーが「溜まる水位」。下地の高さと比べて勝敗が決まる。"
-                                     "起伏の強さを変えてもここは動かない",
-                                     "%.2f");
-        if (layer.heightSource != compositor::ValueSource::Constant) {
-            changed |= ui::PropertyFloat("起伏の強さ", &layer.heightGain, 0.0f, 3.0f,
-                                         kDefaultLayer.heightGain,
-                                         "基準の高さを中心とした凹凸の振れ幅。0 で平らになる",
-                                         "%.2f");
+    } else {
+        ui::SectionHeader("ハイト");
+        if (ui::BeginPropertyTable("layerHeightRows")) {
+            int heightSource = static_cast<int>(layer.heightSource);
+            if (ui::PropertyCombo("ソース", &heightSource, kValueSourceLabels,
+                                  IM_ARRAYSIZE(kValueSourceLabels),
+                                  static_cast<int>(defaults.heightSource))) {
+                layer.heightSource = static_cast<compositor::ValueSource>(heightSource);
+                changed = true;
+            }
+            if (isShape) {
+                // シェイプはマテリアルを持たないので、ハイトマップは
+                // レイヤー直結のスロットから読む（マスクの画像と同じ作法）。
+                if (layer.heightSource == compositor::ValueSource::Texture) {
+                    changed |= DrawMapSlotRow("画像", layer.heightTexture, m_textureLibrary);
+                }
+                // シェイプの基準の高さは「全体の持ち上げ」。0.5 で変化なし。
+                changed |= ui::PropertyFloat("持ち上げ", &layer.heightBase, 0.0f, 1.0f,
+                                             defaults.heightBase,
+                                             "0.5 で変化なし。上げると全体が盛り上がり、"
+                                             "下げると沈む",
+                                             "%.2f");
+            } else {
+                changed |= ui::PropertyFloat(
+                    "基準の高さ", &layer.heightBase, -2.0f, 2.0f, defaults.heightBase,
+                    "このレイヤーが「溜まる水位」。下地の高さと比べて勝敗が決まる。"
+                    "起伏の強さを変えてもここは動かない",
+                    "%.2f");
+            }
+            if (layer.heightSource != compositor::ValueSource::Constant) {
+                changed |= ui::PropertyFloat("起伏の強さ", &layer.heightGain, 0.0f, 3.0f,
+                                             defaults.heightGain,
+                                             "基準の高さを中心とした凹凸の振れ幅。0 で平らになる",
+                                             "%.2f");
+            }
+            if (layer.heightSource == compositor::ValueSource::Noise) {
+                changed |= DrawNoiseRows(layer.heightNoise, defaults.heightNoise, false);
+            }
+            changed |= ui::PropertyFloat("法線の強さ", &layer.normalStrength, 0.0f, 4.0f,
+                                         defaults.normalStrength,
+                                         "ハイトの勾配から作る法線の強さ。0 で平坦", "%.2f");
+            ui::EndPropertyTable();
         }
-        if (layer.heightSource == compositor::ValueSource::Noise) {
-            changed |= DrawNoiseRows(layer.heightNoise, kDefaultLayer.heightNoise, false);
+        if (isShape) {
+            ui::HintText("下地の高さへ加算し、0〜1 に切り詰める。細部は下のレイヤーのまま残る");
         }
-        changed |= ui::PropertyFloat("法線の強さ", &layer.normalStrength, 0.0f, 4.0f,
-                                     kDefaultLayer.normalStrength,
-                                     "ハイトの勾配から作る法線の強さ。0 で平坦", "%.2f");
-        ui::EndPropertyTable();
     }
 
     ui::SectionHeader("マスク");
@@ -402,38 +473,43 @@ void Application::DrawLayerPanel() {
         changed |= DrawPaintSection(layer);
     }
 
-    ui::SectionHeader("マテリアル");
-    if (ui::BeginPropertyTable("layerMaterialRows")) {
-        changed |= DrawMaterialSlotRow("マテリアル", layer.material, m_materialLibrary);
-        ui::EndPropertyTable();
-    }
-    if (const compositor::MaterialAsset* material = m_materialLibrary.Find(layer.material);
-        material != nullptr && material->thumbnail.IsValid()) {
-        ImGui::Image(static_cast<ImTextureID>(material->thumbnail.srv.gpu.ptr),
-                     ImVec2(ui::Scaled(72.0f), ui::Scaled(72.0f)));
-    } else {
-        ui::HintText("マテリアルパネルで作って割り当てる");
-    }
-
-    ui::SectionHeader("合成");
-    if (ui::BeginPropertyTable("layerBlendRows")) {
-        changed |= ui::PropertyFloat("境界の柔らかさ", &layer.blendRange, 0.0f, 1.0f,
-                                     kDefaultLayer.blendRange,
-                                     "0 に近いほど硬い置き換えになる", "%.2f");
-
-        ui::PropertyLabel("書き込み", "このレイヤーが書き込むチャンネル");
-        for (uint32_t i = 0; i < IM_ARRAYSIZE(kChannelLabels); ++i) {
-            bool enabled = (layer.channelMask & (1u << i)) != 0u;
-            ImGui::PushID(static_cast<int>(i));
-            if (ImGui::Checkbox(kChannelLabels[i], &enabled)) {
-                layer.channelMask = enabled ? (layer.channelMask | (1u << i))
-                                            : (layer.channelMask & ~(1u << i));
-                changed = true;
-            }
-            ImGui::PopID();
+    // マテリアルの割り当てと合成の調整はサーフェスだけのもの。
+    // シェイプは Normal / Height を加算で書くと決まっており、
+    // 水面は水位とフェザーが合成のすべてなので、出しても意味を持たない。
+    if (!isShape && !isLiquid) {
+        ui::SectionHeader("マテリアル");
+        if (ui::BeginPropertyTable("layerMaterialRows")) {
+            changed |= DrawMaterialSlotRow("マテリアル", layer.material, m_materialLibrary);
+            ui::EndPropertyTable();
         }
-        ui::PropertyEnd();
-        ui::EndPropertyTable();
+        if (const compositor::MaterialAsset* material = m_materialLibrary.Find(layer.material);
+            material != nullptr && material->thumbnail.IsValid()) {
+            ImGui::Image(static_cast<ImTextureID>(material->thumbnail.srv.gpu.ptr),
+                         ImVec2(ui::Scaled(72.0f), ui::Scaled(72.0f)));
+        } else {
+            ui::HintText("マテリアルパネルで作って割り当てる");
+        }
+
+        ui::SectionHeader("合成");
+        if (ui::BeginPropertyTable("layerBlendRows")) {
+            changed |= ui::PropertyFloat("境界の柔らかさ", &layer.blendRange, 0.0f, 1.0f,
+                                         defaults.blendRange,
+                                         "0 に近いほど硬い置き換えになる", "%.2f");
+
+            ui::PropertyLabel("書き込み", "このレイヤーが書き込むチャンネル");
+            for (uint32_t i = 0; i < IM_ARRAYSIZE(kChannelLabels); ++i) {
+                bool enabled = (layer.channelMask & (1u << i)) != 0u;
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::Checkbox(kChannelLabels[i], &enabled)) {
+                    layer.channelMask = enabled ? (layer.channelMask | (1u << i))
+                                                : (layer.channelMask & ~(1u << i));
+                    changed = true;
+                }
+                ImGui::PopID();
+            }
+            ui::PropertyEnd();
+            ui::EndPropertyTable();
+        }
     }
 
     if (changed) {

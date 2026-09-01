@@ -22,6 +22,9 @@ constexpr DXGI_FORMAT kHeightFormat = DXGI_FORMAT_R16_FLOAT;
 
 constexpr uint32_t kFlagMaskInvert = 0x1u;
 constexpr uint32_t kFlagBaseLayer = 0x2u;
+// レイヤーの種類。シェーダの MM_FLAG_KIND_* と一致させること。
+constexpr uint32_t kFlagKindShape = 0x4u;
+constexpr uint32_t kFlagKindLiquid = 0x8u;
 
 // レイヤー一覧に出すマスクサムネイルの一辺。行の高さに対して十分な細かさがあればよい。
 constexpr uint32_t kMaskThumbnailSize = 64;
@@ -266,9 +269,15 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         constants.resolution[0] = m_resolution;
         constants.resolution[1] = m_resolution;
 
+        // シェイプは形（Height と、それに追従する Normal）だけを書く。
+        // BaseColor / Surface を書かせると「地形の起伏」の役割からはみ出す。
+        uint32_t channelMask = layer.channelMask;
+        if (layer.kind == LayerKind::Shape) {
+            channelMask = ChannelBit(Channel::Normal) | ChannelBit(Channel::Height);
+        }
         // 一番下のレイヤーは下地なので、必ず全チャンネルを埋める。
         // そうしないと未初期化のテクセルが残る。
-        constants.channelMask = isBaseLayer ? kAllChannelBits : layer.channelMask;
+        constants.channelMask = isBaseLayer ? kAllChannelBits : channelMask;
 
         constants.flags = 0;
         if (layer.mask.invert) {
@@ -276,6 +285,11 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         }
         if (isBaseLayer) {
             constants.flags |= kFlagBaseLayer;
+        }
+        if (layer.kind == LayerKind::Shape) {
+            constants.flags |= kFlagKindShape;
+        } else if (layer.kind == LayerKind::Liquid) {
+            constants.flags |= kFlagKindLiquid;
         }
 
         // マップはレイヤーが参照するマテリアルから引く。
@@ -336,16 +350,19 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             (material != nullptr)
                 ? textures.SrvIndex(material->ambientOcclusion.texture, false)
                 : kInvalidTextureIndex;
+        // ハイトはマテリアルのハイトマップを優先し、マテリアルが無ければ
+        // レイヤー直結のハイトマップ（シェイプ用）を使う。
         constants.textureIndices1[1] =
             (material != nullptr) ? textures.SrvIndex(material->height.texture, false)
-                                  : kInvalidTextureIndex;
+                                  : textures.SrvIndex(layer.heightTexture.texture, false);
         // マスク用テクスチャはレイヤー固有。マテリアルのマップとは用途が別。
         constants.textureIndices1[2] = textures.SrvIndex(layer.mask.texture.texture, false);
 
         // スカラーのマップは「どのチャンネルを読むか」も渡す。
         // Megascans の _ORD のように 1 枚へ詰めたテクスチャに対応するため。
         constants.mapChannels[0] =
-            ((material != nullptr) ? PackMaterialChannels(*material) : 0u) |
+            ((material != nullptr) ? PackMaterialChannels(*material)
+                                   : PackChannel(layer.heightTexture.channel, 3)) |
             PackChannel(layer.mask.texture.channel, 4);
         constants.textureIndices1[3] =
             useDerivedMask ? m_textures.maskScratch.SrvIndex() : kInvalidTextureIndex;

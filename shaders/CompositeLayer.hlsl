@@ -19,6 +19,9 @@ static const uint kInvalidTextureIndex = 0xFFFFFFFFu;
 
 #define MM_FLAG_MASK_INVERT 0x1u
 #define MM_FLAG_BASE_LAYER  0x2u
+// レイヤーの種類（compositor::LayerKind）。どちらも立っていなければサーフェス。
+#define MM_FLAG_KIND_SHAPE  0x4u
+#define MM_FLAG_KIND_LIQUID 0x8u
 
 struct LayerConstants
 {
@@ -90,8 +93,8 @@ float SampleLayerHeight(float2 uv, float uvPerOutputTexel)
     const uint source = uint(g_layer.blendParams.w);
     if (source == MM_SOURCE_NOISE)
     {
-        const float2 p = uv * g_layer.heightNoise.x + g_layer.heightNoise.w;
-        const float noise = SampleNoise(g_layer.noiseTypes.x, p, int(g_layer.heightNoise.z));
+        const float noise = SampleNoise(g_layer.noiseTypes.x, uv, g_layer.heightNoise.x,
+                                        g_layer.heightNoise.w, int(g_layer.heightNoise.z));
         return base + (noise - kHeightPivot) * gain;
     }
     if (source == MM_SOURCE_TEXTURE && g_layer.textureIndices1.y != kInvalidTextureIndex)
@@ -124,8 +127,8 @@ float SampleMaskSourceValue(float2 uv, float2 paintUv, float2 derivedUv, float u
 
     if (source == MM_SOURCE_NOISE)
     {
-        const float2 p = uv * g_layer.maskNoise.x + g_layer.maskNoise.w;
-        const float noise = SampleNoise(g_layer.noiseTypes.y, p, int(g_layer.maskNoise.z));
+        const float noise = SampleNoise(g_layer.noiseTypes.y, uv, g_layer.maskNoise.x,
+                                        g_layer.maskNoise.w, int(g_layer.maskNoise.z));
         // ノイズだけは加算。定数を基準に揺らす。
         return g_layer.maskParams.x + (noise - 0.5f) * g_layer.maskNoise.y;
     }
@@ -258,13 +261,34 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float3 layerNormal = ComputeLayerNormal(uv, noiseTexelSize, uvPerOutputTexel);
 
     const bool isBaseLayer = (g_layer.flags & MM_FLAG_BASE_LAYER) != 0u;
+    const bool isShape = (g_layer.flags & MM_FLAG_KIND_SHAPE) != 0u;
+    const bool isLiquid = (g_layer.flags & MM_FLAG_KIND_LIQUID) != 0u;
 
     float weight = 1.0f;
     if (!isBaseLayer)
     {
         const float mask = SampleLayerMask(uv, outputUv, outputUv, uvPerOutputTexel);
         const float destinationHeight = heightTarget[texel];
-        weight = HeightBlendWeight(destinationHeight, layerHeight, mask, g_layer.blendParams.x);
+        if (isShape)
+        {
+            // シェイプは競合せず加算する。マスクは加算量の係数。
+            weight = mask;
+        }
+        else if (isLiquid)
+        {
+            // リキッドは「水位 − 下地の高さ」だけで勝敗を決める。
+            // HeightBlendWeight を通すと汀線の遷移帯が下地を水平面へ引っ張り、
+            // 水位を動かすたびに地形が変形してしまう。
+            // フェザー（blendParams.x）は汀線を柔らかくする幅で、
+            // 水面下では厳密に 1、水面上では厳密に 0 になる。
+            const float depth = g_layer.surfaceParams.w - destinationHeight;
+            weight = mask * smoothstep(0.0f, max(g_layer.blendParams.x, 1e-4f), depth);
+        }
+        else
+        {
+            weight = HeightBlendWeight(destinationHeight, layerHeight, mask,
+                                       g_layer.blendParams.x);
+        }
     }
 
     // --- 各チャンネルへ積む ------------------------------------------------
@@ -280,6 +304,13 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         if (isBaseLayer)
         {
             result = layerNormal;
+        }
+        else if (isShape)
+        {
+            // シェイプは高さを加算するので、法線も下地を平坦化せずに重ねるだけ。
+            // 下地の細部を消さないのが加算の意味。
+            const float3 destination = DecodeTangentNormal(normalTarget[texel]);
+            result = ReorientNormal(destination, FlattenNormal(layerNormal, weight));
         }
         else
         {
@@ -302,8 +333,20 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     if ((g_layer.channelMask & 0x8u) != 0u)
     {
-        const float destination = isBaseLayer ? layerHeight : heightTarget[texel];
-        heightTarget[texel] = lerp(destination, layerHeight, weight);
+        if (isShape)
+        {
+            // 加算。基準面（0.5）からの振れだけを下地へ足すので、
+            // 下のレイヤーの細部がそのまま残る。
+            // 高さ競合・高さ由来マスク・水位・PNG 書き出しは 0〜1 を前提に
+            // しているので、加算後は必ず切り詰める。
+            const float destination = isBaseLayer ? kHeightPivot : heightTarget[texel];
+            heightTarget[texel] = saturate(destination + (layerHeight - kHeightPivot) * weight);
+        }
+        else
+        {
+            const float destination = isBaseLayer ? layerHeight : heightTarget[texel];
+            heightTarget[texel] = lerp(destination, layerHeight, weight);
+        }
     }
 }
 

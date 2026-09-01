@@ -29,7 +29,10 @@ constexpr const char* kMaterialFormat = "material-mixer.material";
 // 2: ハイトに gain を追加し、base の意味を変えた（h = base + (src - 0.5) * gain）。
 //    キーが増えただけに見えるが base の解釈が変わっているので、古いビルドに
 //    読ませると黙って違う絵が出る。それを断れるように版を上げている。
-constexpr int kFormatVersion = 2;
+// 3: レイヤーに kind（surface / shape / liquid）を追加した。古いビルドはキーを
+//    無視してシェイプや水面をサーフェスとして合成し、黙って違う絵を出すため版を上げる。
+//    kind の無い旧ファイルは全レイヤーをサーフェスとして読む。
+constexpr int kFormatVersion = 3;
 
 // --- 文字列とパス ---------------------------------------------------------
 //
@@ -136,6 +139,7 @@ const char* const kNoiseTypeNames[] = {"fbm", "ridged", "worley"};
 const char* const kMaskSourceNames[] = {"constant", "noise",     "texture", "height",
                                         "slope",    "curvature", "cavity",  "paint"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
+const char* const kLayerKindNames[] = {"surface", "shape", "liquid"};
 const char* const kShapeNames[] = {"sphere", "plane", "cube"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
 const char* const kSkySourceNames[] = {"procedural", "hdri"};
@@ -339,6 +343,7 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     json node;
     node["name"] = layer.name;
     node["enabled"] = layer.enabled;
+    node["kind"] = EnumName(kLayerKindNames, static_cast<uint32_t>(layer.kind));
     node["channels"] = WriteChannelMask(layer.channelMask);
     node["material"] = writeMaterial(layer.material);
 
@@ -354,6 +359,8 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     height["base"] = layer.heightBase;
     height["gain"] = layer.heightGain;
     height["noise"] = WriteNoise(layer.heightNoise);
+    // レイヤー直結のハイトマップ（シェイプ用）。マテリアルがあれば使われない。
+    height["texture"] = WriteMapSlot(layer.heightTexture, writeTexture);
     node["height"] = std::move(height);
 
     node["normalStrength"] = layer.normalStrength;
@@ -371,6 +378,9 @@ compositor::MaterialLayer ReadLayer(
     compositor::MaterialLayer layer;
     layer.name = ReadString(node, "name", defaults.name);
     layer.enabled = ReadBool(node, "enabled", defaults.enabled);
+    // kind の無い旧形式（版 2 以前）はサーフェスとして読む。
+    layer.kind = static_cast<compositor::LayerKind>(
+        EnumValue(kLayerKindNames, node, "kind", static_cast<uint32_t>(defaults.kind)));
     layer.channelMask = ReadChannelMask(node, "channels", defaults.channelMask);
     const json* material = FindMember(node, "material");
     layer.material =
@@ -387,6 +397,7 @@ compositor::MaterialLayer ReadLayer(
             kValueSourceNames, *height, "source", static_cast<uint32_t>(defaults.heightSource)));
         layer.heightBase = ReadFloat(*height, "base", defaults.heightBase);
         layer.heightNoise = ReadNoise(*height, "noise", defaults.heightNoise);
+        layer.heightTexture = ReadMapSlot(*height, "texture", readTexture);
 
         if (FindMember(*height, "gain") != nullptr) {
             layer.heightGain = ReadFloat(*height, "gain", defaults.heightGain);
@@ -416,7 +427,8 @@ compositor::MaterialLayer ReadLayer(
 
 // --- プレビューの設定 -----------------------------------------------------
 
-json WritePreview(renderer::PreviewRenderer& renderer, const fs::path& baseDir) {
+// 天球アセット（M5b-2）で HDRI のパスが preview から抜けたため、パスの解決は不要になった。
+json WritePreview(renderer::PreviewRenderer& renderer) {
     json node;
     node["shape"] = EnumName(kShapeNames, static_cast<uint32_t>(renderer.Shape()));
     node["tonemap"] = EnumName(kTonemapNames, static_cast<uint32_t>(renderer.Tonemap()));
@@ -479,7 +491,7 @@ json WritePreview(renderer::PreviewRenderer& renderer, const fs::path& baseDir) 
     return node;
 }
 
-void ReadPreview(const json& node, renderer::PreviewRenderer& renderer, const fs::path& baseDir) {
+void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
     // 既定値は renderer::kPreviewDefaults の一択。数値を直接書かない。
     // 名前は各節ローカルの defaults（LightSettings など）と衝突させない。
     const renderer::PreviewDefaults& previewDefaults = renderer::kPreviewDefaults;
@@ -890,7 +902,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
     document["skies"] = std::move(skies);
     document["activeSky"] = activeSkyIndex;
 
-    document["preview"] = WritePreview(refs.renderer, baseDir);
+    document["preview"] = WritePreview(refs.renderer);
 
     if (!WriteJsonFile(savePath, document)) {
         return false;
@@ -1060,7 +1072,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
     const json emptyPreview = json::object();
     const json& previewNode =
         (preview != nullptr && preview->is_object()) ? *preview : emptyPreview;
-    ReadPreview(previewNode, refs.renderer, baseDir);
+    ReadPreview(previewNode, refs.renderer);
 
     // 天球。無ければ preview 節から 1 つ作る（天球を入れる前のプロジェクト）。
     if (const json* skies = FindMember(document, "skies");

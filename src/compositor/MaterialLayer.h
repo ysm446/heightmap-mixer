@@ -29,6 +29,22 @@ enum class ValueSource : uint32_t {
     Texture = 2,
 };
 
+// レイヤーの種類。**高さの合成規則が種類ごとに違う**（Quixel Mixer の
+// Surface / Noise / Liquid に相当）。詳細は docs/design/compositing.md を参照。
+//
+//   Surface: 高さ + マスクの競合。勝った方が置き換える（従来の動作）。
+//   Shape:   下地の高さへの加算。下のレイヤーの細部が保存されるので、
+//            地形スケールの大きな形を作れる。BaseColor / Surface は書かない。
+//            加算後の高さは 0〜1 へ切り詰める。
+//   Liquid:  絶対値の水位。下地が水位より低い所だけ高さを水位へ置き換える。
+//            重みは「水位 − 下地の高さ」だけから決めるので、
+//            水位を動かしても下地は変形しない。
+enum class LayerKind : uint32_t {
+    Surface = 0,
+    Shape = 1,
+    Liquid = 2,
+};
+
 // ハイトの基準面。ソースの値がこの値のとき、そのテクセルは「基準の高さ」ちょうどになる。
 //
 // ディスプレイスメントマップは「中間グレーが変位ゼロ」という慣習で作られるため、
@@ -132,9 +148,15 @@ struct LayerMask {
 };
 
 // 1 レイヤーぶんの設定。
+//
+// 種類でフィールドの解釈が一部変わる。同じ意味の値を 2 か所に置かないため、
+// 新しいフィールドは足さずに読み替える。
+//   Shape:  heightBase は全体の持ち上げ（0.5 で変化なし）。
+//   Liquid: heightBase が水位（絶対値）、blendRange が汀線のフェザー幅。
 struct MaterialLayer {
     std::string name = "レイヤー";
     bool enabled = true;
+    LayerKind kind = LayerKind::Surface;
 
     // このレイヤーが書き込むチャンネル（Mixer と同じくチャンネル単位で切り替えられる）
     uint32_t channelMask = kAllChannelBits;
@@ -162,6 +184,11 @@ struct MaterialLayer {
     float heightBase = 0.5f;
     float heightGain = 1.0f;
     NoiseParams heightNoise{NoiseType::Fbm, 6.0f, 1.0f, 5, 0.0f};
+
+    // レイヤー直結のハイトマップ。**マテリアルを持たないレイヤー（シェイプ）用。**
+    // サーフェスのハイトはマテリアルのハイトマップから引く（同じ意味の値を
+    // 2 か所に置かない）。マテリアルがあるときは参照しない。
+    MapSlot heightTexture;
 
     // 法線はハイトの勾配から作る。強さ 0 で平坦。
     float normalStrength = 1.0f;
