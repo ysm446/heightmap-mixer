@@ -109,6 +109,8 @@ set(mm_sources
     src/core/ColorSpace.h
     src/core/ImageIo.cpp
     src/core/ImageIo.h
+    src/core/Shell.cpp
+    src/core/Shell.h
     src/core/PathUtf8.h
     src/core/Window.cpp
     src/core/Window.h
@@ -144,6 +146,8 @@ set(mm_sources
     src/renderer/PreviewRenderer.h
     src/ui/ImGuiLayer.cpp
     src/ui/ImGuiLayer.h
+    src/ui/Toast.cpp
+    src/ui/Toast.h
     src/ui/UiStyle.cpp
     src/ui/UiStyle.h
 )
@@ -173,6 +177,9 @@ target_compile_definitions(material_mixer PRIVATE
     MM_APP_VERSION="${PROJECT_VERSION}"
     # シェーダはホットリロードのためソースツリーを直接参照する。
     MM_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+    # スクリーンショットの既定の置き場所。assets/ は .gitignore で外してあるので、
+    # 撮ったものがリポジトリに混ざらない。
+    MM_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
     $<$<CONFIG:Debug>:MM_DEBUG=1>
 )
 

@@ -52,6 +52,13 @@ void Application::RequestSaveProject(bool saveAs) {
 // 実際の読み書きはどれも保留されるので、押された時点では要求が積まれるだけ。
 void Application::HandleShortcuts() {
     const ImGuiIO& io = ImGui::GetIO();
+
+    // F12 はコンテンツ領域のスクリーンショット。修飾キーは要らないので先に見る。
+    // 実際の撮影はフレームの終わり（EndFrame）で行う。
+    if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F12, false)) {
+        m_screenshotPending = true;
+    }
+
     if (!io.KeyCtrl || io.KeyAlt) {
         return;
     }

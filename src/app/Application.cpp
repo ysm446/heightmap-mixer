@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -52,6 +53,34 @@ std::filesystem::path ResolveShaderRoot() {
         }
     }
     return std::filesystem::path(MM_SHADER_DIR);
+}
+
+// スクリーンショットの置き場所。環境変数 MM_ASSETS_DIR で差し替えられる。
+// **仮の置き場所。** assets/ は .gitignore で外してあるので、
+// 撮ったものがリポジトリに混ざらない。
+std::filesystem::path ResolveScreenshotDirectory() {
+    std::filesystem::path assets(MM_ASSETS_DIR);
+    const DWORD needed = ::GetEnvironmentVariableW(L"MM_ASSETS_DIR", nullptr, 0);
+    if (needed > 0) {
+        std::wstring value;
+        value.resize(needed);
+        const DWORD written = ::GetEnvironmentVariableW(L"MM_ASSETS_DIR", value.data(), needed);
+        if (written > 0) {
+            value.resize(written);
+            assets = std::filesystem::path(value);
+        }
+    }
+    return assets / L"screenshots";
+}
+
+// 撮った時刻をそのままファイル名にする。連番だと前回の続きが分からない。
+std::string ScreenshotFileName() {
+    const std::time_t now = std::time(nullptr);
+    std::tm local = {};
+    ::localtime_s(&local, &now);
+    char buffer[64] = {};
+    std::strftime(buffer, sizeof(buffer), "material_mixer_%Y%m%d_%H%M%S.png", &local);
+    return buffer;
 }
 
 }  // namespace
@@ -163,6 +192,36 @@ void Application::Shutdown() {
     if (m_comInitialized) {
         ::CoUninitialize();
     }
+}
+
+// F12 の撮影。バックバッファをそのまま読み戻すので、
+// 手前に別のウィンドウが重なっていても、画面外へはみ出していても欠けない。
+void Application::RequestScreenshot() {
+    const std::filesystem::path directory = ResolveScreenshotDirectory();
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    if (error) {
+        MM_LOG_ERROR("スクリーンショットの保存先を作れませんでした: %s",
+                     ToUtf8Display(directory).c_str());
+        m_toasts.Push("スクリーンショットを保存できませんでした", "保存先を作れません");
+        return;
+    }
+
+    const std::filesystem::path path = directory / FromUtf8(ScreenshotFileName());
+    m_device.RequestBackBufferCapture(
+        path, [this](bool success, const std::filesystem::path& saved, uint32_t width,
+                     uint32_t height) {
+            if (!success) {
+                m_toasts.Push("スクリーンショットを保存できませんでした",
+                              ToUtf8Display(saved.filename()));
+                return;
+            }
+            char detail[160] = {};
+            std::snprintf(detail, sizeof(detail), "%u x %u  %s", width, height,
+                          ToUtf8Display(saved.filename()).c_str());
+            m_toasts.Push("スクリーンショットを保存しました", detail, saved);
+            MM_LOG_INFO("スクリーンショットを保存しました: %s", ToUtf8Display(saved).c_str());
+        });
 }
 
 void Application::PollShaderHotReload() {
@@ -280,6 +339,9 @@ int Application::Run() {
                                (m_frameCounter + 1) >= m_options.screenshotFrame;
         if (captureUi) {
             m_device.RequestBackBufferCapture(m_options.uiScreenshotPath);
+        } else if (m_screenshotPending) {
+            m_screenshotPending = false;
+            RequestScreenshot();
         }
 
         m_device.EndFrame(m_vsync);
@@ -394,6 +456,12 @@ void Application::DrawUi() {
     // 掴んでいたものが離れたら、次の編集は別の段にする。
     if (ImGui::GetActiveID() == 0) {
         m_undoHistory.EndEdit();
+    }
+
+    // **撮影するフレームには通知を描かない。** 直前の通知が写り込んでしまう。
+    // 他のウィンドウより後に描くことで最前面に出す。
+    if (!m_screenshotPending) {
+        m_toasts.Draw();
     }
 }
 

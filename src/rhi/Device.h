@@ -47,9 +47,16 @@ public:
     // デバッグレイヤーを有効にしている意味が無くなるので、毎フレーム汲み出す。
     void DrainDebugMessages();
 
-    // 次の EndFrame でバックバッファを PNG に書き出す。UI 込みの見た目を確認する開発用。
-    // 画面キャプチャは他ウィンドウを掴むことがあるため、アプリ側から書き出す。
-    void RequestBackBufferCapture(const std::filesystem::path& path) { m_capturePath = path; }
+    // 撮影が終わったときに呼ばれる。成功したかと、書き出した場所と大きさを受け取る。
+    using CaptureCallback = std::function<void(bool success, const std::filesystem::path& path,
+                                               uint32_t width, uint32_t height)>;
+
+    // 次の EndFrame でバックバッファを PNG に書き出す。
+    // **画面からの切り出しではなくバックバッファの読み戻し**なので、
+    // 手前に別のウィンドウが重なっていても、画面外へはみ出していても欠けない。
+    // タイトルバーやウィンドウ枠も入らない。
+    void RequestBackBufferCapture(const std::filesystem::path& path,
+                                  CaptureCallback onComplete = {});
 
     ID3D12Device* GetDevice() const { return m_device.Get(); }
     ID3D12CommandQueue* GetCommandQueue() const { return m_commandQueue.Get(); }
@@ -85,6 +92,8 @@ private:
     bool CreateBackBufferViews();
     // EndFrame から呼ぶ。コピーを記録し、そのフレームの完了を待ってから保存する。
     void CaptureBackBuffer();
+    // 撮影の後始末。成否を通知し、保留していた状態を捨てる。
+    void FinishCapture(bool success);
     void ReleaseBackBuffers();
     void MoveToNextFrame();
 
@@ -119,6 +128,7 @@ private:
     uint64_t m_fenceValues[kFrameCount] = {};
 
     std::filesystem::path m_capturePath;
+    CaptureCallback m_captureCallback;
     GpuBuffer m_pendingCapture;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT m_pendingCaptureFootprint = {};
 

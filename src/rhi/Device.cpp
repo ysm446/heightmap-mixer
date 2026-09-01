@@ -72,6 +72,24 @@ void Device::Defer(ComPtr<IUnknown> object) {
     m_deletionQueue.Push(std::move(object), m_nextFenceValue);
 }
 
+void Device::RequestBackBufferCapture(const std::filesystem::path& path,
+                                      CaptureCallback onComplete) {
+    m_capturePath = path;
+    m_captureCallback = std::move(onComplete);
+}
+
+// 撮影の後始末。成否を呼び出し側へ伝えてから、保留していた状態を捨てる。
+void Device::FinishCapture(bool success) {
+    const CaptureCallback callback = std::move(m_captureCallback);
+    const std::filesystem::path path = m_capturePath;
+    m_captureCallback = {};
+    m_capturePath.clear();
+    m_pendingCapture = GpuBuffer{};
+    if (callback) {
+        callback(success, path, m_width, m_height);
+    }
+}
+
 void Device::DeferFree(DescriptorHeap& heap, const DescriptorHandle& handle) {
     m_deletionQueue.Push(&heap, handle, m_nextFenceValue);
 }
@@ -437,7 +455,7 @@ void Device::CaptureBackBuffer() {
 
     GpuBuffer readback;
     if (!m_allocator.CreateReadbackBuffer(totalBytes, L"BackBufferCapture", readback)) {
-        m_capturePath.clear();
+        FinishCapture(false);
         return;
     }
 
@@ -480,8 +498,7 @@ void Device::EndFrame(bool vsync) {
         m_frameOpen = false;
         // このフレームは投入されない。キャプチャを抱えたままにすると、
         // 次フレームで未実行のリードバックを上書きしてゴミを保存してしまう。
-        m_pendingCapture = GpuBuffer{};
-        m_capturePath.clear();
+        FinishCapture(false);
         return;
     }
 
@@ -508,10 +525,11 @@ void Device::EndFrame(bool vsync) {
         // 開発用の書き出しなので、その場で待って保存する。
         WaitForGpu();
 
+        bool saved = false;
         void* mapped = nullptr;
         const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(m_pendingCapture.sizeInBytes)};
         if (MM_CHECK_HR(m_pendingCapture.resource->Map(0, &readRange, &mapped))) {
-            const bool saved = SaveRgba8Png(
+            saved = SaveRgba8Png(
                 m_capturePath, m_width, m_height, m_pendingCaptureFootprint.Footprint.RowPitch,
                 static_cast<const uint8_t*>(mapped) + m_pendingCaptureFootprint.Offset);
             const D3D12_RANGE writtenRange = {0, 0};
@@ -523,8 +541,7 @@ void Device::EndFrame(bool vsync) {
 
         Defer(m_pendingCapture.resource);
         Defer(m_pendingCapture.allocation);
-        m_pendingCapture = GpuBuffer{};
-        m_capturePath.clear();
+        FinishCapture(saved);
     }
 }
 
@@ -629,6 +646,7 @@ void Device::Shutdown() {
     // Close 失敗などで残ったキャプチャを、アロケータ破棄より先に手放す。
     m_pendingCapture = GpuBuffer{};
     m_capturePath.clear();
+    m_captureCallback = {};
 
     m_deletionQueue.Flush();
     m_uploadRing.Destroy();
