@@ -187,26 +187,13 @@ void Application::DrawTextureLibraryPanel() {
     }
     DrawTextureRemoveModal();
 
-    // ビューポートの下の横長の帯に置くことを前提に、一覧と詳細を左右に分ける。
-    // 縦に積むと、帯の高さでは両方が見えない。
-    // 幅が足りないとき（左カラムへドッキングし直したときなど）は縦に積む。
-    //
-    // **拡大プレビューの大きさは帯の高さで決まる。** 帯は横に広く縦に狭いので、
-    // 縦に積むと数十ピクセルしか残らない。プレビューは高さいっぱいに取り、
-    // プロパティ行はその横へ回す。帯をドラッグで広げれば、そのまま大きくなる。
-    const float previewSize =
-        std::clamp(ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing(),
-                   ui::Scaled(64.0f), ui::Scaled(400.0f));
-    // プロパティ行に必ず残す幅。ここを削ると「2048 x 2048」すら入らなくなる。
-    constexpr float kDetailRowsWidth = 240.0f;
-    const float detailWidth = previewSize + ui::Scaled(kDetailRowsWidth) +
-                              ImGui::GetStyle().ItemSpacing.x;
-    // 一覧にもサムネイルが数枚並ぶだけの幅が残るときだけ左右に分ける。
-    const bool sideBySide =
-        ImGui::GetContentRegionAvail().x > detailWidth + ui::Scaled(220.0f);
-    const ImVec2 gridSize =
-        sideBySide ? ImVec2(-(detailWidth + ImGui::GetStyle().ItemSpacing.x), 0.0f)
-                   : ImVec2(0.0f, ui::Scaled(228.0f));  // 名前 2 行ぶん高くしてある
+    // 上に一覧、下に詳細。レイヤーパネルと同じ 2 段の作法。
+    // **一覧には全幅を使わせる。** 詳細を横へ置くと一覧の幅がその分だけ削れ、
+    // 帯が横に広くても枡が数列しか並ばない。
+    float listHeight = ui::Scaled(m_settings.Ui().textureListHeight);
+    // 区画の幅は割る前に測る。子ウィンドウを開いた後だと残りが変わる。
+    const float paneWidth = ImGui::GetContentRegionAvail().x;
+    const ImVec2 gridSize(0.0f, listHeight);
 
     // サムネイルの一覧。枠の幅に入るだけ横に並べる。
     // 読み込み時にミップを作ってあるので、元の画像をそのまま縮小して出せる。
@@ -260,16 +247,23 @@ void Application::DrawTextureLibraryPanel() {
     }
     ImGui::EndChild();
 
-    if (sideBySide) {
-        ImGui::SameLine();
-        ImGui::BeginChild("textureDetails", ImVec2(0.0f, 0.0f));
+    // 境界をドラッグして一覧側の高さを変えられるようにする。
+    // 高さは設定に覚えさせ、起動のたびに戻らないようにする。
+    // 保存は掴んでいた手を離したときだけ（ドラッグ中に毎フレーム書かない）。
+    const bool released =
+        ui::HorizontalSplitter("textureSplitter", &listHeight, ui::Scaled(kTextureListMinHeight),
+                               ui::Scaled(kTextureListMaxHeight), paneWidth);
+    // 拡大率を掛ける前の値へ戻して持つ。Scaled(1) が現在の拡大率。
+    m_settings.Ui().textureListHeight = listHeight / std::max(ui::Scaled(1.0f), 0.01f);
+    if (released) {
+        m_settings.Save();
     }
+
+    ImGui::BeginChild("textureDetails", ImVec2(0.0f, 0.0f));
 
     if (textureCount == 0) {
         ui::HintText("「読み込む…」で画像を読み込む（PNG / JPG / TGA / EXR）");
-        if (sideBySide) {
-            ImGui::EndChild();
-        }
+        ImGui::EndChild();
         ImGui::End();
         return;
     }
@@ -277,14 +271,18 @@ void Application::DrawTextureLibraryPanel() {
     const compositor::LibraryTexture& selected = entries[static_cast<size_t>(m_selectedTexture)];
     // 拡大プレビュー。サムネイル（72）では中身を確かめられないため置く。
     //
+    // **大きさは下の区画の高さで決まる。** 正方形なので高さに合わせておけば、
+    // 境界や帯をドラッグして広げたぶんだけ素直に大きくなる。
+    // 画像は行と違って高さを使い切れるので、ここだけは横に並べる。
+    //
     // コンボは 0 が RGB なので、1 つずらして R / G / B / A の SRV を引く。
     // 0（RGB）のときは -1 になり、ChannelHandle が通常の表示用を返す。
-    if (sideBySide) {
-        ImGui::Image(static_cast<ImTextureID>(selected.ChannelHandle(m_previewChannel - 1).ptr),
-                     ImVec2(previewSize, previewSize));
-        ImGui::SameLine();
-        ImGui::BeginChild("textureDetailRows", ImVec2(0.0f, previewSize));
-    }
+    const float previewSize = std::clamp(ImGui::GetContentRegionAvail().y, ui::Scaled(64.0f),
+                                         ui::Scaled(400.0f));
+    ImGui::Image(static_cast<ImTextureID>(selected.ChannelHandle(m_previewChannel - 1).ptr),
+                 ImVec2(previewSize, previewSize));
+    ImGui::SameLine();
+    ImGui::BeginChild("textureDetailRows", ImVec2(0.0f, 0.0f));
 
     ui::SectionHeader("選択中");
     if (ui::BeginPropertyTable("textureRows")) {
@@ -322,11 +320,9 @@ void Application::DrawTextureLibraryPanel() {
     }
     ui::HintText("サムネイルをマテリアルのマップ欄へドラッグすると割り当てられる");
 
-    if (sideBySide) {
-        // プロパティ行の枠と、詳細の枠の 2 つを閉じる。
-        ImGui::EndChild();
-        ImGui::EndChild();
-    }
+    // プロパティ行の枠と、詳細の枠の 2 つを閉じる。
+    ImGui::EndChild();
+    ImGui::EndChild();
     ImGui::End();
 }
 

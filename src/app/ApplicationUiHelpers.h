@@ -87,6 +87,11 @@ inline constexpr float kLayerRowEye = 18.0f;
 inline constexpr float kLayerListMinHeight = 120.0f;
 inline constexpr float kLayerListMaxHeight = 640.0f;
 
+// テクスチャパネルの一覧側（上の区画）の高さの下限と上限（96 DPI 基準）。
+// 下限はサムネイル 1 段と、その下の名前 2 行が入る高さ。
+inline constexpr float kTextureListMinHeight = 120.0f;
+inline constexpr float kTextureListMaxHeight = 480.0f;
+
 // テクスチャ一覧からマップ欄へのドラッグ＆ドロップで使うペイロードの種別。
 inline constexpr const char* kTextureDragDropType = "MM_TEXTURE";
 inline constexpr const char* kTextureRemoveModalTitle = "テクスチャを削除";

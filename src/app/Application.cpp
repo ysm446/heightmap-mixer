@@ -416,7 +416,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v9");
+    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v10");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -510,7 +510,8 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, &right, &center);
     // アセットの帯。**右カラムを切り出した後の center を割る**ので、
     // 帯はビューポートの真下だけに伸び、右カラムの下へは回り込まない。
-    ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, &bottom, &center);
+    // 帯の中も上下 2 段（一覧 / 詳細）なので、左右に並べていた頃より高さが要る。
+    ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.34f, &bottom, &center);
     // 帯をさらに左右へ割る。**素材の一覧はどれもサムネイルの格子**なので、
     // 「ラベル：値」の行を並べる右カラムより、横に広い帯のほうが枡が多く入る。
     ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Right, 0.45f, &bottomRight, &bottom);
