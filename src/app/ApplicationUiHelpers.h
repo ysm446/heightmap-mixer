@@ -77,20 +77,23 @@ inline constexpr uint32_t kResolutionValues[] = {512, 1024, 2048, 4096};
 inline constexpr const char* kLayerDragDropType = "MM_LAYER";
 // レイヤー一覧の行に並べるサムネイルの一辺（96 DPI 基準）。行の高さはこれで決まる。
 // 中身（マテリアルとマスク）を読めることを優先して、文字より大きく取る。
-inline constexpr float kLayerRowThumbnail = 32.0f;
+inline constexpr float kLayerRowThumbnail = 40.0f;
+// レイヤー一覧の行で、部品どうしと行の左右に空ける間隔（96 DPI 基準）。
+// ImGui の ItemInnerSpacing（6）では目・サムネイル・マスク・名前が詰まって
+// 1 つの塊に見える。**どれも意味の違う情報なので、読み分けられる間隔を取る。**
+inline constexpr float kLayerRowGap = 12.0f;
 // 目のアイコンの一辺。**サムネイルより小さくする。**
 // 同じ大きさだと切り替えのアイコンが素材と同じ重みで並び、目線が散る。
-inline constexpr float kLayerRowEye = 18.0f;
+inline constexpr float kLayerRowEye = 20.0f;
 // レイヤーパネルの一覧側（上の区画）の高さの下限と上限（96 DPI 基準）。
 // 既定値は AppSettings が持ち、境界のドラッグで変わる。
 // 下限はツールバーの 1 行 + 行 2 つ + ヒントの 1 行が入る高さ。
 inline constexpr float kLayerListMinHeight = 120.0f;
 inline constexpr float kLayerListMaxHeight = 640.0f;
 
-// テクスチャパネルの一覧側（上の区画）の高さの下限と上限（96 DPI 基準）。
-// 下限はサムネイル 1 段と、その下の名前 2 行が入る高さ。
-inline constexpr float kTextureListMinHeight = 120.0f;
-inline constexpr float kTextureListMaxHeight = 480.0f;
+// テクスチャの拡大プレビューの一辺（96 DPI 基準）。
+// サムネイル（72）では中身を確かめられないので、その 3 倍弱を取る。
+inline constexpr float kTexturePreviewSize = 200.0f;
 
 // テクスチャ一覧からマップ欄へのドラッグ＆ドロップで使うペイロードの種別。
 inline constexpr const char* kTextureDragDropType = "MM_TEXTURE";

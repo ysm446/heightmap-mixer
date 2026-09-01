@@ -68,7 +68,8 @@ void Application::DrawLayerList(float height) {
     const float thumbnailSize = ui::Scaled(kLayerRowThumbnail);
     const float eyeSize = ui::Scaled(kLayerRowEye);
     const float rowHeight = thumbnailSize + style.FramePadding.y * 2.0f;
-    const float gap = style.ItemInnerSpacing.x;
+    // 部品どうしの間隔と、行の左右に空ける余白。同じ値を使って並びを揃える。
+    const float gap = ui::Scaled(kLayerRowGap);
     const float deleteSize = ImGui::GetFrameHeight();
 
     if (ImGui::BeginChild("layerList", ImVec2(0.0f, height), ImGuiChildFlags_Borders)) {
@@ -103,7 +104,7 @@ void Application::DrawLayerList(float height) {
             // 部品を重ねるあいだカーソルを動かすので、次の行の位置を控えておく。
             const ImVec2 nextRow = ImGui::GetCursorScreenPos();
             const float centerY = (rowMin.y + rowMax.y) * 0.5f;
-            float x = rowMin.x + style.FramePadding.x;
+            float x = rowMin.x + gap;
 
             // --- 目のアイコン --------------------------------------------
             ImGui::SetCursorScreenPos(ImVec2(x, centerY - eyeSize * 0.5f));
@@ -153,7 +154,8 @@ void Application::DrawLayerList(float height) {
 
             // --- 名前 ------------------------------------------------------
             // 削除アイコンの手前で切る。長い名前がボタンへ潜り込まないようにする。
-            const float nameRight = rowMax.x - deleteSize - gap;
+            const float deleteX = rowMax.x - gap - deleteSize;
+            const float nameRight = deleteX - gap;
             ImGui::SetCursorScreenPos(ImVec2(x, centerY - ImGui::GetTextLineHeight() * 0.5f));
             ImGui::PushClipRect(ImVec2(x, rowMin.y), ImVec2(nameRight, rowMax.y), true);
             if (layer.enabled) {
@@ -166,7 +168,7 @@ void Application::DrawLayerList(float height) {
 
             // --- 削除 ------------------------------------------------------
             // 最後の 1 枚は消せない。下地が無くなると合成の起点が消えるため。
-            ImGui::SetCursorScreenPos(ImVec2(rowMax.x - deleteSize, centerY - deleteSize * 0.5f));
+            ImGui::SetCursorScreenPos(ImVec2(deleteX, centerY - deleteSize * 0.5f));
             ImGui::BeginDisabled(layerCount <= 1);
             // 記号は `×`（U+00D7）。`✕`(U+2715) のような装飾的な字は
             // Yu Gothic に無く、`?` に化ける。

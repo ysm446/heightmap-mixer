@@ -187,18 +187,16 @@ void Application::DrawTextureLibraryPanel() {
     }
     DrawTextureRemoveModal();
 
-    // 上に一覧、下に詳細。レイヤーパネルと同じ 2 段の作法。
-    // **一覧には全幅を使わせる。** 詳細を横へ置くと一覧の幅がその分だけ削れ、
+    // **一覧と詳細は区画に割らず、パネル 1 枚をそのままスクロールさせる。**
+    // 帯は縦に狭いので、割ると両方が窮屈になる。一覧を全幅・全高で流し、
+    // 詳細はその下（スクロールした先）に置く。
+    // 一覧には全幅を使わせる。詳細を横へ置くと一覧の幅がその分だけ削れ、
     // 帯が横に広くても枡が数列しか並ばない。
-    float listHeight = ui::Scaled(m_settings.Ui().textureListHeight);
-    // 区画の幅は割る前に測る。子ウィンドウを開いた後だと残りが変わる。
-    const float paneWidth = ImGui::GetContentRegionAvail().x;
-    const ImVec2 gridSize(0.0f, listHeight);
 
     // サムネイルの一覧。枠の幅に入るだけ横に並べる。
     // 読み込み時にミップを作ってあるので、元の画像をそのまま縮小して出せる。
     const float thumbnailSize = ui::Scaled(72.0f);
-    if (ImGui::BeginChild("textureGrid", gridSize, ImGuiChildFlags_Borders)) {
+    {
         const float step = thumbnailSize + ImGui::GetStyle().ItemSpacing.x;
         const auto columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / step));
 
@@ -245,44 +243,26 @@ void Application::DrawTextureLibraryPanel() {
             }
         }
     }
-    ImGui::EndChild();
-
-    // 境界をドラッグして一覧側の高さを変えられるようにする。
-    // 高さは設定に覚えさせ、起動のたびに戻らないようにする。
-    // 保存は掴んでいた手を離したときだけ（ドラッグ中に毎フレーム書かない）。
-    const bool released =
-        ui::HorizontalSplitter("textureSplitter", &listHeight, ui::Scaled(kTextureListMinHeight),
-                               ui::Scaled(kTextureListMaxHeight), paneWidth);
-    // 拡大率を掛ける前の値へ戻して持つ。Scaled(1) が現在の拡大率。
-    m_settings.Ui().textureListHeight = listHeight / std::max(ui::Scaled(1.0f), 0.01f);
-    if (released) {
-        m_settings.Save();
-    }
-
-    ImGui::BeginChild("textureDetails", ImVec2(0.0f, 0.0f));
 
     if (textureCount == 0) {
         ui::HintText("「読み込む…」で画像を読み込む（PNG / JPG / TGA / EXR）");
-        ImGui::EndChild();
         ImGui::End();
         return;
     }
 
     const compositor::LibraryTexture& selected = entries[static_cast<size_t>(m_selectedTexture)];
     // 拡大プレビュー。サムネイル（72）では中身を確かめられないため置く。
-    //
-    // **大きさは下の区画の高さで決まる。** 正方形なので高さに合わせておけば、
-    // 境界や帯をドラッグして広げたぶんだけ素直に大きくなる。
-    // 画像は行と違って高さを使い切れるので、ここだけは横に並べる。
+    // **大きさは固定。** 流し込みなので伸ばす先の高さが決まらない。
     //
     // コンボは 0 が RGB なので、1 つずらして R / G / B / A の SRV を引く。
     // 0（RGB）のときは -1 になり、ChannelHandle が通常の表示用を返す。
-    const float previewSize = std::clamp(ImGui::GetContentRegionAvail().y, ui::Scaled(64.0f),
-                                         ui::Scaled(400.0f));
+    const float previewSize = ui::Scaled(kTexturePreviewSize);
     ImGui::Image(static_cast<ImTextureID>(selected.ChannelHandle(m_previewChannel - 1).ptr),
                  ImVec2(previewSize, previewSize));
+    // プロパティ行はプレビューの横へ回す。**下に積むとスクロールが長くなり、
+    // 何を選んでいるのかを見ながら値を確かめられない。**
     ImGui::SameLine();
-    ImGui::BeginChild("textureDetailRows", ImVec2(0.0f, 0.0f));
+    ImGui::BeginGroup();
 
     ui::SectionHeader("選択中");
     if (ui::BeginPropertyTable("textureRows")) {
@@ -320,9 +300,7 @@ void Application::DrawTextureLibraryPanel() {
     }
     ui::HintText("サムネイルをマテリアルのマップ欄へドラッグすると割り当てられる");
 
-    // プロパティ行の枠と、詳細の枠の 2 つを閉じる。
-    ImGui::EndChild();
-    ImGui::EndChild();
+    ImGui::EndGroup();
     ImGui::End();
 }
 
