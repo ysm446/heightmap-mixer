@@ -6,7 +6,10 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <array>
+#include <cstring>
 #include <string>
+#include <vector>
 
 namespace mm::ui {
 namespace {
@@ -574,6 +577,86 @@ void PropertyValue(const char* label, const char* format, ...) {
 
 bool Button(const char* label, float width) {
     return ImGui::Button(label, ImVec2(Scaled(width), 0.0f));
+}
+
+namespace {
+
+// 名前を width に収まる 2 行へ割る。
+//
+// **行数は常に 2 で固定する。** 名前の長さで行数が変わると、
+// 一覧の升目の高さが揃わずに段がガタつく。
+// 収まらないぶんは中央を省略し、**先頭と末尾の両方を残す**。
+// `T_Rocky_Soil_..._BaseColor` と `..._Normal` のように、
+// 素材名は先頭、マップの種別は末尾に入るため、
+// 片側だけ残すと同じ表示になって見分けられない。
+std::array<std::string, 2> SplitCaptionLines(const char* text, float width) {
+    std::array<std::string, 2> lines;
+
+    // UTF-8 の途中で切らないよう、文字の先頭バイト位置を集めておく。
+    std::vector<size_t> starts;
+    for (size_t i = 0; text[i] != 0; ++i) {
+        if ((static_cast<unsigned char>(text[i]) & 0xC0) != 0x80) {
+            starts.push_back(i);
+        }
+    }
+    starts.push_back(std::strlen(text));
+    const size_t charCount = starts.size() - 1;
+
+    // 1 行目: 先頭から入るだけ。
+    size_t head = 0;
+    while (head < charCount) {
+        const std::string candidate(text, starts[head + 1]);
+        if (ImGui::CalcTextSize(candidate.c_str()).x > width) {
+            break;
+        }
+        ++head;
+    }
+    lines[0].assign(text, starts[head]);
+    if (head == charCount) {
+        return lines;  // 1 行で収まった。
+    }
+
+    // 2 行目: 残りが入るならそのまま。入らなければ末尾を残して中央を省略する。
+    const std::string rest(text + starts[head]);
+    if (ImGui::CalcTextSize(rest.c_str()).x <= width) {
+        lines[1] = rest;
+        return lines;
+    }
+
+    static const char* const kEllipsis = "…";
+    size_t tail = 0;
+    while (head + tail < charCount) {
+        const std::string candidate =
+            std::string(kEllipsis) + std::string(text + starts[charCount - tail - 1]);
+        if (ImGui::CalcTextSize(candidate.c_str()).x > width) {
+            break;
+        }
+        ++tail;
+    }
+    lines[1] = std::string(kEllipsis) + std::string(text + starts[charCount - tail]);
+    return lines;
+}
+
+}  // namespace
+
+void GridCaption(const char* text, float width) {
+    if (text == nullptr) {
+        return;
+    }
+    // ImGui 1.92 は同じフォントを別サイズで積める。第 2 フォントは読み込まない。
+    ImGui::PushFont(nullptr, kCaptionFontSize);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+
+    // 2 行目が空でも行は描く。**空行を飛ばすと升目の高さが揃わない。**
+    for (const std::string& line : SplitCaptionLines(text, width)) {
+        // サムネイルの幅の中で中央へ寄せる。左詰めだと升目の並びが揺れて見える。
+        const float textWidth = ImGui::CalcTextSize(line.c_str()).x;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (width - textWidth) * 0.5f));
+        ImGui::TextUnformatted(line.empty() ? " " : line.c_str());
+    }
+
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
 }
 
 void HintText(const char* format, ...) {

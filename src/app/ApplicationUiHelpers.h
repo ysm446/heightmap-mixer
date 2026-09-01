@@ -70,8 +70,8 @@ inline const char* const kDebugViewLabels[] = {
     "ラフネス",       "メタルネス",   "AO",             "ハイト",
     "ワイヤーフレーム",
 };
-inline const char* const kResolutionLabels[] = {"512", "1024", "2048"};
-inline constexpr uint32_t kResolutionValues[] = {512, 1024, 2048};
+inline const char* const kResolutionLabels[] = {"512", "1024", "2048", "4096"};
+inline constexpr uint32_t kResolutionValues[] = {512, 1024, 2048, 4096};
 
 // レイヤー一覧のドラッグ＆ドロップで使うペイロードの種別。
 inline constexpr const char* kLayerDragDropType = "MM_LAYER";

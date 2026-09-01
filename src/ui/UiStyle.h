@@ -19,6 +19,10 @@ inline constexpr float kSliderMaxWidth = 176.0f;
 inline constexpr float kComboMaxWidth = 190.0f;
 inline constexpr float kButtonWidth = 68.0f;
 inline constexpr float kWideButtonWidth = 148.0f;
+
+// 一覧のサムネイルに添える名前の文字サイズ（基準は 17）。
+// **これ以外の場所で文字サイズを変えない。**
+inline constexpr float kCaptionFontSize = 13.0f;
 inline constexpr float kTextInputWidth = 190.0f;
 
 // グレー基調のテーマを適用する。ImGui のコンテキストを作った直後に 1 回だけ呼ぶ。
@@ -127,5 +131,11 @@ ImU32 ErrorColor();
 
 // 補助テキスト。操作の説明や単位の目安を 1 行で添えるときに使う。
 void HintText(const char* format, ...);
+
+// 一覧のサムネイルの下に置く名前。**幅はサムネイルに合わせて渡すこと。**
+// **常に 2 行**で描く（行数が変わると升目の高さが揃わない）。
+// 収まらないぶんは中央を省略し、先頭と末尾の両方を残す。
+// 全体はホバーのツールチップで読める。
+void GridCaption(const char* text, float width);
 
 }  // namespace mm::ui

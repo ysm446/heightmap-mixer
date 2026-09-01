@@ -206,7 +206,7 @@ void Application::DrawTextureLibraryPanel() {
         ImGui::GetContentRegionAvail().x > detailWidth + ui::Scaled(220.0f);
     const ImVec2 gridSize =
         sideBySide ? ImVec2(-(detailWidth + ImGui::GetStyle().ItemSpacing.x), 0.0f)
-                   : ImVec2(0.0f, ui::Scaled(180.0f));
+                   : ImVec2(0.0f, ui::Scaled(228.0f));  // 名前 2 行ぶん高くしてある
 
     // サムネイルの一覧。枠の幅に入るだけ横に並べる。
     // 読み込み時にミップを作ってあるので、元の画像をそのまま縮小して出せる。
@@ -247,6 +247,9 @@ void Application::DrawTextureLibraryPanel() {
             } else if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", entry.name.c_str());
             }
+            // 名前を添える。素材名は末尾で見分けが付くことが多く、
+            // ホバーしないと分からないと一覧として使いにくい。
+            ui::GridCaption(entry.name.c_str(), thumbnailSize);
             ImGui::EndGroup();
 
             ImGui::PopID();

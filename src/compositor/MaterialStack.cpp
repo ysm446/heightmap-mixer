@@ -27,7 +27,8 @@ MaterialStack::MaterialStack() {
 
     MaterialLayer sand;
     sand.name = "砂";
-    sand.baseColor = {0.68f, 0.58f, 0.40f};
+    // 乾いた砂のアルベドは 0.4 前後。色味は残したまま、その明るさへ合わせてある。
+    sand.baseColor = {0.46f, 0.39f, 0.27f};
     sand.roughness = 0.90f;
     sand.metallic = 0.0f;
     sand.heightSource = ValueSource::Noise;
