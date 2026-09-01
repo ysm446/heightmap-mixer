@@ -139,7 +139,11 @@ struct MaterialLayer {
     // このレイヤーが書き込むチャンネル（Mixer と同じくチャンネル単位で切り替えられる）
     uint32_t channelMask = kAllChannelBits;
 
-    DirectX::XMFLOAT3 baseColor = {0.5f, 0.5f, 0.5f};
+    // **リニアで持つ。既定は 18% グレー（0.18）。**
+    // 写真と CG で共通の中間グレー基準で、画面上では sRGB 0.46 に見える。
+    // 地面素材のアルベド（0.1〜0.3）にも収まる。
+    // 0.5 をリニアで置くと sRGB 0.735 相当となり、コンクリートより明るくなる。
+    DirectX::XMFLOAT3 baseColor = {0.18f, 0.18f, 0.18f};
     float roughness = 0.5f;
     float metallic = 0.0f;
     float ambientOcclusion = 1.0f;

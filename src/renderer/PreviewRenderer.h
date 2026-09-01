@@ -68,7 +68,10 @@ struct LightSettings {
 };
 
 struct MaterialSettings {
-    DirectX::XMFLOAT3 baseColor = {0.82f, 0.80f, 0.78f};
+    // 合成結果を使わないときの単色マテリアル。**18% グレー**にしてある
+    // （MaterialLayer::baseColor と同じ基準）。ルックデブで使う
+    // グレーボールと同じ明るさで、露出とライトの確認がしやすい。
+    DirectX::XMFLOAT3 baseColor = {0.18f, 0.18f, 0.18f};
     float roughness = 0.35f;
     float metallic = 0.0f;
 };
