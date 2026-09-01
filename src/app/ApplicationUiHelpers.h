@@ -360,14 +360,27 @@ inline void DrawAxisGizmo(const renderer::Camera& camera, const ImVec2& viewport
               [](const Projected& a, const Projected& b) { return a.depth > b.depth; });
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    const float dotRadius = ui::Scaled(7.0f);
+    // 文字を置くぶん、線を先端の手前で止める幅。
+    const float labelGap = ui::Scaled(7.0f);
     for (const Projected& axis : projected) {
-        drawList->AddLine(center, axis.tip, axis.color, ui::Scaled(1.6f));
-        drawList->AddCircleFilled(axis.tip, dotRadius, axis.color);
+        const ImVec2 delta(axis.tip.x - center.x, axis.tip.y - center.y);
+        const float length = std::sqrt(delta.x * delta.x + delta.y * delta.y);
 
+        // **線は文字の手前で止める。** 先端に丸を置かないので、
+        // 文字まで引くと字画と重なって読めなくなる。
+        // 真正面を向いた軸は線が点に潰れるため、文字だけを置く。
+        if (length > labelGap) {
+            const ImVec2 direction(delta.x / length, delta.y / length);
+            const ImVec2 lineEnd(axis.tip.x - direction.x * labelGap,
+                                 axis.tip.y - direction.y * labelGap);
+            drawList->AddLine(center, lineEnd, axis.color, ui::Scaled(1.6f));
+        }
+
+        // **文字は軸の色で描く。** 下に敷く丸が無いので、
+        // 暗い色だとビューポートの背景に沈んで読めない。
         const ImVec2 textSize = ImGui::CalcTextSize(axis.label);
         const ImVec2 textPos(axis.tip.x - textSize.x * 0.5f, axis.tip.y - textSize.y * 0.5f);
-        drawList->AddText(textPos, IM_COL32(22, 22, 22, 235), axis.label);
+        drawList->AddText(textPos, axis.color, axis.label);
     }
 }
 
