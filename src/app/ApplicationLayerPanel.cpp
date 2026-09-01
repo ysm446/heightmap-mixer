@@ -55,7 +55,7 @@ void Application::RemoveLayer(int index) {
 // 行そのものを `Selectable` にし、その上へ部品を重ねる。
 // 部品を `SameLine` で横に並べる方式だと、目のアイコンやサムネイルの上では
 // 行を選べなくなり、当たり判定に穴が空く。
-void Application::DrawLayerList() {
+void Application::DrawLayerList(float height) {
     std::vector<compositor::MaterialLayer>& layers = m_materialStack.Layers();
     const auto layerCount = static_cast<int>(layers.size());
 
@@ -71,8 +71,7 @@ void Application::DrawLayerList() {
     const float gap = style.ItemInnerSpacing.x;
     const float deleteSize = ImGui::GetFrameHeight();
 
-    if (ImGui::BeginChild("layerList", ImVec2(0.0f, ui::Scaled(150.0f)),
-                          ImGuiChildFlags_Borders)) {
+    if (ImGui::BeginChild("layerList", ImVec2(0.0f, height), ImGuiChildFlags_Borders)) {
         for (int i = layerCount - 1; i >= 0; --i) {
             compositor::MaterialLayer& layer = layers[static_cast<size_t>(i)];
             ImGui::PushID(i);
@@ -214,6 +213,18 @@ void Application::DrawLayerPanel() {
     const auto layerCount = static_cast<int>(layers.size());
     m_selectedLayer = std::clamp(m_selectedLayer, 0, (layerCount > 0) ? layerCount - 1 : 0);
 
+    // 幅が足りれば「一覧 | プロパティ」の 2 列にする。足りなければ縦に積む
+    // （テクスチャパネルと同じ作法）。一覧と編集を同時に見られるほうが、
+    // レイヤーを行き来しながらの調整がしやすい。
+    float listWidth = ui::Scaled(m_settings.Ui().layerListWidth);
+    const bool sideBySide =
+        ImGui::GetContentRegionAvail().x > listWidth + ui::Scaled(kLayerPropertiesMinWidth);
+    // 列の高さは分ける前に測る。子ウィンドウを開いた後だと残りが変わる。
+    const float columnHeight = ImGui::GetContentRegionAvail().y;
+    if (sideBySide) {
+        ImGui::BeginChild("layerListColumn", ImVec2(listWidth, columnHeight));
+    }
+
     if (ui::Button("追加")) {
         compositor::MaterialLayer layer;
         layer.name = "レイヤー " + std::to_string(layers.size() + 1);
@@ -241,10 +252,32 @@ void Application::DrawLayerPanel() {
     }
     ImGui::EndDisabled();
 
-    DrawLayerList();
+    // 2 列のときは列の高さいっぱいまで伸ばす。下の 1 行はヒント用に空ける。
+    DrawLayerList(sideBySide ? -ImGui::GetTextLineHeightWithSpacing() : ui::Scaled(150.0f));
     ui::HintText("上が最前面。ドラッグで並べ替え");
 
+    if (sideBySide) {
+        ImGui::EndChild();
+
+        // 境界をドラッグして列幅を変えられるようにする。
+        // 幅は設定に覚えさせ、起動のたびに戻らないようにする。
+        // 保存は掴んでいた手を離したときだけ（ドラッグ中に毎フレーム書かない）。
+        const float released = ui::VerticalSplitter(
+            "layerSplitter", &listWidth, ui::Scaled(kLayerListMinWidth),
+            ui::Scaled(kLayerListMaxWidth), columnHeight);
+        // 拡大率を掛ける前の値へ戻して持つ。Scaled(1) が現在の拡大率。
+        m_settings.Ui().layerListWidth = listWidth / std::max(ui::Scaled(1.0f), 0.01f);
+        if (released) {
+            m_settings.Save();
+        }
+
+        ImGui::BeginChild("layerPropertyColumn", ImVec2(0.0f, columnHeight));
+    }
+
     if (layerCount == 0) {
+        if (sideBySide) {
+            ImGui::EndChild();
+        }
         ImGui::End();
         return;
     }
@@ -413,6 +446,9 @@ void Application::DrawLayerPanel() {
         MarkDocumentChanged();
     }
 
+    if (sideBySide) {
+        ImGui::EndChild();
+    }
     ImGui::End();
 }
 

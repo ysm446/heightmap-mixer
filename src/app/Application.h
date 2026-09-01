@@ -106,7 +106,8 @@ private:
     // 参照が残っているテクスチャを消そうとしたときの確認。
     void DrawTextureRemoveModal();
     // レイヤー一覧。ドラッグで並べ替える。
-    void DrawLayerList();
+    // height は一覧の高さ。負値なら「残りの高さから引く」（ImGui の作法）。
+    void DrawLayerList(float height);
     // レイヤーを 1 枚消す。ツールバーのボタンと一覧の削除アイコンの共通の入口。
     void RemoveLayer(int index);
 

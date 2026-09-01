@@ -400,7 +400,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v5");
+    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v6");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -484,34 +484,32 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->WorkSize);
 
     ImGuiID center = dockspaceId;
-    ImGuiID left = 0;
     ImGuiID right = 0;
     ImGuiID bottom = 0;
-    ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.24f, &left, &center);
-    // 残り幅に対する比率。全体では 0.27 ぶんになる。
-    ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.355f, &right, &center);
+    // **カラムは右の 1 本だけにする。** 左右に分けると 1 本あたりが狭くなり、
+    // レイヤーを「一覧 | プロパティ」の 2 列で出せない。
+    // まとめたぶん右を広く取り、ビューポートも左右に分けていた頃より広くなる。
+    ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.42f, &right, &center);
     // アセットの帯。**右カラムを切り出した後の center を割る**ので、
     // 帯はビューポートの真下だけに伸び、右カラムの下へは回り込まない。
     ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, &bottom, &center);
 
-    ImGui::DockBuilderDockWindow("レイヤー", left);
-    // マテリアルはレイヤーと同じ枠にタブで並べる。
-    // どちらも「何を積むか」を決める作業で、同時には見ない。
-    ImGui::DockBuilderDockWindow("マテリアル", left);
     ImGui::DockBuilderDockWindow("ビューポート", center);
     // テクスチャはビューポートの下の帯。マテリアルのマップ欄へドラッグして
     // 割り当てるので、**割り当て先と同時に見えている必要がある。**
-    // 左カラムのタブに置くと、マテリアルとテクスチャを同時に出せない。
+    // マテリアルは右カラム、帯は中央の下なので、同時に見えている。
     ImGui::DockBuilderDockWindow("テクスチャ", bottom);
-    // 右カラムは 3 枚をタブで重ねる。縦に積むと 1 枚あたりが短くなり、
+    // 右カラムへタブで重ねる。縦に積むと 1 枚あたりが短くなり、
     // どれもスクロールしないと全体が見えなくなる。
+    ImGui::DockBuilderDockWindow("レイヤー", right);
+    ImGui::DockBuilderDockWindow("マテリアル", right);
     ImGui::DockBuilderDockWindow("プレビュー設定", right);
     ImGui::DockBuilderDockWindow("ライティングと露出", right);
     ImGui::DockBuilderDockWindow("情報", right);
 
     ImGui::DockBuilderFinish(dockspaceId);
 
-    // 前面のタブは「レイヤー」と「プレビュー設定」にする。
+    // 前面のタブは「レイヤー」。**1 つの枠にまとめたので、前面にできるのは 1 枚だけ。**
     // この時点ではまだウィンドウが無いので、実際の指定は各パネルの Begin 直前で行う。
     m_focusDefaultTabs = 3;
 }

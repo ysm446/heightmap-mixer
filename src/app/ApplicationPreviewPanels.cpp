@@ -24,9 +24,8 @@
 namespace mm {
 
 void Application::DrawMaterialPanel() {
-    if (m_focusDefaultTabs > 0) {
-        ImGui::SetNextWindowFocus();
-    }
+    // **ここでは前面を要求しない。** レイヤーと同じ枠のタブなので、
+    // 両方が要求すると後から描いたほうが勝ち、既定の前面が定まらない。
     if (ImGui::Begin("プレビュー設定")) {
         if (ui::BeginPropertyTable("previewRows")) {
             static const char* const kShapeLabels[] = {"球", "平面", "キューブ"};

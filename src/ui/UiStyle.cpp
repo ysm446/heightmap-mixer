@@ -639,6 +639,42 @@ std::array<std::string, 2> SplitCaptionLines(const char* text, float width) {
 
 }  // namespace
 
+bool VerticalSplitter(const char* id, float* width, float minWidth, float maxWidth,
+                      float height) {
+    if (width == nullptr || height <= 0.0f) {
+        return false;
+    }
+
+    // 掴む幅は線より広く取る。線と同じ幅だと狙って掴めない。
+    // さらに左右へ余白を空ける。**詰めると隣の列の枠が線に貼り付いて窮屈に見える。**
+    const float grabWidth = Scaled(kSplitterGrabWidth);
+    const float margin = Scaled(kSplitterMargin);
+    ImGui::SameLine(0.0f, margin);
+    ImGui::InvisibleButton(id, ImVec2(grabWidth, height));
+
+    const bool hovered = ImGui::IsItemHovered();
+    const bool active = ImGui::IsItemActive();
+    if (hovered || active) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    }
+    if (active) {
+        *width = std::clamp(*width + ImGui::GetIO().MouseDelta.x, minWidth, maxWidth);
+    }
+
+    // 線は掴める幅の中央へ 1 本。掴めることが分かる程度に留める。
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const ImVec2 max = ImGui::GetItemRectMax();
+    const float centerX = (min.x + max.x) * 0.5f;
+    const ImU32 color = ImGui::GetColorU32(active      ? ImGuiCol_SeparatorActive
+                                           : hovered   ? ImGuiCol_SeparatorHovered
+                                                       : ImGuiCol_Separator);
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(centerX, min.y), ImVec2(centerX, max.y), color,
+                                        Scaled(1.0f));
+
+    ImGui::SameLine(0.0f, margin);
+    return ImGui::IsItemDeactivated();
+}
+
 void GridCaption(const char* text, float width) {
     if (text == nullptr) {
         return;

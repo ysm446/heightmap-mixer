@@ -81,6 +81,15 @@ inline constexpr float kLayerRowThumbnail = 32.0f;
 // 目のアイコンの一辺。**サムネイルより小さくする。**
 // 同じ大きさだと切り替えのアイコンが素材と同じ重みで並び、目線が散る。
 inline constexpr float kLayerRowEye = 18.0f;
+// レイヤーパネルを 2 列にするときの、一覧側の列幅の下限と上限（96 DPI 基準）。
+// 既定値は AppSettings が持ち、境界のドラッグで変わる。
+// 下限は目のアイコン + サムネイル 2 枚 + 削除ボタンが並ぶ幅。
+inline constexpr float kLayerListMinWidth = 180.0f;
+inline constexpr float kLayerListMaxWidth = 520.0f;
+// プロパティ側に最低限要る幅。ラベル列 + スライダー + 既定値マーカー。
+// これを割るときは 2 列にせず、縦に積む。
+inline constexpr float kLayerPropertiesMinWidth = 260.0f;
+
 // テクスチャ一覧からマップ欄へのドラッグ＆ドロップで使うペイロードの種別。
 inline constexpr const char* kTextureDragDropType = "MM_TEXTURE";
 inline constexpr const char* kTextureRemoveModalTitle = "テクスチャを削除";

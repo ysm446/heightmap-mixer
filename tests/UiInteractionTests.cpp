@@ -146,6 +146,57 @@ Result RunHover(bool withTooltip) {
     return result;
 }
 
+// --- 列の境界（VerticalSplitter） ---------------------------------------
+//
+// 掴んで動かせること、範囲を越えないこと、離したときだけ true を返すことを見る。
+// **どれもスクリーンショットには写らない。**
+
+struct SplitterResult {
+    float width = 0.0f;
+    int releasedCount = 0;
+};
+
+// x へ向かって境界をドラッグする。steps は途中の移動を含む。
+SplitterResult RunSplitterDrag(float startWidth, float dragToX, float minWidth,
+                               float maxWidth) {
+    SplitterResult result;
+    result.width = startWidth;
+
+    // 境界は左の列の右に余白を挟んだ位置。掴む幅の中ほどを狙う。
+    // **位置は定数から導く。** 直値で書くと、余白や掴み幅を変えたときに
+    // 「掴めていないのに落ちる」テストになって原因が分かりにくい。
+    const float grabX = kSourcePos.x + startWidth + mm::ui::kSplitterMargin +
+                        mm::ui::kSplitterGrabWidth * 0.5f;
+    const float grabY = 200.0f;
+    struct Step {
+        float x;
+        bool down;
+    };
+    const Step steps[] = {
+        {grabX, false},   // ホバー
+        {grabX, true},    // 掴む
+        {dragToX, true},  // 動かす
+        {dragToX, true},  // 動かし切った状態でもう 1 フレーム
+        {dragToX, false},  // 離す
+    };
+
+    for (const Step& step : steps) {
+        Frame(step.x, grabY, step.down);
+        BeginPanel();
+        ImGui::SetCursorScreenPos(kSourcePos);
+        ImGui::BeginChild("left", ImVec2(result.width, 300.0f));
+        ImGui::EndChild();
+        if (mm::ui::VerticalSplitter("split", &result.width, minWidth, maxWidth, 300.0f)) {
+            ++result.releasedCount;
+        }
+        ImGui::BeginChild("right", ImVec2(0.0f, 300.0f));
+        ImGui::EndChild();
+        ImGui::End();
+        ImGui::Render();
+    }
+    return result;
+}
+
 }  // namespace
 
 void RunUiInteractionTests() {
@@ -179,6 +230,21 @@ void RunUiInteractionTests() {
     Check(hoverOn.tooltipShown, "マップ欄をホバーするとツールチップが出る");
     const Result hoverOff = RunHover(false);
     Check(!hoverOff.tooltipShown, "ツールチップを積まなければ出ない（対照）");
+
+    Section("列の境界（ドラッグで幅を変える）");
+    // 右へ 80 動かす。掴んだ位置から素直に広がること。
+    const SplitterResult widened = RunSplitterDrag(200.0f, kSourcePos.x + 280.0f, 100.0f, 400.0f);
+    Check(widened.width > 260.0f && widened.width < 300.0f,
+          "境界を右へドラッグすると左の列が広がる");
+    Check(widened.releasedCount == 1, "離したフレームだけ true を返す（保存の合図）");
+
+    // 上限を越えて引いても止まること。越えると隣の列が潰れる。
+    const SplitterResult clamped = RunSplitterDrag(200.0f, kSourcePos.x + 900.0f, 100.0f, 260.0f);
+    Check(clamped.width <= 260.0f, "上限を越えて広がらない");
+
+    // 下限も同じ。左へ引き切っても一覧が消えない。
+    const SplitterResult shrunk = RunSplitterDrag(200.0f, kSourcePos.x - 400.0f, 150.0f, 400.0f);
+    Check(shrunk.width >= 150.0f, "下限を割って縮まない");
 
     ImGui::DestroyContext();
 }

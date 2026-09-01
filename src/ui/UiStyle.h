@@ -23,6 +23,12 @@ inline constexpr float kWideButtonWidth = 148.0f;
 // 一覧のサムネイルに添える名前の文字サイズ（基準は 17）。
 // **これ以外の場所で文字サイズを変えない。**
 inline constexpr float kCaptionFontSize = 13.0f;
+
+// 列の境界を掴める幅（96 DPI 基準）。線そのものより広く取らないと狙って掴めない。
+inline constexpr float kSplitterGrabWidth = 8.0f;
+// 境界の線と、その左右の列との間に空ける幅。
+// **ここを詰めると、一覧の枠が境界に貼り付いて窮屈に見える。**
+inline constexpr float kSplitterMargin = 8.0f;
 inline constexpr float kTextInputWidth = 190.0f;
 
 // グレー基調のテーマを適用する。ImGui のコンテキストを作った直後に 1 回だけ呼ぶ。
@@ -131,6 +137,17 @@ ImU32 ErrorColor();
 
 // 補助テキスト。操作の説明や単位の目安を 1 行で添えるときに使う。
 void HintText(const char* format, ...);
+
+// 2 つの列の境界。ドラッグで左の列の幅を変える。
+//
+// width は**実ピクセル**（`Scaled()` を通した後の値）で受け渡しする。
+// height には列の高さを渡す。`GetContentRegionAvail()` に頼ると、
+// 直前の子ウィンドウの都合で高さが変わってしまう。
+//
+// 戻り値は「掴んでいた手を離したフレーム」で true。
+// 設定の保存のように、ドラッグ中に毎フレームやりたくない処理をここへ吊るす。
+bool VerticalSplitter(const char* id, float* width, float minWidth, float maxWidth,
+                      float height);
 
 // 一覧のサムネイルの下に置く名前。**幅はサムネイルに合わせて渡すこと。**
 // **常に 2 行**で描く（行数が変わると升目の高さが揃わない）。

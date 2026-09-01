@@ -71,6 +71,10 @@ void AppSettings::Load() {
             // 壊れた値でも操作不能にならないよう、範囲へ丸める。
             m_ui.manualScale = std::clamp(scale->get<float>(), 0.5f, 4.0f);
         }
+        if (const auto listWidth = ui->find("layerListWidth");
+            listWidth != ui->end() && listWidth->is_number()) {
+            m_ui.layerListWidth = std::clamp(listWidth->get<float>(), 160.0f, 640.0f);
+        }
     }
 
     if (const auto display = document.find("display");
@@ -105,6 +109,7 @@ bool AppSettings::Save() const {
     json ui;
     ui["followSystemScale"] = m_ui.followSystemScale;
     ui["manualScale"] = m_ui.manualScale;
+    ui["layerListWidth"] = m_ui.layerListWidth;
 
     json display;
     display["vsync"] = m_display.vsync;
