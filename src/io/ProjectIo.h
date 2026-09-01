@@ -5,6 +5,7 @@
 #include "compositor/PaintMask.h"
 #include "compositor/TextureLibrary.h"
 #include "renderer/PreviewRenderer.h"
+#include "renderer/SkyLibrary.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 
@@ -21,6 +22,7 @@ struct ProjectRefs {
     compositor::TextureLibrary& textures;
     compositor::MaterialLibrary& materials;
     compositor::PaintMaskStore& paintMasks;
+    renderer::SkyLibrary& skies;
     renderer::PreviewRenderer& renderer;
 };
 

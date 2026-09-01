@@ -10,6 +10,7 @@
 #include "io/AppSettings.h"
 #include "io/RecentFiles.h"
 #include "renderer/PreviewRenderer.h"
+#include "renderer/SkyLibrary.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 #include "rhi/ShaderCompiler.h"
@@ -65,6 +66,8 @@ private:
     void DrawInfoPanel();
     void DrawLayerPanel();
     void DrawMaterialLibraryPanel();
+    // 天球パネル。一覧で選んだものがそのままビューポートの環境になる。
+    void DrawSkyLibraryPanel();
     void DrawTextureLibraryPanel();
     // アプリの設定ウィンドウ（表示 > 設定）。プロジェクトに保存しない設定を置く。
     void DrawSettingsWindow();
@@ -154,6 +157,10 @@ private:
     compositor::MaterialStack m_materialStack;
     compositor::TextureLibrary m_textureLibrary;
     compositor::MaterialLibrary m_materialLibrary;
+    // 天球アセット。マテリアルと並ぶアセットだが、**アンドゥの対象には入れない。**
+    // 環境は作っているマテリアルそのものではなく、見え方の設定に近い
+    // （プレビュー設定を履歴に載せないのと同じ理由）。
+    renderer::SkyLibrary m_skyLibrary;
     compositor::PaintMaskStore m_paintMasks;
     int m_selectedMaterial = 0;
     // ORD をまとめて割り当てるときに選ぶテクスチャ（UI の一時状態）。
@@ -178,6 +185,8 @@ private:
     bool m_scrollToSelectedTexture = false;
     // 追加・複製した直後のマテリアルを一覧の枠内へ送る要求。上と同じ理由。
     bool m_scrollToSelectedMaterial = false;
+    // 追加・複製した直後の天球を一覧の枠内へ送る要求。上と同じ理由。
+    bool m_scrollToSelectedSky = false;
 
     // ステータスバーに出す直近の通知。ログから受け取る。
     // 時刻は ImGui に依存させない（ログはコンテキストが無い時期にも来る）。
@@ -208,6 +217,8 @@ private:
     // 削除要求のあったマテリアル。一覧の描画中に消すと、描画側が erase 済みの
     // 要素を読んでしまうため、フレームの外で処理する。
     compositor::MaterialAssetId m_pendingMaterialRemove = compositor::kNoMaterialAsset;
+    // 削除要求のあった天球。マテリアルと同じ理由でフレームの外で処理する。
+    renderer::SkyAssetId m_pendingSkyRemove = renderer::kNoSkyAsset;
     // 確認待ちのテクスチャ。参照が残っているときだけ入る。
     compositor::TextureId m_textureRemoveCandidate = compositor::kNoTexture;
     std::vector<std::string> m_textureRemoveUsers;

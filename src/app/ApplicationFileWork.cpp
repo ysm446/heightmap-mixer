@@ -160,7 +160,15 @@ void Application::HandleDroppedFiles(const std::vector<std::filesystem::path>& p
         } else if (extension == ".mmmat") {
             m_pendingMaterialImport = path;
         } else if (extension == ".hdr") {
-            m_renderer.RequestHdrLoad(path);
+            // 選択中の天球へ入れる。天球は必ず 1 つあるので、行き先は常に決まる。
+            m_skyLibrary.EnsureDefault();
+            if (renderer::SkyAsset* sky = m_skyLibrary.ActiveMutable(); sky != nullptr) {
+                sky->sky.source = renderer::SkySource::Hdri;
+                sky->sky.hdriPath = path;
+                m_skyLibrary.MarkThumbnailDirty(sky->id);
+                MM_LOG_INFO("天球「%s」に %s を割り当てました", sky->name.c_str(),
+                            ToUtf8Display(path.filename()).c_str());
+            }
         } else if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
                    extension == ".tga" || extension == ".bmp" || extension == ".exr") {
             m_pendingTexturePaths.push_back(path);
@@ -178,6 +186,8 @@ void Application::ResetProject() {
     // どれも GPU 待機を伴う。フレームの外から呼ぶこと。
     m_paintMasks.Clear(m_device);
     m_materialLibrary.Clear(m_device);
+    m_skyLibrary.Clear(m_device);
+    m_skyLibrary.EnsureDefault();
     m_textureLibrary.Clear(m_device);
 
     // 既定のスタックへ戻す。MaterialStack を代入で作り直すと revision も 1 へ戻り、
@@ -243,8 +253,8 @@ void Application::ProcessPendingFileWork() {
         const std::filesystem::path path = m_pendingProjectOpen;
         m_pendingProjectOpen.clear();
 
-        io::ProjectRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary, m_paintMasks,
-                             m_renderer};
+        io::ProjectRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary,
+                             m_paintMasks,     m_skyLibrary,     m_renderer};
         if (io::LoadProject(path, m_device, m_pipelineCache, refs)) {
             m_recentProjects.Add(path);
             m_projectPath = path;
@@ -270,8 +280,8 @@ void Application::ProcessPendingFileWork() {
         const std::filesystem::path path = m_pendingProjectSave;
         m_pendingProjectSave.clear();
 
-        io::ProjectRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary, m_paintMasks,
-                             m_renderer};
+        io::ProjectRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary,
+                             m_paintMasks,     m_skyLibrary,     m_renderer};
         if (io::SaveProject(path, m_device, refs)) {
             m_recentProjects.Add(path);
             m_projectPath = path;
@@ -360,6 +370,14 @@ void Application::ProcessPendingFileWork() {
             m_selectedMaterial = std::max(0, m_selectedMaterial - 1);
             MarkDocumentChanged();
         }
+    }
+
+    if (m_pendingSkyRemove != renderer::kNoSkyAsset) {
+        const renderer::SkyAssetId removed = m_pendingSkyRemove;
+        m_pendingSkyRemove = renderer::kNoSkyAsset;
+        // 消したのが適用中の天球なら、SkyLibrary が隣へ移す。
+        // 環境の作り直しは、次のフレームの SetActiveSky が判断する。
+        m_skyLibrary.Remove(m_device, removed);
     }
 }
 

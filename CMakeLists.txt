@@ -86,6 +86,7 @@ set(mm_sources
     src/app/ApplicationLayerPanel.cpp
     src/app/ApplicationMaterialPanel.cpp
     src/app/ApplicationPreviewPanels.cpp
+    src/app/ApplicationSkyPanel.cpp
     src/app/ApplicationTexturePanel.cpp
     src/app/ApplicationUiHelpers.h
     src/app/ApplicationViewport.cpp
@@ -144,6 +145,8 @@ set(mm_sources
     src/renderer/Mesh.h
     src/renderer/PreviewRenderer.cpp
     src/renderer/PreviewRenderer.h
+    src/renderer/SkyLibrary.cpp
+    src/renderer/SkyLibrary.h
     src/ui/ImGuiLayer.cpp
     src/ui/ImGuiLayer.h
     src/ui/Toast.cpp

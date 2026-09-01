@@ -171,7 +171,13 @@ Thumbnail ThumbnailButton(const char* id, ImTextureID texture, float size, bool 
     state.hovered = ImGui::IsItemHovered();
     state.clicked = ImGui::IsItemClicked();
 
-    ImGui::GetWindowDrawList()->AddImage(texture, min, max);
+    // **まだ絵が無いときは枠だけ描く。** ImTextureID の 0 は ImTextureID_Invalid で、
+    // そのまま AddImage へ渡すとデバッグビルドの ImGui がアサートで落ちる。
+    // 天球のサムネイルは HDR の読み込みを伴うので 1 フレームに 1 枚ずつ作られ、
+    // 未生成の枠が必ず一覧に並ぶ。
+    if (texture != ImTextureID_Invalid) {
+        ImGui::GetWindowDrawList()->AddImage(texture, min, max);
+    }
     ThumbnailFrame(min, max, selected, state.hovered);
     return state;
 }

@@ -383,7 +383,7 @@ bool Environment::BuildFromSky(rhi::Device& device, rhi::PipelineCache& pipeline
 //
 // 空が測れなかった（真っ暗な画像など）ときは 1.0 に落とす。
 // 0 で割ると無限大になり、環境全体が白飛びしてしまう。
-static float LuminanceScaleFor(float skyLuminance, float measuredSky) {
+float SkyLuminanceScale(float skyLuminance, float measuredSky) {
     if (measuredSky <= 1e-6f) {
         return 1.0f;
     }
@@ -396,7 +396,7 @@ bool Environment::RebuildWithSkyLuminance(rhi::Device& device, rhi::PipelineCach
         return false;
     }
     return BuildFromEquirect(device, pipelineCache,
-                             LuminanceScaleFor(skyLuminance, m_measuredSkyLuminance));
+                             SkyLuminanceScale(skyLuminance, m_measuredSkyLuminance));
 }
 
 bool Environment::BuildFromHdrFile(rhi::Device& device, rhi::PipelineCache& pipelineCache,
@@ -459,7 +459,7 @@ bool Environment::BuildFromHdrFile(rhi::Device& device, rhi::PipelineCache& pipe
     }
 
     m_sourceName = path.filename().string();
-    const float scale = LuminanceScaleFor(skyLuminance, m_measuredSkyLuminance);
+    const float scale = SkyLuminanceScale(skyLuminance, m_measuredSkyLuminance);
     MM_LOG_INFO("HDRI を較正しました: 空の生の値 %.3f を %.0f cd/m^2 とみなす（%.0f 倍）",
                 m_measuredSkyLuminance, skyLuminance, scale);
     return BuildFromEquirect(device, pipelineCache, scale);

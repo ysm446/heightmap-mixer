@@ -138,6 +138,7 @@ const char* const kMaskSourceNames[] = {"constant", "noise",     "texture", "hei
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
 const char* const kShapeNames[] = {"sphere", "plane", "cube"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
+const char* const kSkySourceNames[] = {"procedural", "hdri"};
 
 template <size_t N>
 const char* EnumName(const char* const (&names)[N], uint32_t value) {
@@ -424,16 +425,11 @@ json WritePreview(renderer::PreviewRenderer& renderer, const fs::path& baseDir) 
     node["tessellation"] = renderer.TessellationEnabled();
     node["tessellationFactor"] = renderer.TessellationFactor();
     node["materialResolution"] = renderer.MaterialResolution();
-    node["iblIntensity"] = renderer.IblIntensity();
-    // HDRI の較正倍率。見た目が変わるのでプロジェクトに残す。
-    node["hdriSkyLuminance"] = renderer.HdriSkyLuminance();
     node["showSkybox"] = renderer.ShowSkybox();
     node["skyboxBlur"] = renderer.SkyboxBlur();
     node["shadow"] = renderer.ShadowEnabled();
-    // HDRI を読んでいなければ手続き的な空。null で区別する。
-    node["hdri"] = renderer.HdriPath().empty()
-                       ? json()
-                       : json(RelativePathString(renderer.HdriPath(), baseDir));
+    // 環境そのもの（HDRI・較正値・空のパラメータ）は天球アセットが持つ。
+    // ここには「見え方」だけを書く。
 
     const renderer::CameraState camera = renderer.GetCamera().State();
     json cameraNode;
@@ -460,14 +456,6 @@ json WritePreview(renderer::PreviewRenderer& renderer, const fs::path& baseDir) 
     exposureNode["shutterSpeed"] = exposure.shutterSpeed;
     exposureNode["iso"] = exposure.iso;
     node["exposure"] = std::move(exposureNode);
-
-    const renderer::SkySettings& sky = renderer.Sky();
-    json skyNode;
-    skyNode["zenithColor"] = WriteFloat3(sky.zenithColor);
-    skyNode["horizonColor"] = WriteFloat3(sky.horizonColor);
-    skyNode["groundColor"] = WriteFloat3(sky.groundColor);
-    skyNode["intensity"] = sky.intensity;
-    node["sky"] = std::move(skyNode);
 
     const renderer::MaterialSettings& material = renderer.Material();
     json materialNode;
@@ -497,9 +485,6 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer, const fs
         ReadFloat(node, "tessellationFactor", previewDefaults.tessellationFactor);
     renderer.RequestMaterialResolution(
         ReadUInt(node, "materialResolution", previewDefaults.materialResolution));
-    renderer.IblIntensity() = ReadFloat(node, "iblIntensity", previewDefaults.iblIntensity);
-    renderer.HdriSkyLuminance() =
-        ReadFloat(node, "hdriSkyLuminance", previewDefaults.hdriSkyLuminance);
     renderer.ShowSkybox() = ReadBool(node, "showSkybox", previewDefaults.showSkybox);
     renderer.SkyboxBlur() = ReadBool(node, "skyboxBlur", previewDefaults.skyboxBlur);
     renderer.ShadowEnabled() = ReadBool(node, "shadow", previewDefaults.shadowEnabled);
@@ -545,16 +530,6 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer, const fs
     }
 
     {
-        const json& sky = section("sky");
-        renderer::SkySettings& target = renderer.Sky();
-        const renderer::SkySettings defaults;
-        target.zenithColor = ReadFloat3(sky, "zenithColor", defaults.zenithColor);
-        target.horizonColor = ReadFloat3(sky, "horizonColor", defaults.horizonColor);
-        target.groundColor = ReadFloat3(sky, "groundColor", defaults.groundColor);
-        target.intensity = ReadFloat(sky, "intensity", defaults.intensity);
-    }
-
-    {
         const json& flat = section("flatMaterial");
         renderer::MaterialSettings& target = renderer.Material();
         const renderer::MaterialSettings defaults;
@@ -562,15 +537,94 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer, const fs
         target.roughness = ReadFloat(flat, "roughness", defaults.roughness);
         target.metallic = ReadFloat(flat, "metallic", defaults.metallic);
     }
+}
 
-    // 環境は最後に決める。HDRI があればそれを、無ければ手続き的な空を作り直す。
-    // どちらも要求を積むだけで、実際の生成はフレームの外の ProcessPendingWork が行う。
-    const std::string hdri = ReadString(node, "hdri");
-    if (!hdri.empty()) {
-        renderer.RequestHdrLoad(ResolvePath(hdri, baseDir));
-    } else {
-        renderer.RequestSkyRebuild();
+// --- 天球 -----------------------------------------------------------------
+
+json WriteSky(const renderer::SkyAsset& asset, const fs::path& baseDir) {
+    json node;
+    node["name"] = asset.name;
+    node["source"] = EnumName(kSkySourceNames, static_cast<uint32_t>(asset.sky.source));
+    // 画像はテクスチャと同じく相対パスの参照で持つ。使っていなければ null。
+    node["hdri"] = asset.sky.hdriPath.empty()
+                       ? json()
+                       : json(RelativePathString(asset.sky.hdriPath, baseDir));
+    node["skyLuminance"] = asset.sky.skyLuminance;
+    node["iblIntensity"] = asset.sky.iblIntensity;
+
+    const renderer::SkySettings& procedural = asset.sky.procedural;
+    json proceduralNode;
+    proceduralNode["zenithColor"] = WriteFloat3(procedural.zenithColor);
+    proceduralNode["horizonColor"] = WriteFloat3(procedural.horizonColor);
+    proceduralNode["groundColor"] = WriteFloat3(procedural.groundColor);
+    proceduralNode["intensity"] = procedural.intensity;
+    node["procedural"] = std::move(proceduralNode);
+    return node;
+}
+
+// 天球 1 つを読み込んでライブラリへ足す。
+renderer::SkyAssetId ReadSky(const json& node, renderer::SkyLibrary& skies,
+                             const fs::path& baseDir) {
+    const renderer::SkyDefinition defaults;
+    std::string name = ReadString(node, "name");
+    if (name.empty()) {
+        name = "天球";
     }
+    const renderer::SkyAssetId id = skies.Add(name);
+    renderer::SkyAsset* asset = skies.FindMutable(id);
+    if (asset == nullptr) {
+        return renderer::kNoSkyAsset;
+    }
+
+    asset->sky.source = static_cast<renderer::SkySource>(
+        EnumValue(kSkySourceNames, node, "source", static_cast<uint32_t>(defaults.source)));
+    if (const std::string hdri = ReadString(node, "hdri"); !hdri.empty()) {
+        asset->sky.hdriPath = ResolvePath(hdri, baseDir);
+    }
+    asset->sky.skyLuminance = ReadFloat(node, "skyLuminance", defaults.skyLuminance);
+    asset->sky.iblIntensity = ReadFloat(node, "iblIntensity", defaults.iblIntensity);
+
+    if (const json* procedural = FindMember(node, "procedural");
+        procedural != nullptr && procedural->is_object()) {
+        renderer::SkySettings& target = asset->sky.procedural;
+        const renderer::SkySettings proceduralDefaults;
+        target.zenithColor = ReadFloat3(*procedural, "zenithColor", proceduralDefaults.zenithColor);
+        target.horizonColor =
+            ReadFloat3(*procedural, "horizonColor", proceduralDefaults.horizonColor);
+        target.groundColor = ReadFloat3(*procedural, "groundColor", proceduralDefaults.groundColor);
+        target.intensity = ReadFloat(*procedural, "intensity", proceduralDefaults.intensity);
+    }
+    return id;
+}
+
+// 天球アセットが無いプロジェクト（天球を入れる前の形式）から 1 つ作る。
+// 当時は環境がビューポートに 1 つしか無く、preview 節に直接書かれていた。
+void MigrateSkyFromPreview(const json& preview, renderer::SkyLibrary& skies,
+                           const fs::path& baseDir) {
+    const renderer::SkyDefinition defaults;
+    const std::string hdri = ReadString(preview, "hdri");
+    const renderer::SkyAssetId id = skies.Add("既定の空");
+    renderer::SkyAsset* asset = skies.FindMutable(id);
+    if (asset == nullptr) {
+        return;
+    }
+    if (!hdri.empty()) {
+        asset->sky.source = renderer::SkySource::Hdri;
+        asset->sky.hdriPath = ResolvePath(hdri, baseDir);
+        asset->name = ToUtf8Display(asset->sky.hdriPath.stem());
+    }
+    asset->sky.skyLuminance = ReadFloat(preview, "hdriSkyLuminance", defaults.skyLuminance);
+    asset->sky.iblIntensity = ReadFloat(preview, "iblIntensity", defaults.iblIntensity);
+
+    if (const json* sky = FindMember(preview, "sky"); sky != nullptr && sky->is_object()) {
+        renderer::SkySettings& target = asset->sky.procedural;
+        const renderer::SkySettings proceduralDefaults;
+        target.zenithColor = ReadFloat3(*sky, "zenithColor", proceduralDefaults.zenithColor);
+        target.horizonColor = ReadFloat3(*sky, "horizonColor", proceduralDefaults.horizonColor);
+        target.groundColor = ReadFloat3(*sky, "groundColor", proceduralDefaults.groundColor);
+        target.intensity = ReadFloat(*sky, "intensity", proceduralDefaults.intensity);
+    }
+    skies.SetActive(id);
 }
 
 // --- ファイル入出力 -------------------------------------------------------
@@ -796,6 +850,18 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
     }
     document["layers"] = std::move(layers);
 
+    // 天球はマテリアルと同じく、構造ごと埋め込む（画像だけ相対パスの参照）。
+    json skies = json::array();
+    int activeSkyIndex = 0;
+    for (const renderer::SkyAsset& asset : refs.skies.Entries()) {
+        if (asset.id == refs.skies.ActiveId()) {
+            activeSkyIndex = static_cast<int>(skies.size());
+        }
+        skies.push_back(WriteSky(asset, baseDir));
+    }
+    document["skies"] = std::move(skies);
+    document["activeSky"] = activeSkyIndex;
+
     document["preview"] = WritePreview(refs.renderer, baseDir);
 
     if (!WriteJsonFile(savePath, document)) {
@@ -820,6 +886,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
     refs.stack.Layers().clear();
     refs.paintMasks.Clear(device);
     refs.materials.Clear(device);
+    refs.skies.Clear(device);
     refs.textures.Clear(device);
 
     // --- テクスチャ -------------------------------------------------------
@@ -963,8 +1030,28 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
     // 呼ばないと、前のプロジェクトのカメラ・ライト・露出が残ってしまう。
     const json* preview = FindMember(document, "preview");
     const json emptyPreview = json::object();
-    ReadPreview((preview != nullptr && preview->is_object()) ? *preview : emptyPreview,
-                refs.renderer, baseDir);
+    const json& previewNode =
+        (preview != nullptr && preview->is_object()) ? *preview : emptyPreview;
+    ReadPreview(previewNode, refs.renderer, baseDir);
+
+    // 天球。無ければ preview 節から 1 つ作る（天球を入れる前のプロジェクト）。
+    if (const json* skies = FindMember(document, "skies");
+        skies != nullptr && skies->is_array() && !skies->empty()) {
+        std::vector<renderer::SkyAssetId> ids;
+        for (const json& sky : *skies) {
+            if (!sky.is_object()) {
+                continue;
+            }
+            ids.push_back(ReadSky(sky, refs.skies, baseDir));
+        }
+        const auto activeIndex = static_cast<size_t>(ReadUInt(document, "activeSky", 0));
+        if (activeIndex < ids.size()) {
+            refs.skies.SetActive(ids[activeIndex]);
+        }
+    } else {
+        MigrateSkyFromPreview(previewNode, refs.skies, baseDir);
+    }
+    refs.skies.EnsureDefault();
 
     MM_LOG_INFO("プロジェクトを開きました: %s", ToUtf8Portable(path).c_str());
     return true;

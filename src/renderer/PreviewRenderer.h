@@ -5,6 +5,7 @@
 #include "compositor/TextureLibrary.h"
 #include "renderer/Camera.h"
 #include "renderer/Environment.h"
+#include "renderer/SkyLibrary.h"
 #include "renderer/Mesh.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
@@ -90,9 +91,6 @@ struct PreviewDefaults {
     bool tessellationEnabled = false;
     float tessellationFactor = 8.0f;
     uint32_t materialResolution = 1024;
-    float iblIntensity = 1.0f;
-    // 晴天の空はおよそ 4000-15000 cd/m^2。SkySettings::intensity と揃えてある。
-    float hdriSkyLuminance = 12000.0f;
     bool showSkybox = true;
     bool skyboxBlur = false;
     bool shadowEnabled = true;
@@ -104,9 +102,11 @@ public:
     bool Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache);
     void Shutdown(rhi::Device& device);
 
-    // 環境マップの作り直しは GPU 待機を伴うため、フレームの外で呼ぶこと。
-    void RequestSkyRebuild() { m_skyRebuildRequested = true; }
-    void RequestHdrLoad(const std::filesystem::path& path) { m_pendingHdrPath = path; }
+    // ビューポートに適用する天球を渡す。**毎フレーム呼んでよい。**
+    // 前回と中身が違えば、必要な作り直し（環境マップの再生成か、
+    // 較正倍率だけの掛け直し）を予約する。実際の生成はフレームの外で行う。
+    void SetActiveSky(const SkyDefinition& sky);
+    const SkyDefinition& ActiveSky() const { return m_activeSky; }
     // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
     // フレームの外でまとめて処理する。
     void ProcessPendingWork(rhi::Device& device, rhi::PipelineCache& pipelineCache);
@@ -134,17 +134,7 @@ public:
     TonemapMode& Tonemap() { return m_tonemap; }
     DebugView& Debug() { return m_debugView; }
     DebugView Debug() const { return m_debugView; }
-    SkySettings& Sky() { return m_sky; }
     const Environment& GetEnvironment() const { return m_environment; }
-    // 読み込み済みの HDRI のパス。手続き的な空を使っているときは空。
-    const std::filesystem::path& HdriPath() const { return m_hdriPath; }
-    float& IblIntensity() { return m_iblIntensity; }
-    // **この HDRI の空を何 cd/m^2 とみなすか。** HDRI は絶対輝度で較正されて
-    // いないので、基準をここで与える。晴天の空がおよそ 1 万。
-    float& HdriSkyLuminance() { return m_hdriSkyLuminance; }
-    float HdriSkyLuminance() const { return m_hdriSkyLuminance; }
-    // 目標輝度だけを変えて環境を作り直す。ファイルは読み直さない。
-    void RequestHdriLuminanceRebuild() { m_hdriLuminanceRebuildRequested = true; }
     bool& ShowSkybox() { return m_showSkybox; }
     // 背景だけをぼかす。**IBL の寄与は変えない。**
     // プリフィルタ済みキューブの粗いミップを引くだけなので、追加のパスは要らない。
@@ -173,6 +163,10 @@ public:
     uint32_t Height() const { return m_height; }
 
 private:
+    // 適用中の天球から環境マップを作り直す。HDRI の読み込みに失敗したら
+    // 手続き的な空へ落とす（アセットの中身は書き換えない）。
+    void ApplyActiveSky(rhi::Device& device, rhi::PipelineCache& pipelineCache);
+
     const Mesh& CurrentMesh() const;
     // ライトから見たビュー×投影。プレビューの被写体を囲む平行投影。
     DirectX::XMMATRIX LightViewProjection() const;
@@ -197,13 +191,14 @@ private:
     MaterialSettings m_material;
     Environment m_environment;
     compositor::MaterialEvaluator m_evaluator;
-    SkySettings m_sky;
+    // ビューポートに適用している天球の中身。**Environment の元になっているもの。**
+    // 既定値は Environment::Initialize が作る環境と一致させてあるので、
+    // 起動直後は作り直しが要らない。
+    SkyDefinition m_activeSky;
     PreviewShape m_shape = kPreviewDefaults.shape;
     TonemapMode m_tonemap = kPreviewDefaults.tonemap;
     DebugView m_debugView = DebugView::Shaded;
-    float m_iblIntensity = kPreviewDefaults.iblIntensity;
-    float m_hdriSkyLuminance = kPreviewDefaults.hdriSkyLuminance;
-    bool m_hdriLuminanceRebuildRequested = false;
+    bool m_skyLuminanceRebuildRequested = false;
     float m_materialUvScale = kPreviewDefaults.materialUvScale;
     float m_displacementScale = kPreviewDefaults.displacementScale;
     uint32_t m_materialResolution = kPreviewDefaults.materialResolution;
@@ -215,8 +210,8 @@ private:
     bool m_tessellationEnabled = kPreviewDefaults.tessellationEnabled;
     float m_tessellationFactor = kPreviewDefaults.tessellationFactor;
     bool m_skyRebuildRequested = false;
-    std::filesystem::path m_pendingHdrPath;
-    std::filesystem::path m_hdriPath;
+    // Environment がいま持っている HDRI。較正倍率だけを掛け直せるかの判断に使う。
+    std::filesystem::path m_loadedHdriPath;
 
     uint32_t m_width = 0;
     uint32_t m_height = 0;

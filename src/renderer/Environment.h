@@ -22,6 +22,11 @@ struct SkySettings {
     float intensity = 12000.0f;
 };
 
+// HDRI の生の値を cd/m^2 へ直す倍率。`skyLuminance` は「この HDRI の空を
+// 何 cd/m^2 とみなすか」、`measuredSky` は画像から測った空の代表輝度。
+// **環境本体とサムネイルで同じ倍率を使うため、ここに置いてある。**
+float SkyLuminanceScale(float skyLuminance, float measuredSky);
+
 // IBL 用の環境一式。
 //   equirect → キューブマップ（ミップ付き）
 //            → irradiance キューブ（拡散）

@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-01 00:20
+更新日時: 2026-09-01 13:30
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -76,9 +76,37 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
   paintMasks[]    ペイントマスク。実体はサイドカーの PNG
   paintResolution ペイントマスクの解像度（全マスク共通）
   layers[]        下から上へ。index 0 が一番下（下地）
-  preview{}       カメラ / ライト / 露出 / 空 / トーンマップ / 形状など
+  skies[]         天球。ビューポートの環境
+  activeSky       ビューポートに適用している天球（skies の添字）
+  preview{}       カメラ / ライト / 露出 / トーンマップ / 形状など
 }
 ```
+
+### 天球
+
+```json
+"skies": [
+  {
+    "name": "夕焼け",
+    "source": "hdri",              // procedural / hdri
+    "hdri": "../../assets/hdr/pink_sunrise_4k.hdr",   // 使わなければ null
+    "skyLuminance": 12000.0,       // この HDRI の空を何 cd/m^2 とみなすか
+    "iblIntensity": 1.0,
+    "procedural": { "zenithColor": [...], "horizonColor": [...],
+                    "groundColor": [...], "intensity": 12000.0 }
+  }
+]
+```
+
+`skyLuminance` は**天球ごとに持つ**。HDRI は絶対輝度で較正されていないため
+基準を外から与える必要があり、その値はファイルごとに違う。
+
+`procedural` は `source` が `hdri` のときも書く。ソースを切り替えたときに
+手で入れ直さなくて済むようにするため。
+
+**`skies` が無いプロジェクトは、`preview` の `hdri` / `hdriSkyLuminance` /
+`iblIntensity` / `sky` から天球を 1 つ作って読み込む**（天球を入れる前の形式）。
+新しく保存すると `skies` の形に移る。
 
 **id は保存のたびに 1 から振り直す。** 実行中の ID をそのまま書くと、
 削除して番号が飛んだファイルになり読みにくい。読み込み側は

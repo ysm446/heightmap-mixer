@@ -163,26 +163,15 @@ void Application::DrawLightingPanel() {
             ui::EndPropertyTable();
         }
 
+        // **環境そのもの（何を空にするか）は天球パネルが持つ。**
+        // ここに残すのは、天球ではなく見え方に属する設定だけ。
         ui::SectionHeader("環境 (IBL)");
         if (ui::BeginPropertyTable("iblRows")) {
+            const renderer::SkyAsset* activeSky = m_skyLibrary.Active();
+            ui::PropertyValue("天球", "%s", (activeSky != nullptr) ? activeSky->name.c_str() : "-");
             ui::PropertyValue("環境", "%s", m_renderer.GetEnvironment().SourceName().c_str());
             ui::PropertyValue("equirect", "%u x %u", m_renderer.GetEnvironment().EquirectWidth(),
                               m_renderer.GetEnvironment().EquirectHeight());
-            // HDRI を読み込んでいるときだけ出す。手続き的な空は EnvSky が
-            // すでに cd/m^2 で書き込んでいるので、較正するものが無い。
-            if (!m_renderer.HdriPath().empty()) {
-                if (ui::PropertyFloat("空の輝度", &m_renderer.HdriSkyLuminance(), 100.0f,
-                                      100000.0f, renderer::kPreviewDefaults.hdriSkyLuminance,
-                                      "この HDRI の空を何 cd/m2 とみなすか。"
-                                      "HDRI は絶対輝度で較正されていないため、基準をここで与える。"
-                                      "晴天でおよそ 4000〜15000、曇天で 1000〜3000",
-                                      "%.0f cd/m2", ImGuiSliderFlags_Logarithmic)) {
-                    m_renderer.RequestHdriLuminanceRebuild();
-                }
-            }
-            ui::PropertyFloat("環境光の強さ", &m_renderer.IblIntensity(), 0.0f, 4.0f,
-                              renderer::kPreviewDefaults.iblIntensity,
-                              "物理量ではなく、見た目を整えるための倍率", "%.2f");
             ui::PropertyBool("背景を表示", &m_renderer.ShowSkybox(),
                              renderer::kPreviewDefaults.showSkybox,
                              "オフにすると背景色だけになる。IBL の寄与は残る");
@@ -193,42 +182,9 @@ void Application::DrawLightingPanel() {
                              "背景の細部が目移りの原因にならないようにする。"
                              "IBL の寄与と陰影は変わらない");
             ImGui::EndDisabled();
-
-            ui::PropertyLabelEmpty("hdrLoad");
-            if (ui::Button("HDRI を開く…", ui::kWideButtonWidth)) {
-                const std::filesystem::path path =
-                    ShowOpenFileDialog(L"HDRI を開く", HdriFileFilters());
-                if (!path.empty()) {
-                    m_renderer.RequestHdrLoad(path);
-                }
-            }
-            ui::PropertyEnd();
             ui::EndPropertyTable();
         }
-
-        ui::SectionHeader("手続き的な空");
-        renderer::SkySettings& sky = m_renderer.Sky();
-        if (ui::BeginPropertyTable("skyRows")) {
-            bool skyChanged = false;
-            skyChanged |= ui::PropertyColorLinear("天頂色", &sky.zenithColor.x,
-                                                  &kDefaultSky.zenithColor.x);
-            skyChanged |= ui::PropertyColorLinear("地平色", &sky.horizonColor.x,
-                                                  &kDefaultSky.horizonColor.x);
-            skyChanged |= ui::PropertyColorLinear("地面色", &sky.groundColor.x,
-                                                  &kDefaultSky.groundColor.x);
-            skyChanged |= ui::PropertyFloat("輝度", &sky.intensity, 0.0f, 100000.0f,
-                                            kDefaultSky.intensity,
-                                            "cd/m2。晴天の空はおよそ 4000〜15000", "%.0f");
-
-            ui::PropertyLabelEmpty("skyRebuild");
-            const bool rebuild = ui::Button("空に戻す", ui::kWideButtonWidth);
-            ui::PropertyEnd();
-
-            if (skyChanged || rebuild) {
-                m_renderer.RequestSkyRebuild();
-            }
-            ui::EndPropertyTable();
-        }
+        ui::HintText("空の切り替えと輝度は「天球」パネルで設定する");
 
         ui::SectionHeader("トーンマップ");
         if (ui::BeginPropertyTable("tonemapRows")) {

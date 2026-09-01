@@ -209,35 +209,46 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
         }
     }
 
-    if (!m_pendingHdrPath.empty()) {
-        const std::filesystem::path path = m_pendingHdrPath;
-        m_pendingHdrPath.clear();
-        if (m_environment.BuildFromHdrFile(device, pipelineCache, path, m_hdriSkyLuminance)) {
-            m_hdriPath = path;
-        } else {
-            // 読み込みに失敗したら手続き的な空へ戻す。
-            MM_LOG_WARN("HDRI の読み込みに失敗したため、手続き的な空に戻します");
-            m_environment.BuildFromSky(device, pipelineCache, m_sky);
-            m_hdriPath.clear();
-        }
+    if (m_skyRebuildRequested) {
         m_skyRebuildRequested = false;
-        m_hdriLuminanceRebuildRequested = false;
+        m_skyLuminanceRebuildRequested = false;
+        ApplyActiveSky(device, pipelineCache);
         return;
     }
 
     // 較正倍率だけの変更。equirect は読み込んだままのものを使うので速い。
-    if (m_hdriLuminanceRebuildRequested) {
-        m_hdriLuminanceRebuildRequested = false;
-        if (!m_hdriPath.empty()) {
-            m_environment.RebuildWithSkyLuminance(device, pipelineCache, m_hdriSkyLuminance);
+    if (m_skyLuminanceRebuildRequested) {
+        m_skyLuminanceRebuildRequested = false;
+        if (!m_loadedHdriPath.empty()) {
+            m_environment.RebuildWithSkyLuminance(device, pipelineCache,
+                                                  m_activeSky.skyLuminance);
         }
     }
+}
 
-    if (m_skyRebuildRequested) {
-        m_skyRebuildRequested = false;
-        m_environment.BuildFromSky(device, pipelineCache, m_sky);
-        m_hdriPath.clear();
+void PreviewRenderer::SetActiveSky(const SkyDefinition& sky) {
+    if (NeedsEnvironmentRebuild(m_activeSky, sky)) {
+        m_skyRebuildRequested = true;
+    } else if (NeedsLuminanceRebuild(m_activeSky, sky)) {
+        m_skyLuminanceRebuildRequested = true;
     }
+    // IBL の倍率は毎フレームそのまま使うので、作り直しは要らない。
+    m_activeSky = sky;
+}
+
+void PreviewRenderer::ApplyActiveSky(rhi::Device& device, rhi::PipelineCache& pipelineCache) {
+    if (m_activeSky.source == SkySource::Hdri && !m_activeSky.hdriPath.empty()) {
+        if (m_environment.BuildFromHdrFile(device, pipelineCache, m_activeSky.hdriPath,
+                                           m_activeSky.skyLuminance)) {
+            m_loadedHdriPath = m_activeSky.hdriPath;
+            return;
+        }
+        // 読み込みに失敗しても、天球アセットの中身は書き換えない（ユーザーの
+        // 指定を黙って消さない）。環境だけを手続き的な空へ落とす。
+        MM_LOG_WARN("HDRI の読み込みに失敗したため、手続き的な空で描きます");
+    }
+    m_environment.BuildFromSky(device, pipelineCache, m_activeSky.procedural);
+    m_loadedHdriPath.clear();
 }
 
 // 現在のメッシュを包む球の半径。カメラの Frame()（A キー）が使う。
@@ -499,7 +510,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.baseColor = m_material.baseColor;
     constants.roughness = m_material.roughness;
     constants.metallic = m_material.metallic;
-    constants.iblIntensity = m_environment.IsReady() ? m_iblIntensity : 0.0f;
+    constants.iblIntensity = m_environment.IsReady() ? m_activeSky.iblIntensity : 0.0f;
     constants.prefilteredMipCount = m_environment.PrefilteredMipCount();
     constants.irradianceIndex = m_environment.IrradianceSrvIndex();
     constants.prefilteredIndex = m_environment.PrefilteredSrvIndex();
@@ -657,7 +668,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
             XMStoreFloat4x4(&skyboxConstants.inverseViewProjection,
                             XMMatrixInverse(nullptr, XMMatrixMultiply(view, projection)));
             skyboxConstants.cameraPosition = m_camera.Position();
-            skyboxConstants.intensity = m_iblIntensity;
+            skyboxConstants.intensity = m_activeSky.iblIntensity;
             if (m_skyboxBlur) {
                 // プリフィルタ済みキューブはラフネス別に GGX で畳み込んである。
                 // 粗いミップを引けば、ぼかしパスを足さずに背景だけを柔らかくできる。

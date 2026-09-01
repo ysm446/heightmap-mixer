@@ -140,8 +140,14 @@ bool Application::Initialize(const StartupOptions& options) {
 
     m_pendingTexturePaths = options.texturePaths;
 
+    // 天球は必ず 1 つある状態にする。--hdri が来ていれば、その既定の天球へ入れる。
+    m_skyLibrary.EnsureDefault();
     if (!options.hdriPath.empty()) {
-        m_renderer.RequestHdrLoad(options.hdriPath);
+        if (renderer::SkyAsset* sky = m_skyLibrary.ActiveMutable(); sky != nullptr) {
+            sky->name = ToUtf8Display(options.hdriPath.stem());
+            sky->sky.source = renderer::SkySource::Hdri;
+            sky->sky.hdriPath = options.hdriPath;
+        }
     }
     // 読み込みは GPU 待機を伴うので、ここでは要求だけ積む。
     // 最初のフレームの前に ProcessPendingFileWork が処理する。
@@ -181,6 +187,7 @@ void Application::Shutdown() {
     m_device.WaitForGpu();
     m_paintMasks.Destroy(m_device);
     m_materialLibrary.Destroy(m_device);
+    m_skyLibrary.Destroy(m_device);
     m_textureLibrary.Destroy(m_device);
     m_renderer.Shutdown(m_device);
     m_imgui.Shutdown();
@@ -263,9 +270,16 @@ int Application::Run() {
         // 対話せずに保存と読み込みを確かめるために使う。
         if (!m_options.saveProjectPath.empty() && m_frameCounter >= m_options.screenshotFrame) {
             const io::ProjectRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary,
-                                       m_paintMasks, m_renderer};
+                                       m_paintMasks,     m_skyLibrary,     m_renderer};
             io::SaveProject(m_options.saveProjectPath, m_device, refs);
             break;
+        }
+
+        // 選択中の天球をレンダラへ渡す。**毎フレーム渡してよい。**
+        // 中身が変わっていれば、必要な作り直しだけが予約される。
+        m_skyLibrary.EnsureDefault();
+        if (const renderer::SkyAsset* sky = m_skyLibrary.Active(); sky != nullptr) {
+            m_renderer.SetActiveSky(sky->sky);
         }
 
         // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
@@ -302,6 +316,8 @@ int Application::Run() {
 
         // サムネイルの生成も GPU 待機を伴う。
         m_materialLibrary.ProcessPendingWork(m_device, m_pipelineCache, m_textureLibrary);
+        // 天球のサムネイルは HDR ファイルの読み込みを伴うので、1 フレームに 1 枚だけ作る。
+        m_skyLibrary.ProcessPendingWork(m_device, m_pipelineCache);
 
         // ビューポートの作り直しは GPU 待機を伴うため、フレームの外で行う。
         if (m_requestedViewportWidth != m_renderer.Width() ||
@@ -400,7 +416,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v6");
+    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v7");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -424,6 +440,7 @@ void Application::DrawUi() {
     // 作業の起点はレイヤーなので、同じ枠のマテリアル・テクスチャより先に描く。
     DrawLayerPanel();
     DrawMaterialLibraryPanel();
+    DrawSkyLibraryPanel();
     DrawTextureLibraryPanel();
     DrawMaterialPanel();
     DrawLightingPanel();
@@ -503,6 +520,7 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     // どれもスクロールしないと全体が見えなくなる。
     ImGui::DockBuilderDockWindow("レイヤー", right);
     ImGui::DockBuilderDockWindow("マテリアル", right);
+    ImGui::DockBuilderDockWindow("天球", right);
     ImGui::DockBuilderDockWindow("プレビュー設定", right);
     ImGui::DockBuilderDockWindow("ライティングと露出", right);
     ImGui::DockBuilderDockWindow("情報", right);
