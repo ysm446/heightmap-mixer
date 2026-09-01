@@ -89,14 +89,15 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
     // --- FPS と描画の量 ------------------------------------------------------
     // **右上へ置く。** 左上は表示モードの切り替えとライトの数値で埋まっている。
     // ボタンではなく描き込みにする。押すものではないので、枠を持たせない。
-    if (!m_showFps && !m_showStats) {
+    const io::DisplaySettings& display = m_settings.Display();
+    if (!display.showFps && !display.showStats) {
         return;
     }
 
     // 行を組み立ててから 1 つの下地にまとめて描く。**枠を 2 つ並べない。**
     // FPS と統計で別々の箱にすると、片方だけ出したときに位置が揃わない。
     std::vector<std::string> lines;
-    if (m_showFps) {
+    if (display.showFps) {
         // 1 桁台では小数まで出す。整数だけだと 0.8fps が「0 FPS」になり、
         // 止まっているのか極端に遅いのかが読めない。
         const float framerate = ImGui::GetIO().Framerate;
@@ -105,7 +106,7 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
                       framerate);
         lines.emplace_back(text);
     }
-    if (m_showStats) {
+    if (display.showStats) {
         const renderer::RenderStats& stats = m_renderer.Stats();
         char text[96] = {};
         std::snprintf(text, sizeof(text), "ドローコール %u", stats.drawCalls);

@@ -158,19 +158,7 @@ bool Application::Initialize(const StartupOptions& options) {
 
     m_settings.Load();
     m_recentProjects.Load();
-    // 表示設定（垂直同期・FPS 上限・ホットリロード・背景色）を settings.json から反映する。
-    {
-        const io::DisplaySettings& display = m_settings.Display();
-        m_vsync = display.vsync;
-        m_hotReloadEnabled = display.hotReload;
-        m_showFps = display.showFps;
-        m_showStats = display.showStats;
-        m_frameRateLimit = display.frameRateLimit;
-        m_inactiveFrameRateLimit = display.inactiveFrameRateLimit;
-        for (int i = 0; i < 4; ++i) {
-            m_clearColor[i] = display.clearColor[i];
-        }
-    }
+    // 表示設定は写し取らない。使うところで m_settings.Display() を直接読む。
     // 設定に拡大率が残っていれば、ウィンドウの大きさもそれに合わせる。
     ApplyUiScale();
 
@@ -236,7 +224,7 @@ void Application::RequestScreenshot() {
 }
 
 void Application::PollShaderHotReload() {
-    if (!m_hotReloadEnabled) {
+    if (!m_settings.Display().hotReload) {
         return;
     }
     if ((m_frameCounter % kHotReloadIntervalFrames) != 0) {
@@ -277,8 +265,9 @@ int Application::Run() {
                 m_wasForeground = foreground;
                 m_frameLimiter.Reset();
             }
-            if (!m_frameLimiter.ShouldRender(foreground ? m_frameRateLimit
-                                                        : m_inactiveFrameRateLimit)) {
+            const io::DisplaySettings& display = m_settings.Display();
+            if (!m_frameLimiter.ShouldRender(foreground ? display.frameRateLimit
+                                                        : display.inactiveFrameRateLimit)) {
                 continue;
             }
         }
@@ -365,7 +354,8 @@ int Application::Run() {
         m_imgui.BeginFrame();
         DrawUi();
 
-        ID3D12GraphicsCommandList* commandList = m_device.BeginFrame(m_clearColor);
+        ID3D12GraphicsCommandList* commandList =
+            m_device.BeginFrame(m_settings.Display().clearColor);
         if (commandList == nullptr) {
             // フレームを開始できなかった場合は ImGui の状態を捨てて次へ進む。
             ImGui::EndFrame();
@@ -397,7 +387,7 @@ int Application::Run() {
             RequestScreenshot();
         }
 
-        m_device.EndFrame(m_vsync);
+        m_device.EndFrame(m_settings.Display().vsync);
 
         // デバッグレイヤーが溜めた検証エラーをログ（とステータスバー）へ流す。
         // 汲まないとデバッガを繋がない限り誰の目にも触れない。
@@ -449,12 +439,11 @@ void Application::DrawUi() {
             }
             ImGui::Separator();
             // 切り替えたその場で覚える。設定ウィンドウと同じ作法。
-            if (ImGui::MenuItem("FPS", nullptr, &m_showFps)) {
-                m_settings.Display().showFps = m_showFps;
+            io::DisplaySettings& display = m_settings.Display();
+            if (ImGui::MenuItem("FPS", nullptr, &display.showFps)) {
                 m_settings.Save();
             }
-            if (ImGui::MenuItem("統計", nullptr, &m_showStats)) {
-                m_settings.Display().showStats = m_showStats;
+            if (ImGui::MenuItem("統計", nullptr, &display.showStats)) {
                 m_settings.Save();
             }
             ImGui::Separator();
@@ -778,8 +767,12 @@ void Application::DrawSettingsWindow() {
 
     ui::SectionHeader("表示");
     if (ui::BeginPropertyTable("settingsDisplayRows")) {
+        // **設定を直接編集する。** 写しを経由すると、書き戻しを 1 つ忘れただけで
+        // 「画面では変わったのに次回の起動で戻る」という壊れ方をする。
+        io::DisplaySettings& display = m_settings.Display();
+        const io::DisplaySettings defaults;
         bool displayChanged = false;
-        displayChanged |= ui::PropertyBool("垂直同期", &m_vsync, true);
+        displayChanged |= ui::PropertyBool("垂直同期", &display.vsync, defaults.vsync);
 
         // FPS の上限。**値が少数の離散値なので、スライダーではなく選択にする。**
         // 「60 に合わせたつもりが 59」のような外れ方をしない。
@@ -794,11 +787,11 @@ void Application::DrawSettingsWindow() {
             return 0;
         };
 
-        int limit = findLimit(m_frameRateLimit);
+        int limit = findLimit(display.frameRateLimit);
         if (ui::PropertyCombo("FPS 上限", &limit, kLimitLabels, IM_ARRAYSIZE(kLimitLabels), 0,
                               "前面にあるときの上限。垂直同期が入っていれば、"
                               "モニタのリフレッシュレートとの低いほうが効く")) {
-            m_frameRateLimit = kLimitValues[limit];
+            display.frameRateLimit = kLimitValues[limit];
             displayChanged = true;
         }
 
@@ -806,7 +799,7 @@ void Application::DrawSettingsWindow() {
         constexpr int kInactiveValues[] = {0, 30, 10, 5};
         int inactive = 0;
         for (int i = 0; i < IM_ARRAYSIZE(kInactiveValues); ++i) {
-            if (kInactiveValues[i] == m_inactiveFrameRateLimit) {
+            if (kInactiveValues[i] == display.inactiveFrameRateLimit) {
                 inactive = i;
             }
         }
@@ -815,26 +808,18 @@ void Application::DrawSettingsWindow() {
                               "他のウィンドウの後ろにあるときの上限。"
                               "見えていない絵に GPU を回し続けないための設定。"
                               "完全には止めないので、シェーダのホットリロードは効いたまま")) {
-            m_inactiveFrameRateLimit = kInactiveValues[inactive];
+            display.inactiveFrameRateLimit = kInactiveValues[inactive];
             displayChanged = true;
         }
-        displayChanged |= ui::PropertyBool("ホットリロード", &m_hotReloadEnabled, true,
+        displayChanged |= ui::PropertyBool("ホットリロード", &display.hotReload,
+                                           defaults.hotReload,
                                            "shaders/ の更新を検出して PSO を作り直す");
         // 背景色はバックバッファ（非 sRGB）へそのまま書く表示色なので、
         // リニア変換は挟まない。
-        displayChanged |= ui::PropertyColor("背景色", m_clearColor, kDefaultClearColor);
+        displayChanged |= ui::PropertyColor("背景色", display.clearColor, kDefaultClearColor);
         if (displayChanged) {
             // design-guide の「設定ウィンドウ」に従い、変えたらその場で書く。
-            // **この節で触る値はすべてここへ書き戻す。** 1 つでも漏れると、
-            // 画面では変わったのに次回の起動で戻る（気づきにくい）。
-            io::DisplaySettings& display = m_settings.Display();
-            display.vsync = m_vsync;
-            display.hotReload = m_hotReloadEnabled;
-            display.frameRateLimit = m_frameRateLimit;
-            display.inactiveFrameRateLimit = m_inactiveFrameRateLimit;
-            for (int i = 0; i < 4; ++i) {
-                display.clearColor[i] = m_clearColor[i];
-            }
+            // 直接編集しているので、ここで写し戻す必要はない。
             changed = true;
         }
         ui::EndPropertyTable();

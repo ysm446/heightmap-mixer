@@ -263,8 +263,6 @@ private:
 
     StartupOptions m_options;
 
-    float m_clearColor[4] = {0.09f, 0.09f, 0.11f, 1.0f};
-    bool m_vsync = true;
     // CoInitializeEx が成功したときだけ CoUninitialize する。
     bool m_comInitialized = false;
     bool m_showDemoWindow = false;
@@ -274,14 +272,10 @@ private:
     // 既定レイアウトを組んだ直後に、前面へ出したいタブを押さえるための残りフレーム数。
     // ini に無いウィンドウは作られた順で前面が決まってしまうため、明示的に上書きする。
     int m_focusDefaultTabs = 0;
-    bool m_hotReloadEnabled = true;
-    // フレームレートの上限。0 で上限なし。背面のときは別の値を使う。
-    // ビューポートの右上に FPS を出すか（`表示 > FPS`）。
-    bool m_showFps = false;
-    // 同じく描画の量を出すか（`表示 > 統計`）。
-    bool m_showStats = false;
-    int m_frameRateLimit = 0;
-    int m_inactiveFrameRateLimit = 10;
+    // **表示設定（垂直同期・FPS 上限・ホットリロード・背景色・オーバーレイ）は
+    // ここに写しを持たない。** `m_settings.Display()` を直接読み書きする。
+    // 写しを持つと「UI では変わったのに設定へ書き戻し忘れて次回起動で戻る」
+    // という壊れ方をする（実際に FPS 上限でそうなった）。
     FrameLimiter m_frameLimiter;
     // 前フレームで前面だったか。切り替わった時点で締め切りを捨てる。
     bool m_wasForeground = true;
