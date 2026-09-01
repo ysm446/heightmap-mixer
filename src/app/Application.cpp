@@ -637,6 +637,8 @@ void Application::DrawSettingsWindow() {
         displayChanged |= ui::PropertyBool("垂直同期", &m_vsync, true);
         displayChanged |= ui::PropertyBool("ホットリロード", &m_hotReloadEnabled, true,
                                            "shaders/ の更新を検出して PSO を作り直す");
+        // 背景色はバックバッファ（非 sRGB）へそのまま書く表示色なので、
+        // リニア変換は挟まない。
         displayChanged |= ui::PropertyColor("背景色", m_clearColor, kDefaultClearColor);
         if (displayChanged) {
             // design-guide の「設定ウィンドウ」に従い、変えたらその場で書く。

@@ -4,6 +4,7 @@
 #include "app/Application.h"
 
 #include "app/ApplicationUiHelpers.h"
+#include "core/ColorSpace.h"
 #include "core/FileDialog.h"
 #include "core/Log.h"
 #include "io/ProjectIo.h"
@@ -124,9 +125,11 @@ void Application::DrawLayerList() {
             } else {
                 // マテリアルを割り当てていないレイヤーは定数値で塗られる。
                 // 何も出さずに空けるより、その色を出すほうが手がかりになる。
-                ui::ColorSwatch(
-                    ImVec4(layer.baseColor.x, layer.baseColor.y, layer.baseColor.z, 1.0f),
-                    thumbnailSize);
+                // 保持しているのはリニア値なので、表示するときは sRGB へ直す。
+                ui::ColorSwatch(ImVec4(LinearToSrgb(layer.baseColor.x),
+                                       LinearToSrgb(layer.baseColor.y),
+                                       LinearToSrgb(layer.baseColor.z), 1.0f),
+                                thumbnailSize);
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("マテリアル: %s",
@@ -262,8 +265,8 @@ void Application::DrawLayerPanel() {
         // 同じ意味の値を 2 か所に置くと、どちらが効いているのか分からなくなる。
         const bool hasMaterial = (layer.material != compositor::kNoMaterialAsset);
         if (!hasMaterial) {
-            changed |= ui::PropertyColor("ベースカラー", &layer.baseColor.x,
-                                         &kDefaultLayer.baseColor.x);
+            changed |= ui::PropertyColorLinear("ベースカラー", &layer.baseColor.x,
+                                               &kDefaultLayer.baseColor.x);
             changed |= ui::PropertyFloat("ラフネス", &layer.roughness, 0.0f, 1.0f,
                                          kDefaultLayer.roughness, nullptr, "%.2f");
             changed |= ui::PropertyFloat("メタルネス", &layer.metallic, 0.0f, 1.0f,

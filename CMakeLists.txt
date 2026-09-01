@@ -106,6 +106,7 @@ set(mm_sources
     src/compositor/TextureLibrary.h
     src/core/FileDialog.cpp
     src/core/FileDialog.h
+    src/core/ColorSpace.h
     src/core/ImageIo.cpp
     src/core/ImageIo.h
     src/core/PathUtf8.h

@@ -138,9 +138,11 @@ void Application::DrawMaterialLibraryPanel() {
         }
 
         static const compositor::MaterialAsset kDefaultAsset;
-        changed |= ui::PropertyColor("ベースカラー", &asset.baseColorTint.x,
-                                     &kDefaultAsset.baseColorTint.x,
-                                     "ベースカラーのマップに掛ける色。マップが無ければこの色");
+        // マップ節にも「ベースカラー」の行（テクスチャ)があるため、
+        // ここは掛ける色だと分かる名前にする。
+        changed |= ui::PropertyColorLinear(
+            "ティント", &asset.baseColorTint.x, &kDefaultAsset.baseColorTint.x,
+            "ベースカラーのマップに掛ける色。白ならマップそのまま。マップが無ければこの色になる");
         changed |= ui::PropertyFloat("ラフネス", &asset.roughnessValue, 0.0f, 1.0f,
                                      kDefaultAsset.roughnessValue, "マップが無いときの値",
                                      "%.2f");

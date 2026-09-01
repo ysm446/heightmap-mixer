@@ -73,8 +73,8 @@ void Application::DrawMaterialPanel() {
                 }
             } else {
                 renderer::MaterialSettings& material = m_renderer.Material();
-                ui::PropertyColor("ベースカラー", &material.baseColor.x,
-                                  &kDefaultMaterial.baseColor.x);
+                ui::PropertyColorLinear("ベースカラー", &material.baseColor.x,
+                                        &kDefaultMaterial.baseColor.x);
                 ui::PropertyFloat("ラフネス", &material.roughness, 0.0f, 1.0f,
                                   kDefaultMaterial.roughness, nullptr, "%.2f");
                 ui::PropertyFloat("メタルネス", &material.metallic, 0.0f, 1.0f,
@@ -128,7 +128,7 @@ void Application::DrawLightingPanel() {
             ui::PropertyFloat("照度", &light.illuminance, 0.0f, 200000.0f,
                               kDefaultLight.illuminance,
                               "lux。晴天の直射日光がおよそ 100000 lux", "%.0f");
-            ui::PropertyColor("光の色", &light.color.x, &kDefaultLight.color.x);
+            ui::PropertyColorLinear("光の色", &light.color.x, &kDefaultLight.color.x);
             ui::PropertyBool("影", &m_renderer.ShadowEnabled(),
                              renderer::kPreviewDefaults.shadowEnabled,
                              "ディレクショナルライトの影を落とす。"
@@ -211,12 +211,12 @@ void Application::DrawLightingPanel() {
         renderer::SkySettings& sky = m_renderer.Sky();
         if (ui::BeginPropertyTable("skyRows")) {
             bool skyChanged = false;
-            skyChanged |= ui::PropertyColor("天頂色", &sky.zenithColor.x,
-                                            &kDefaultSky.zenithColor.x);
-            skyChanged |= ui::PropertyColor("地平色", &sky.horizonColor.x,
-                                            &kDefaultSky.horizonColor.x);
-            skyChanged |= ui::PropertyColor("地面色", &sky.groundColor.x,
-                                            &kDefaultSky.groundColor.x);
+            skyChanged |= ui::PropertyColorLinear("天頂色", &sky.zenithColor.x,
+                                                  &kDefaultSky.zenithColor.x);
+            skyChanged |= ui::PropertyColorLinear("地平色", &sky.horizonColor.x,
+                                                  &kDefaultSky.horizonColor.x);
+            skyChanged |= ui::PropertyColorLinear("地面色", &sky.groundColor.x,
+                                                  &kDefaultSky.groundColor.x);
             skyChanged |= ui::PropertyFloat("輝度", &sky.intensity, 0.0f, 100000.0f,
                                             kDefaultSky.intensity,
                                             "cd/m2。晴天の空はおよそ 4000〜15000", "%.0f");

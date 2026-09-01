@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-09-01 06:55
+更新日時: 2026-09-01 09:30
 
 `src/ui/` と各パネルの見た目・レイアウト・配色・部品のルール。
 
@@ -231,7 +231,8 @@ if (ui::BeginPropertyTable("layerBasicRows")) {
 | `PropertyFloat` | 実数。スライダー + 既定値マーカー。既定。対数軸は `ImGuiSliderFlags_Logarithmic` |
 | `PropertyInt` | 整数 |
 | `PropertyBool` | チェックボックス |
-| `PropertyColor` | RGB カラー |
+| `PropertyColor` | RGB カラー。**表示色（sRGB）をそのまま持つ値**に使う（背景色など） |
+| `PropertyColorLinear` | RGB カラー。**リニアで持つ色**に使う（アルベド、ライト、空）。下の「色空間」を参照 |
 | `PropertyCombo` | 列挙。ラベルは配列で渡す |
 | `PropertyTextInput` | 文字列入力（名前、パス） |
 | `PropertyValue` | 表示専用の値 |
@@ -303,6 +304,27 @@ if (ui::BeginPropertyTable("layerBasicRows")) {
   行ごとの説明はツールチップへ回し、`HintText` は節全体にかかるものだけにする。
 
 ---
+
+### 色空間
+
+**描画に使う色はリニアで持ち、人に見せるときだけ sRGB へ直す。**
+
+- レンダラはリニアで計算し、テクスチャは sRGB の SRV 経由でハードウェアが
+  リニア化する。**定数の色も同じリニア空間で持つ**（そうしないと、
+  同じ「0.5」がテクスチャ由来か定数由来かで倍以上ずれる）。
+- ImGui のカラーピッカーはガンマを知らず、渡した値をそのまま表示色として描く。
+  **リニア値を直接渡すと、スウォッチの見た目と描画結果が食い違う**
+  （リニア 0.5 は画面上では sRGB 0.735 相当の明るい灰色になる）。
+- そのため、リニアで持つ色は `PropertyColorLinear` を使う。
+  値はリニアのまま読み書きし、ピッカーへ渡す直前に sRGB へ直す。
+- **一覧に出す色見本も同じ。** `ColorSwatch` などへ渡すときは
+  `LinearToSrgb`（`core/ColorSpace.h`）を通す。
+- 変換式は `core/ColorSpace.h` と `shaders/Common.hlsli` で必ず一致させる。
+  片方だけ 2.2 乗などの近似にすると、選んだ色と描画結果がずれる。
+
+判断に迷ったら「その値は最終的にシェーダの計算に入るか」で決める。
+入るならリニア（`PropertyColorLinear`）、画面へそのまま出すだけなら表示色
+（`PropertyColor`）。背景色はバックバッファへそのまま書くので後者。
 
 ## 4. 配色
 

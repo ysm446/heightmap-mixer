@@ -1,5 +1,7 @@
 #include "ui/UiStyle.h"
 
+#include "core/ColorSpace.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -477,18 +479,41 @@ bool PropertyBool(const char* label, bool* value, bool defaultValue, const char*
     return changed;
 }
 
-bool PropertyColor(const char* label, float* rgb, const float* defaultRgb, const char* tooltip) {
-    PropertyLabel(label, tooltip);
-    ImGui::SetNextItemWidth(ValueWidth(kSliderMinWidth, kSliderMaxWidth));
-    bool changed = ImGui::ColorEdit3("##value", rgb,
-                                     ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+namespace {
 
+// 色の行の実体。linear が真なら、値はリニアで持ちピッカーへは sRGB で見せる。
+//
+// **編集されたときだけ書き戻す。** 毎フレーム sRGB へ出して戻すと、
+// 変換の丸め誤差が少しずつ積もって値が動いてしまう。
+bool PropertyColorImpl(const char* label, float* rgb, const float* defaultRgb,
+                       const char* tooltip, bool linear) {
+    PropertyLabel(label, tooltip);
+
+    float shown[3];
+    for (int i = 0; i < 3; ++i) {
+        shown[i] = linear ? LinearToSrgb(rgb[i]) : rgb[i];
+    }
+
+    ImGui::SetNextItemWidth(ValueWidth(kSliderMinWidth, kSliderMaxWidth));
+    bool changed = ImGui::ColorEdit3("##value", shown,
+                                     ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+    if (changed) {
+        for (int i = 0; i < 3; ++i) {
+            rgb[i] = linear ? SrgbToLinear(shown[i]) : shown[i];
+        }
+    }
+
+    // 既定かどうかは格納している値どうしで見る（変換を挟むと丸めで揺れる）。
     const bool isDefault = NearlyEqual(rgb[0], defaultRgb[0]) &&
                            NearlyEqual(rgb[1], defaultRgb[1]) &&
                            NearlyEqual(rgb[2], defaultRgb[2]);
+    // 出す数字はピッカーに合わせる。リニア値を出しても、
+    // ピッカーに見えている数字と違うので手掛かりにならない。
     char defaultText[64] = {};
-    std::snprintf(defaultText, sizeof(defaultText), "%.2f, %.2f, %.2f", defaultRgb[0],
-                  defaultRgb[1], defaultRgb[2]);
+    std::snprintf(defaultText, sizeof(defaultText), "%.2f, %.2f, %.2f",
+                  linear ? LinearToSrgb(defaultRgb[0]) : defaultRgb[0],
+                  linear ? LinearToSrgb(defaultRgb[1]) : defaultRgb[1],
+                  linear ? LinearToSrgb(defaultRgb[2]) : defaultRgb[2]);
     if (ResetDot(isDefault, defaultText)) {
         rgb[0] = defaultRgb[0];
         rgb[1] = defaultRgb[1];
@@ -497,6 +522,17 @@ bool PropertyColor(const char* label, float* rgb, const float* defaultRgb, const
     }
     PropertyEnd();
     return changed;
+}
+
+}  // namespace
+
+bool PropertyColor(const char* label, float* rgb, const float* defaultRgb, const char* tooltip) {
+    return PropertyColorImpl(label, rgb, defaultRgb, tooltip, false);
+}
+
+bool PropertyColorLinear(const char* label, float* linearRgb, const float* defaultLinearRgb,
+                         const char* tooltip) {
+    return PropertyColorImpl(label, linearRgb, defaultLinearRgb, tooltip, true);
 }
 
 bool PropertyCombo(const char* label, int* value, const char* const items[], int itemCount,

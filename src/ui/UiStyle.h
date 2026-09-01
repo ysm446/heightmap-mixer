@@ -56,8 +56,16 @@ bool PropertyInt(const char* label, int* value, int minValue, int maxValue, int 
                  const char* tooltip = nullptr);
 bool PropertyBool(const char* label, bool* value, bool defaultValue,
                   const char* tooltip = nullptr);
+// **表示色（sRGB）をそのまま持つ値**の行。背景色のように、
+// 画面へ出す値をそのまま格納しているものに使う。
 bool PropertyColor(const char* label, float* rgb, const float* defaultRgb,
                    const char* tooltip = nullptr);
+// **リニアで持つ色**の行。描画に使う色（アルベド、ライト、空）はこちら。
+// 値はリニアのまま読み書きし、ピッカーには sRGB へ直して見せる。
+// そうしないと、スウォッチの見た目と描画結果が食い違う
+// （docs/design/design-guide.md の「色空間」を参照）。
+bool PropertyColorLinear(const char* label, float* linearRgb, const float* defaultLinearRgb,
+                         const char* tooltip = nullptr);
 // items は要素数 itemCount の配列。ImGui の "A\0B\0" 形式ではなく配列で受ける。
 bool PropertyCombo(const char* label, int* value, const char* const items[], int itemCount,
                    int defaultValue, const char* tooltip = nullptr);
