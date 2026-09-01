@@ -6,12 +6,15 @@
 
 namespace mm {
 
-// フレームレートの上限。1 フレームの終わりに Wait() を呼ぶ。
+// フレームレートの上限。
 //
-// **Sleep ではなく高分解能の待機タイマーを使う。** 既定の Sleep は 15ms 刻みで、
-// 60fps（16.7ms）を狙うと 1 フレームおきに 30fps へ落ちる。
-// タイマーの分解能をプロセス全体で変える（timeBeginPeriod）方法は他のアプリにも
-// 影響するので採らない。
+// **「長く眠る」のではなく「描くのを間引く」。**
+// フレームの間ずっとブロックすると、その間メッセージを汲めず、OS からは
+// 無反応なウィンドウに見える。クリックしても固まったように感じる。
+//
+// 使い方は、フレームループの頭で ShouldRender() を呼び、偽なら描かずに
+// `continue` してメッセージ処理へ戻る。眠るのは 1 回あたり数ミリ秒までなので、
+// 上限を落としていても入力への反応は鈍らない。
 class FrameLimiter {
 public:
     FrameLimiter() = default;
@@ -20,15 +23,19 @@ public:
     FrameLimiter(const FrameLimiter&) = delete;
     FrameLimiter& operator=(const FrameLimiter&) = delete;
 
-    // fps が 0 以下なら何もしない（上限なし）。
-    //
-    // wakeOnInput が真なら、入力が来た時点で待ちを打ち切る。
-    // **非アクティブ時の低い上限で使う。** 10fps で素直に眠ると、クリックしてから
-    // 反応するまで最大 100ms かかり、掴んだ感じが鈍る。
-    void Wait(int fps, bool wakeOnInput);
+    // このフレームを描いてよければ true。
+    // 偽のときは締め切りまで（ただし長くても数ミリ秒）眠ってから返る。
+    // fps が 0 以下なら常に true（上限なし）。
+    bool ShouldRender(int fps);
+
+    // 締め切りを捨てる。**上限が変わる場面で呼ぶ**（背面から前面へ戻ったときなど）。
+    // 積み上げた締め切りが残っていると、戻った直後の 1 フレームだけ待たされる。
+    void Reset() { m_next = std::chrono::steady_clock::time_point{}; }
 
 private:
-    // 次のフレームを始めてよい時刻。**前回の狙った時刻から積む**ので、
+    void SleepUpTo(std::chrono::steady_clock::duration duration);
+
+    // 次のフレームを描いてよい時刻。**前回の締め切りから積む**ので、
     // 1 フレームだけ長引いても平均のレートがずれない。
     std::chrono::steady_clock::time_point m_next{};
     HANDLE m_timer = nullptr;

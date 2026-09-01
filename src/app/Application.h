@@ -147,7 +147,8 @@ private:
     // レイヤーパネルのマスク欄に出すペイント関連の UI。
     bool DrawPaintSection(compositor::MaterialLayer& layer);
     // ビューポートに重ねる操作（表示モードの切り替え）。画像の描画より後に呼ぶ。
-    void DrawViewportOverlay(const ImVec2& viewportMin);
+    // 右上には FPS を出す（`表示 > FPS`）ので、右端の座標も渡す。
+    void DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& viewportMax);
     // ビューポート上の L + 左ドラッグでライトの向きを変える。
     // 掴んでいる間は true を返す（軌道やブラシへ渡さない）。
     bool HandleLightDrag(bool itemActive);
@@ -275,9 +276,13 @@ private:
     int m_focusDefaultTabs = 0;
     bool m_hotReloadEnabled = true;
     // フレームレートの上限。0 で上限なし。背面のときは別の値を使う。
+    // ビューポートの右上に FPS を出すか（`表示 > FPS`）。
+    bool m_showFps = false;
     int m_frameRateLimit = 0;
     int m_inactiveFrameRateLimit = 10;
     FrameLimiter m_frameLimiter;
+    // 前フレームで前面だったか。切り替わった時点で締め切りを捨てる。
+    bool m_wasForeground = true;
     uint32_t m_frameCounter = 0;
 };
 

@@ -30,6 +30,8 @@ struct UiSettings {
 struct DisplaySettings {
     bool vsync = true;
     bool hotReload = true;
+    // ビューポートの右上に FPS を出すか。
+    bool showFps = false;
     // 前面にあるときの FPS 上限。0 で上限なし。
     int frameRateLimit = 0;
     // **背面にあるときの FPS 上限。** 見えていない絵に GPU を回し続けないため、

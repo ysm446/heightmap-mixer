@@ -163,6 +163,7 @@ bool Application::Initialize(const StartupOptions& options) {
         const io::DisplaySettings& display = m_settings.Display();
         m_vsync = display.vsync;
         m_hotReloadEnabled = display.hotReload;
+        m_showFps = display.showFps;
         m_frameRateLimit = display.frameRateLimit;
         m_inactiveFrameRateLimit = display.inactiveFrameRateLimit;
         for (int i = 0; i < 4; ++i) {
@@ -255,6 +256,30 @@ int Application::Run() {
         if (m_window.IsMinimized()) {
             ::WaitMessage();
             continue;
+        }
+
+        // --- フレームレートの上限 ------------------------------------------
+        // **描くのを間引くだけで、長くはブロックしない。** フレームの間ずっと
+        // 眠るとメッセージを汲めず、OS からは無反応なウィンドウに見える
+        // （クリックしても固まったように感じる）。
+        //
+        // 背面（非アクティブ）のときは別の低い上限を使う。見えていない絵に
+        // GPU を回し続ける理由がない。完全に止めないのは、シェーダの
+        // ホットリロードや進行中の処理を生かしておくため。
+        //
+        // 開発用のオプションが動いている間は落とさない。起動直後はウィンドウが
+        // 背面のことがあり、待つと書き出しやスクリーンショットが遅くなる。
+        if (!Headless()) {
+            const bool foreground = m_window.IsForeground();
+            if (foreground != m_wasForeground) {
+                // 前面へ戻った直後に、積み上げた締め切りで 1 フレーム待たされないように。
+                m_wasForeground = foreground;
+                m_frameLimiter.Reset();
+            }
+            if (!m_frameLimiter.ShouldRender(foreground ? m_frameRateLimit
+                                                        : m_inactiveFrameRateLimit)) {
+                continue;
+            }
         }
 
         PollShaderHotReload();
@@ -388,18 +413,6 @@ int Application::Run() {
             break;
         }
 
-        // --- フレームレートの上限 ------------------------------------------
-        // **背面のときは別の（低い）上限を使う。** 見えていない絵に GPU を
-        // 回し続ける理由がない。完全に止めないのは、シェーダのホットリロードや
-        // 進行中の処理を生かしたまま、外から様子を見られるようにするため。
-        //
-        // 開発用のオプションが動いている間は落とさない。起動直後はウィンドウが
-        // 背面のことがあり、待つと書き出しやスクリーンショットが遅くなる。
-        if (!Headless()) {
-            const bool foreground = m_window.IsForeground();
-            m_frameLimiter.Wait(foreground ? m_frameRateLimit : m_inactiveFrameRateLimit,
-                                !foreground);
-        }
     }
     return 0;
 }
@@ -432,6 +445,12 @@ void Application::DrawUi() {
         if (ImGui::BeginMenu("表示")) {
             if (ImGui::MenuItem("レイアウトをリセット")) {
                 m_rebuildLayout = true;
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("FPS", nullptr, &m_showFps)) {
+                // 切り替えたその場で覚える。設定ウィンドウと同じ作法。
+                m_settings.Display().showFps = m_showFps;
+                m_settings.Save();
             }
             ImGui::Separator();
             ImGui::MenuItem("設定", nullptr, &m_showSettings);

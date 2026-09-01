@@ -45,7 +45,7 @@ compositor::MaterialLayer* Application::CurrentPaintLayer() {
 //
 // トップメニューではなくビューポートの中に置く。見ている場所から目を離さずに
 // 切り替えられ、いまどの表示なのかも常に見える。
-void Application::DrawViewportOverlay(const ImVec2& viewportMin) {
+void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& viewportMax) {
     const float margin = ui::Scaled(10.0f);
     ImGui::SetCursorScreenPos(ImVec2(viewportMin.x + margin, viewportMin.y + margin));
 
@@ -76,6 +76,30 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin) {
         }
         ImGui::EndPopup();
     }
+
+    // --- FPS ---------------------------------------------------------------
+    // **右上へ置く。** 左上は表示モードの切り替えとライトの数値で埋まっている。
+    // ボタンではなく描き込みにする。押すものではないので、枠を持たせない。
+    if (!m_showFps) {
+        return;
+    }
+    // 1 桁台では小数まで出す。整数だけだと 0.8fps が「0 FPS」になり、
+    // 止まっているのか極端に遅いのかが読めない。
+    const float framerate = ImGui::GetIO().Framerate;
+    char fpsText[32] = {};
+    std::snprintf(fpsText, sizeof(fpsText), (framerate < 10.0f) ? "%.1f FPS" : "%.0f FPS",
+                  framerate);
+    const ImVec2 textSize = ImGui::CalcTextSize(fpsText);
+    const ImVec2 padding(ui::Scaled(8.0f), ui::Scaled(4.0f));
+    const ImVec2 textMax(viewportMax.x - margin, viewportMin.y + margin + textSize.y +
+                                                     padding.y * 2.0f);
+    const ImVec2 textMin(textMax.x - textSize.x - padding.x * 2.0f, viewportMin.y + margin);
+
+    // 明るい素材の上でも読めるように、暗い下地を敷く。
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->AddRectFilled(textMin, textMax, IM_COL32(8, 10, 12, 190), ui::Scaled(4.0f));
+    drawList->AddText(ImVec2(textMin.x + padding.x, textMin.y + padding.y),
+                      IM_COL32(235, 235, 235, 255), fpsText);
 }
 
 // L + 左ドラッグでライトの向きを変える。
@@ -384,8 +408,8 @@ void Application::DrawViewportPanel() {
             DrawAxisGizmo(camera, imageOrigin, imageMax);
             DrawLightGizmo(imageOrigin, imageMax);
 
-            // ビューポートに重ねる操作。左上に表示モードの切り替えを置く。
-            DrawViewportOverlay(imageOrigin);
+            // ビューポートに重ねる操作。左上に表示モードの切り替え、右上に FPS。
+            DrawViewportOverlay(imageOrigin, imageMax);
 
             // ブラシの当たる範囲を円で示す。半径はビューポートのピクセル単位なので、
             // 表示倍率で割って ImGui の座標へ戻す。
