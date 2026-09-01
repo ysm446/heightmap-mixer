@@ -109,6 +109,8 @@ set(mm_sources
     src/core/FileDialog.cpp
     src/core/FileDialog.h
     src/core/ColorSpace.h
+    src/core/FrameLimiter.cpp
+    src/core/FrameLimiter.h
     src/core/ImageIo.cpp
     src/core/ImageIo.h
     src/core/Shell.cpp
@@ -246,10 +248,13 @@ enable_testing()
 add_executable(material_mixer_tests
     tests/TestMain.cpp
     tests/TestSupport.h
+    tests/FrameLimiterTests.cpp
     tests/UiInteractionTests.cpp
     tests/UndoHistoryTests.cpp
     src/app/UndoHistory.cpp
     src/app/UndoHistory.h
+    src/core/FrameLimiter.cpp
+    src/core/FrameLimiter.h
     src/ui/UiStyle.cpp
     src/ui/UiStyle.h
 )

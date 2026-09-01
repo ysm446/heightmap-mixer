@@ -87,6 +87,15 @@ void AppSettings::Load() {
             hotReload != display->end() && hotReload->is_boolean()) {
             m_display.hotReload = hotReload->get<bool>();
         }
+        // 壊れた値でも操作不能にならないよう、範囲へ丸める（0 は上限なし）。
+        if (const auto limit = display->find("frameRateLimit");
+            limit != display->end() && limit->is_number_integer()) {
+            m_display.frameRateLimit = std::clamp(limit->get<int>(), 0, 480);
+        }
+        if (const auto limit = display->find("inactiveFrameRateLimit");
+            limit != display->end() && limit->is_number_integer()) {
+            m_display.inactiveFrameRateLimit = std::clamp(limit->get<int>(), 0, 480);
+        }
         if (const auto color = display->find("clearColor");
             color != display->end() && color->is_array() && color->size() >= 3) {
             for (size_t i = 0; i < 3; ++i) {
@@ -114,6 +123,8 @@ bool AppSettings::Save() const {
     json display;
     display["vsync"] = m_display.vsync;
     display["hotReload"] = m_display.hotReload;
+    display["frameRateLimit"] = m_display.frameRateLimit;
+    display["inactiveFrameRateLimit"] = m_display.inactiveFrameRateLimit;
     display["clearColor"] = {m_display.clearColor[0], m_display.clearColor[1],
                              m_display.clearColor[2]};
 

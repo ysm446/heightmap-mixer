@@ -52,6 +52,8 @@ public:
     uint32_t Width() const { return m_width; }
     uint32_t Height() const { return m_height; }
     bool IsMinimized() const { return m_minimized; }
+    // 前面（アクティブ）かどうか。背面のときはフレームレートを落とす。
+    bool IsForeground() const { return ::GetForegroundWindow() == m_hwnd; }
 
 private:
     static LRESULT CALLBACK WndProcThunk(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);

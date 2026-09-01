@@ -158,11 +158,13 @@ bool Application::Initialize(const StartupOptions& options) {
 
     m_settings.Load();
     m_recentProjects.Load();
-    // 表示設定（垂直同期・ホットリロード・背景色）を settings.json から反映する。
+    // 表示設定（垂直同期・FPS 上限・ホットリロード・背景色）を settings.json から反映する。
     {
         const io::DisplaySettings& display = m_settings.Display();
         m_vsync = display.vsync;
         m_hotReloadEnabled = display.hotReload;
+        m_frameRateLimit = display.frameRateLimit;
+        m_inactiveFrameRateLimit = display.inactiveFrameRateLimit;
         for (int i = 0; i < 4; ++i) {
             m_clearColor[i] = display.clearColor[i];
         }
@@ -385,8 +387,27 @@ int Application::Run() {
             m_renderer.SaveOutputToPng(m_device, m_options.screenshotPath);
             break;
         }
+
+        // --- フレームレートの上限 ------------------------------------------
+        // **背面のときは別の（低い）上限を使う。** 見えていない絵に GPU を
+        // 回し続ける理由がない。完全に止めないのは、シェーダのホットリロードや
+        // 進行中の処理を生かしたまま、外から様子を見られるようにするため。
+        //
+        // 開発用のオプションが動いている間は落とさない。起動直後はウィンドウが
+        // 背面のことがあり、待つと書き出しやスクリーンショットが遅くなる。
+        if (!Headless()) {
+            const bool foreground = m_window.IsForeground();
+            m_frameLimiter.Wait(foreground ? m_frameRateLimit : m_inactiveFrameRateLimit,
+                                !foreground);
+        }
     }
     return 0;
+}
+
+// 開発用オプションで動いているか。対話せずに書き出して終わる経路。
+bool Application::Headless() const {
+    return !m_options.screenshotPath.empty() || !m_options.uiScreenshotPath.empty() ||
+           !m_options.exportDirectory.empty() || !m_options.saveProjectPath.empty();
 }
 
 void Application::DrawUi() {
@@ -735,6 +756,44 @@ void Application::DrawSettingsWindow() {
     if (ui::BeginPropertyTable("settingsDisplayRows")) {
         bool displayChanged = false;
         displayChanged |= ui::PropertyBool("垂直同期", &m_vsync, true);
+
+        // FPS の上限。**値が少数の離散値なので、スライダーではなく選択にする。**
+        // 「60 に合わせたつもりが 59」のような外れ方をしない。
+        static const char* const kLimitLabels[] = {"制限なし", "144", "120", "60", "30"};
+        constexpr int kLimitValues[] = {0, 144, 120, 60, 30};
+        const auto findLimit = [&kLimitValues](int fps) {
+            for (int i = 0; i < IM_ARRAYSIZE(kLimitValues); ++i) {
+                if (kLimitValues[i] == fps) {
+                    return i;
+                }
+            }
+            return 0;
+        };
+
+        int limit = findLimit(m_frameRateLimit);
+        if (ui::PropertyCombo("FPS 上限", &limit, kLimitLabels, IM_ARRAYSIZE(kLimitLabels), 0,
+                              "前面にあるときの上限。垂直同期が入っていれば、"
+                              "モニタのリフレッシュレートとの低いほうが効く")) {
+            m_frameRateLimit = kLimitValues[limit];
+            displayChanged = true;
+        }
+
+        static const char* const kInactiveLabels[] = {"制限なし", "30", "10", "5"};
+        constexpr int kInactiveValues[] = {0, 30, 10, 5};
+        int inactive = 0;
+        for (int i = 0; i < IM_ARRAYSIZE(kInactiveValues); ++i) {
+            if (kInactiveValues[i] == m_inactiveFrameRateLimit) {
+                inactive = i;
+            }
+        }
+        if (ui::PropertyCombo("背面のとき", &inactive, kInactiveLabels,
+                              IM_ARRAYSIZE(kInactiveLabels), 2,
+                              "他のウィンドウの後ろにあるときの上限。"
+                              "見えていない絵に GPU を回し続けないための設定。"
+                              "完全には止めないので、シェーダのホットリロードは効いたまま")) {
+            m_inactiveFrameRateLimit = kInactiveValues[inactive];
+            displayChanged = true;
+        }
         displayChanged |= ui::PropertyBool("ホットリロード", &m_hotReloadEnabled, true,
                                            "shaders/ の更新を検出して PSO を作り直す");
         // 背景色はバックバッファ（非 sRGB）へそのまま書く表示色なので、

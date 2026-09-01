@@ -5,6 +5,7 @@
 #include "compositor/PaintMask.h"
 #include "compositor/TextureLibrary.h"
 #include "core/Log.h"
+#include "core/FrameLimiter.h"
 #include "core/Window.h"
 #include "app/UndoHistory.h"
 #include "io/AppSettings.h"
@@ -77,6 +78,9 @@ private:
     void DrawSettingsWindow();
     // 合成結果を画像へ書き出すウィンドウ（ファイル > テクスチャを書き出す…）。
     void DrawExportWindow();
+    // 開発用オプション（スクリーンショット / 書き出し / 保存）で動いているか。
+    // 真のときはフレームレートを落とさない。
+    bool Headless() const;
     // 設定から決まる UI の拡大率。追従なら Windows の表示スケール。
     float DesiredUiScale() const;
     // 拡大率を掛けた既定のクライアント領域。1920x1080 を拡大率倍したもの。
@@ -270,6 +274,10 @@ private:
     // ini に無いウィンドウは作られた順で前面が決まってしまうため、明示的に上書きする。
     int m_focusDefaultTabs = 0;
     bool m_hotReloadEnabled = true;
+    // フレームレートの上限。0 で上限なし。背面のときは別の値を使う。
+    int m_frameRateLimit = 0;
+    int m_inactiveFrameRateLimit = 10;
+    FrameLimiter m_frameLimiter;
     uint32_t m_frameCounter = 0;
 };
 
