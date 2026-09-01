@@ -1,4 +1,4 @@
-// プレビュー設定パネルと「ライティングと露出」パネル。
+// プレビュー設定パネルと「ライティング」パネル。
 // どちらも合成結果ではなく、見え方（レンダラ側の設定）を扱う。
 
 #include "app/Application.h"
@@ -107,7 +107,7 @@ void Application::DrawMaterialPanel() {
 }
 
 void Application::DrawLightingPanel() {
-    if (ImGui::Begin("ライティングと露出")) {
+    if (ImGui::Begin("ライティング")) {
         renderer::LightSettings& light = m_renderer.Light();
 
         ui::SectionHeader("ライト");

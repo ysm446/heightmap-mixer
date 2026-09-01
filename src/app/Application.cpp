@@ -416,7 +416,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v11");
+    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v12");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -487,7 +487,7 @@ void Application::DrawUi() {
 //   +--------------------------------+------------------+
 //   | ビューポート                    | レイヤー          |
 //   |                                | プレビュー設定     |
-//   |                                | ライティングと露出 |
+//   |                                | ライティング |
 //   +---------------+----------------+ 情報              |
 //   | テクスチャ     | マテリアル / 天球 |                  |
 //   +---------------+----------------+------------------+
@@ -528,7 +528,7 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     // どれもスクロールしないと全体が見えなくなる。
     ImGui::DockBuilderDockWindow("レイヤー", right);
     ImGui::DockBuilderDockWindow("プレビュー設定", right);
-    ImGui::DockBuilderDockWindow("ライティングと露出", right);
+    ImGui::DockBuilderDockWindow("ライティング", right);
     ImGui::DockBuilderDockWindow("情報", right);
 
     ImGui::DockBuilderFinish(dockspaceId);
