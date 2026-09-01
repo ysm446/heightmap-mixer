@@ -416,11 +416,19 @@ bool TextureLibrary::GenerateMips(rhi::Device& device, rhi::PipelineCache& pipel
         uint32_t height = texture.height;
 
         for (uint32_t mip = 1; mip < texture.mipLevels; ++mip) {
-            // 参照元ミップを読み取り状態へ。ミップ 0 だけは COPY_DEST から遷移する。
+            // 参照元ミップを読み取り状態へ。ミップ 0 だけは COPY_DEST から遷移する
+            // （アップロード先）。それ以降は前の反復で UAV として書いたもの。
             TransitionMip(commandList, texture, mip - 1,
                           (mip == 1) ? D3D12_RESOURCE_STATE_COPY_DEST
                                      : D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                           kReadState);
+
+            // **書き込み先ミップも遷移させる。** テクスチャは全サブリソースが
+            // COPY_DEST で作られるので、アップロードしたミップ 0 以外は
+            // ここまで一度も遷移していない。これを忘れると UAV への書き込みが
+            // COPY_DEST 状態のまま行われ、次の反復の「前の状態」も食い違う。
+            TransitionMip(commandList, texture, mip, D3D12_RESOURCE_STATE_COPY_DEST,
+                          D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
             width = std::max<uint32_t>(width >> 1, 1);
             height = std::max<uint32_t>(height >> 1, 1);
