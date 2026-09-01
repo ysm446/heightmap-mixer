@@ -44,8 +44,12 @@ Quixel Mixer 相当のマテリアルオーサリングツール。
   マテリアルは単体ファイル (`.mmmat`) として書き出し、別のプロジェクトへ持ち込める。
   ファイルメニューには最近使ったプロジェクトの履歴（最大 10 件）も出る。
   形式は [docs/reference/file-format.md](docs/reference/file-format.md) を参照。
+- **書き出し**: 合成結果を画像として書き出せる（`ファイル > テクスチャを書き出す…`）。
+  **プレビューの合成解像度とは独立に解像度を選べる**（最大 8192）。
+  チャンネルの詰め方は 個別 / ORD（AO・ラフネス・ハイト）/ ORM（AO・ラフネス・メタルネス）。
+  ハイトは段差が出ないよう EXR（float）で出す。
 
-未実装: フル解像度エクスポート、地形。
+未実装: 地形。
 詳細は [docs/plan/plan.md](docs/plan/plan.md) を参照。
 
 ## 必要なもの
@@ -122,6 +126,7 @@ material_mixer.exe [--project <path>] [--save-project <path>]
 | `--project <path>` | 起動時にプロジェクト (.mmproj) を開く |
 | `--save-project <path>` | 指定フレームまで描いてプロジェクトを保存し、終了する（開発用） |
 | `--hdri <path>` | 起動時に Radiance HDR (.hdr) を既定の天球へ割り当てる |
+| `--export <dir>` | 数フレーム描いてから合成結果を画像へ書き出して終了する |
 | `--texture <path>` | 起動時にテクスチャライブラリへ読み込む（繰り返し指定可） |
 | `--screenshot <path>` | 指定フレームまで描いてビューポートを PNG に書き出し、終了する |
 | `--screenshot-ui <path>` | 同じく、UI 込みのウィンドウ全体を PNG に書き出して終了する |

@@ -82,6 +82,7 @@ set(mm_sources
     src/app/Application.cpp
     src/app/Application.h
     src/app/ApplicationDocument.cpp
+    src/app/ApplicationExport.cpp
     src/app/ApplicationFileWork.cpp
     src/app/ApplicationLayerPanel.cpp
     src/app/ApplicationMaterialPanel.cpp
@@ -117,6 +118,8 @@ set(mm_sources
     src/core/Window.h
     src/io/AppSettings.cpp
     src/io/AppSettings.h
+    src/io/MaterialExport.cpp
+    src/io/MaterialExport.h
     src/io/ProjectIo.cpp
     src/io/ProjectIo.h
     src/io/RecentFiles.cpp

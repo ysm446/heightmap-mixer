@@ -28,6 +28,11 @@ std::filesystem::path ShowOpenFileDialog(const wchar_t* title,
 std::vector<std::filesystem::path> ShowOpenFilesDialog(const wchar_t* title,
                                                        const std::vector<FileFilter>& filters);
 
+// フォルダを 1 つ選ぶ。取り消したら空のパスを返す。
+// 書き出しのように、1 回で複数のファイルを置く先を決めるときに使う。
+std::filesystem::path ShowPickFolderDialog(const wchar_t* title,
+                                           const std::filesystem::path& initialPath = {});
+
 // 保存先を選ぶ。取り消したら空のパスを返す。
 // defaultExtension は先頭のドットを含めない（"mmproj" など）。
 std::filesystem::path ShowSaveFileDialog(const wchar_t* title,

@@ -105,6 +105,37 @@ std::filesystem::path ShowOpenFileDialog(const wchar_t* title,
     return ToPath(item.Get());
 }
 
+std::filesystem::path ShowPickFolderDialog(const wchar_t* title,
+                                           const std::filesystem::path& initialPath) {
+    // 絞り込みは要らない。FOS_PICKFOLDERS でフォルダ選択に切り替える。
+    ComPtr<IFileDialog> dialog = CreateFileDialog(CLSID_FileOpenDialog, title, {});
+    if (!dialog) {
+        return {};
+    }
+
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_PICKFOLDERS);
+
+    if (!initialPath.empty()) {
+        ComPtr<IShellItem> folder;
+        if (SUCCEEDED(::SHCreateItemFromParsingName(initialPath.c_str(), nullptr,
+                                                    IID_PPV_ARGS(&folder)))) {
+            dialog->SetFolder(folder.Get());
+        }
+    }
+
+    if (FAILED(dialog->Show(::GetActiveWindow()))) {
+        return {};  // 取り消し。
+    }
+
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->GetResult(&item))) {
+        return {};
+    }
+    return ToPath(item.Get());
+}
+
 std::vector<std::filesystem::path> ShowOpenFilesDialog(const wchar_t* title,
                                                        const std::vector<FileFilter>& filters) {
     ComPtr<IFileDialog> dialog = CreateFileDialog(CLSID_FileOpenDialog, title, filters);

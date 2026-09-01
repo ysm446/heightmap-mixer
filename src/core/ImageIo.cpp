@@ -215,9 +215,49 @@ bool SaveRgba8Png(const std::filesystem::path& path, uint32_t width, uint32_t he
     return SavePng(path, width, height, rowPitch, 4, pixels);
 }
 
+bool SaveRgb8Png(const std::filesystem::path& path, uint32_t width, uint32_t height,
+                 uint32_t rowPitch, const uint8_t* pixels) {
+    return SavePng(path, width, height, rowPitch, 3, pixels);
+}
+
 bool SaveGray8Png(const std::filesystem::path& path, uint32_t width, uint32_t height,
                   uint32_t rowPitch, const uint8_t* pixels) {
     return SavePng(path, width, height, rowPitch, 1, pixels);
+}
+
+bool SaveExr(const std::filesystem::path& path, uint32_t width, uint32_t height, int channels,
+             const float* pixels, bool asHalf) {
+    if (pixels == nullptr || width == 0 || height == 0) {
+        return false;
+    }
+    if (channels != 1 && channels != 3 && channels != 4) {
+        MM_LOG_ERROR("EXR に書けないチャンネル数です: %d", channels);
+        return false;
+    }
+
+    unsigned char* buffer = nullptr;
+    const char* error = nullptr;
+    const int size = ::SaveEXRToMemory(pixels, static_cast<int>(width), static_cast<int>(height),
+                                       channels, asHalf ? 1 : 0, &buffer, &error);
+    if (size <= 0 || buffer == nullptr) {
+        MM_LOG_ERROR("EXR を書き出せません: %s (%s)", ToUtf8Display(path).c_str(),
+                     (error != nullptr) ? error : "不明なエラー");
+        ::FreeEXRErrorMessage(error);
+        ::free(buffer);
+        return false;
+    }
+    ::FreeEXRErrorMessage(error);
+
+    const bool written = WriteFileBytes(path, buffer, static_cast<size_t>(size));
+    ::free(buffer);
+    if (!written) {
+        MM_LOG_ERROR("EXR を書き出せません: %s", ToUtf8Display(path).c_str());
+        return false;
+    }
+
+    MM_LOG_INFO("EXR を書き出しました: %s (%u x %u, %d ch)", ToUtf8Display(path).c_str(), width,
+                height, channels);
+    return true;
 }
 
 }  // namespace mm

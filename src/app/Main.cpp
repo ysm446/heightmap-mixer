@@ -20,6 +20,7 @@ namespace {
 // 使い方:
 //   material_mixer.exe [--project <path>] [--save-project <path>]
 //                       [--hdri <path>] [--texture <path>]...
+//                       [--export <dir>]
 //                       [--screenshot <path>] [--screenshot-ui <path>]
 //                       [--screenshot-frame <n>]
 mm::StartupOptions ParseCommandLine() {
@@ -47,6 +48,9 @@ mm::StartupOptions ParseCommandLine() {
             ++i;
         } else if (argument == L"--screenshot" && (i + 1) < argc) {
             options.screenshotPath = argv[i + 1];
+            ++i;
+        } else if (argument == L"--export" && (i + 1) < argc) {
+            options.exportDirectory = argv[i + 1];
             ++i;
         } else if (argument == L"--screenshot-ui" && (i + 1) < argc) {
             options.uiScreenshotPath = argv[i + 1];

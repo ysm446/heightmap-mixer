@@ -68,6 +68,9 @@ public:
     uint32_t EvaluatedTileCount() const { return m_evaluatedTileCount; }
 
     const MaterialTextureSet& Textures() const { return m_textures; }
+    // 読み戻しのように、状態遷移を伴う操作から触るためのもの。
+    // GpuTexture は自分の状態を持つので、遷移させる側は非 const 参照が要る。
+    MaterialTextureSet& TexturesMutable() { return m_textures; }
     uint32_t Resolution() const { return m_resolution; }
     uint32_t EvaluatedLayerCount() const { return m_evaluatedLayerCount; }
 

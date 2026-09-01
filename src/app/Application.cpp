@@ -266,6 +266,15 @@ int Application::Run() {
         // 他の保留処理より先に行う（読み込みが中身を丸ごと入れ替えるため）。
         ProcessPendingFileWork();
 
+        // 開発用: 数フレーム描いてから合成結果を書き出して終了する。
+        if (!m_options.exportDirectory.empty() && m_frameCounter >= m_options.screenshotFrame) {
+            m_exportSettings.directory = m_options.exportDirectory;
+            const io::ExportRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary,
+                                      m_paintMasks};
+            io::ExportMaterialTextures(m_device, m_pipelineCache, refs, m_exportSettings);
+            break;
+        }
+
         // 開発用: 数フレーム描いてからプロジェクトを保存して終了する。
         // 対話せずに保存と読み込みを確かめるために使う。
         if (!m_options.saveProjectPath.empty() && m_frameCounter >= m_options.screenshotFrame) {
@@ -447,6 +456,7 @@ void Application::DrawUi() {
     DrawInfoPanel();
 
     DrawSettingsWindow();
+    DrawExportWindow();
 
     if (m_showDemoWindow) {
         ImGui::ShowDemoWindow(&m_showDemoWindow);

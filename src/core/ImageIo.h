@@ -49,8 +49,21 @@ bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage);
 bool SaveRgba8Png(const std::filesystem::path& path, uint32_t width, uint32_t height,
                   uint32_t rowPitch, const uint8_t* pixels);
 
+// RGB 8bit のピクセル列を PNG として保存する。アルファの要らないマップに使う。
+bool SaveRgb8Png(const std::filesystem::path& path, uint32_t width, uint32_t height,
+                 uint32_t rowPitch, const uint8_t* pixels);
+
 // 1 チャンネル 8bit のピクセル列を PNG として保存する。ペイントマスクの保存に使う。
 bool SaveGray8Png(const std::filesystem::path& path, uint32_t width, uint32_t height,
                   uint32_t rowPitch, const uint8_t* pixels);
+
+// float のピクセル列を OpenEXR として保存する。channels は 1 / 3 / 4。
+// pixels はチャンネル分のインターリーブ、行の詰まりは width * channels。
+//
+// **ハイトの書き出しに使う。** 8bit の PNG では階段が見え、
+// stb は 16bit PNG を書けないため、float を素直に持てる EXR にする。
+// asHalf を真にすると 16bit float で書く（ファイルはおよそ半分になる）。
+bool SaveExr(const std::filesystem::path& path, uint32_t width, uint32_t height, int channels,
+             const float* pixels, bool asHalf);
 
 }  // namespace mm

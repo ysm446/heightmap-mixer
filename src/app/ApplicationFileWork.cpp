@@ -141,6 +141,18 @@ void Application::DrawFileMenu() {
     }
 
     ImGui::Separator();
+    if (ImGui::MenuItem("テクスチャを書き出す…")) {
+        // 書き出し先が未設定なら、プロジェクトの隣を初期値にする。
+        if (m_exportSettings.directory.empty() && !m_projectPath.empty()) {
+            m_exportSettings.directory = m_projectPath.parent_path();
+        }
+        if (m_exportSettings.baseName.empty() && !m_projectPath.empty()) {
+            m_exportSettings.baseName = ToUtf8Display(m_projectPath.stem());
+        }
+        m_showExport = true;
+    }
+
+    ImGui::Separator();
     if (ImGui::MenuItem("終了")) {
         m_window.RequestClose();
     }
@@ -369,6 +381,18 @@ void Application::ProcessPendingFileWork() {
             }
             m_selectedMaterial = std::max(0, m_selectedMaterial - 1);
             MarkDocumentChanged();
+        }
+    }
+
+    if (m_pendingExport) {
+        m_pendingExport = false;
+        const io::ExportRefs refs{m_materialStack, m_textureLibrary, m_materialLibrary,
+                                  m_paintMasks};
+        const uint32_t written =
+            io::ExportMaterialTextures(m_device, m_pipelineCache, refs, m_exportSettings);
+        if (written > 0) {
+            m_toasts.Push("テクスチャを " + std::to_string(written) + " 枚書き出しました");
+            m_showExport = false;
         }
     }
 

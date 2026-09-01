@@ -8,6 +8,7 @@
 #include "core/Window.h"
 #include "app/UndoHistory.h"
 #include "io/AppSettings.h"
+#include "io/MaterialExport.h"
 #include "io/RecentFiles.h"
 #include "renderer/PreviewRenderer.h"
 #include "renderer/SkyLibrary.h"
@@ -34,6 +35,9 @@ struct StartupOptions {
     std::vector<std::filesystem::path> texturePaths;
     // 起動時に開くプロジェクト (.mmproj)。空なら既定のスタックで始める。
     std::filesystem::path projectPath;
+    // 指定すると、数フレーム描いてから合成結果を画像へ書き出して終了する。
+    // 対話せずに書き出しを確かめるための開発用オプション。
+    std::filesystem::path exportDirectory;
     // 指定すると、数フレーム描いてからプロジェクトを保存して終了する。
     // 保存と読み込みを対話なしで確かめるための開発用オプション。
     std::filesystem::path saveProjectPath;
@@ -71,6 +75,8 @@ private:
     void DrawTextureLibraryPanel();
     // アプリの設定ウィンドウ（表示 > 設定）。プロジェクトに保存しない設定を置く。
     void DrawSettingsWindow();
+    // 合成結果を画像へ書き出すウィンドウ（ファイル > テクスチャを書き出す…）。
+    void DrawExportWindow();
     // 設定から決まる UI の拡大率。追従なら Windows の表示スケール。
     float DesiredUiScale() const;
     // 拡大率を掛けた既定のクライアント領域。1920x1080 を拡大率倍したもの。
@@ -208,6 +214,11 @@ private:
     io::AppSettings m_settings;
     // 設定ウィンドウを出しているか。ドックへは収めない補助ウィンドウ。
     bool m_showSettings = false;
+    // 書き出しウィンドウ。設定ウィンドウと同じくドックへは収めない。
+    bool m_showExport = false;
+    io::ExportSettings m_exportSettings;
+    // 書き出しの実行要求。**GPU 待機とファイル入出力を伴うのでフレームの外で処理する。**
+    bool m_pendingExport = false;
     std::filesystem::path m_pendingProjectSave;
     std::filesystem::path m_pendingProjectOpen;
     std::filesystem::path m_pendingMaterialExport;
