@@ -57,9 +57,7 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin) {
     if (highlighted) {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
     }
-    char buttonLabel[96] = {};
-    std::snprintf(buttonLabel, sizeof(buttonLabel), "%s  v", label);
-    if (ImGui::Button(buttonLabel)) {
+    if (ImGui::Button(label)) {
         ImGui::OpenPopup("##viewportViewMenu");
     }
     if (highlighted) {
