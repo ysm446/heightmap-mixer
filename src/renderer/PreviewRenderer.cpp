@@ -108,6 +108,38 @@ struct SkyboxConstants {
     float pad0[2];
 };
 
+// GPU 側の DofConstants と一致させること。
+struct DofConstants {
+    uint32_t sourceIndex;
+    uint32_t depthIndex;
+    uint32_t outputIndex;
+    uint32_t width;
+
+    uint32_t height;
+    float focalLengthMm;
+    float fStop;
+    float focusDistance;
+
+    float nearZ;
+    float farZ;
+    float maxBlurPixels;
+    float apertureRotation;
+
+    float apertureBlades;
+    float blurScale;
+    float pad0[2];
+};
+
+// 絞りの形から羽根の数へ。0 なら円。
+float ApertureBladeCount(ApertureShape shape) {
+    switch (shape) {
+        case ApertureShape::Triangle: return 3.0f;
+        case ApertureShape::Hexagon: return 6.0f;
+        case ApertureShape::Octagon: return 8.0f;
+        default: return 0.0f;
+    }
+}
+
 struct TonemapConstants {
     uint32_t sourceIndex;
     uint32_t outputIndex;
@@ -253,6 +285,11 @@ void PreviewRenderer::ApplyActiveSky(rhi::Device& device, rhi::PipelineCache& pi
     m_loadedHdriPath.clear();
 }
 
+float PreviewRenderer::FocusDistance() const {
+    // 軌道カメラなので、注視点までの距離がそのまま「見ているものまでの距離」。
+    return m_dof.focusOnTarget ? m_camera.State().distance : m_dof.focusDistance;
+}
+
 // 現在のメッシュを包む球の半径。カメラの Frame()（A キー）が使う。
 //
 // ディスプレイスメントは頂点を法線方向へ (height - 0.5) * scale だけ動かすので、
@@ -283,7 +320,8 @@ const Mesh& PreviewRenderer::CurrentMesh() const {
 }
 
 void PreviewRenderer::ReleaseTargets(rhi::Device& device) {
-    rhi::GpuTexture* targets[] = {&m_sceneColor, &m_materialUv, &m_depth, &m_output};
+    rhi::GpuTexture* targets[] = {&m_sceneColor, &m_sceneColorDof, &m_materialUv, &m_depth,
+                                  &m_output};
     for (rhi::GpuTexture* target : targets) {
         if (!target->IsValid()) {
             continue;
@@ -371,6 +409,19 @@ bool PreviewRenderer::Resize(rhi::Device& device, uint32_t width, uint32_t heigh
         return false;
     }
 
+    // 被写界深度の出力。シーンカラーと同じ形式で、コンピュートから書く。
+    rhi::TextureDesc dofDesc;
+    dofDesc.width = width;
+    dofDesc.height = height;
+    dofDesc.format = kSceneColorFormat;
+    dofDesc.allowUnorderedAccess = true;
+    dofDesc.createSrv = true;
+    dofDesc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    dofDesc.debugName = L"SceneColorDof";
+    if (!device.Allocator().CreateTexture2D(dofDesc, m_sceneColorDof)) {
+        return false;
+    }
+
     rhi::TextureDesc materialUvDesc;
     materialUvDesc.width = width;
     materialUvDesc.height = height;
@@ -392,12 +443,16 @@ bool PreviewRenderer::Resize(rhi::Device& device, uint32_t width, uint32_t heigh
         commandList->ClearRenderTargetView(m_materialUv.rtv.cpu, uvClearColor, 0, nullptr);
     });
 
+    // **被写界深度が深度を読むので SRV も張る。** 深度として書き、SRV としても
+    // 読むため TYPELESS で作る（シャドウマップと同じ作法）。
     rhi::TextureDesc depthDesc;
     depthDesc.width = width;
     depthDesc.height = height;
-    depthDesc.format = kDepthFormat;
+    depthDesc.format = DXGI_FORMAT_R32_TYPELESS;
+    depthDesc.dsvFormat = kDepthFormat;
+    depthDesc.srvFormat = DXGI_FORMAT_R32_FLOAT;
     depthDesc.allowDepthStencil = true;
-    depthDesc.createSrv = false;
+    depthDesc.createSrv = true;
     depthDesc.clearDepth = 1.0f;
     depthDesc.initialState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
     depthDesc.debugName = L"SceneDepth";
@@ -695,13 +750,59 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         }
     }
 
+    TransitionIfNeeded(commandList, m_sceneColor, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    // --- 被写界深度 --------------------------------------------------------
+    // **トーンマップの前に、線形 HDR のまま掛ける。** 露出後だと明るい点が
+    // 飽和してから広がり、玉ボケの芯が白く潰れる。
+    // デバッグ表示のときは掛けない（チャンネルの値そのものを見るための表示）。
+    uint32_t tonemapSourceIndex = m_sceneColor.SrvIndex();
+    ID3D12PipelineState* dofPipeline =
+        (m_dof.enabled && m_debugView == DebugView::Shaded && m_sceneColorDof.IsValid())
+            ? pipelineCache.GetCompute(L"DepthOfField.hlsl", L"CsMain")
+            : nullptr;
+    if (dofPipeline != nullptr) {
+        PIXBeginEvent(commandList, PIX_COLOR(120, 160, 220), "PreviewDepthOfField");
+
+        TransitionIfNeeded(commandList, m_depth,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, m_sceneColorDof, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+        DofConstants dofConstants = {};
+        dofConstants.sourceIndex = m_sceneColor.SrvIndex();
+        dofConstants.depthIndex = m_depth.SrvIndex();
+        dofConstants.outputIndex = m_sceneColorDof.UavIndex();
+        dofConstants.width = m_width;
+        dofConstants.height = m_height;
+        dofConstants.focalLengthMm = FocalLengthFromFovY(m_camera.FovY());
+        dofConstants.fStop = m_exposure.aperture;
+        dofConstants.focusDistance = FocusDistance();
+        dofConstants.nearZ = m_camera.NearZ();
+        dofConstants.farZ = m_camera.FarZ();
+        dofConstants.maxBlurPixels = m_dof.maxBlurPixels;
+        dofConstants.apertureRotation = m_dof.rotationDegrees * (3.14159265358979f / 180.0f);
+        dofConstants.apertureBlades = ApertureBladeCount(m_dof.shape);
+        dofConstants.blurScale = m_dof.blurScale;
+
+        commandList->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
+        commandList->SetPipelineState(dofPipeline);
+        commandList->SetComputeRoot32BitConstants(0, sizeof(dofConstants) / sizeof(uint32_t),
+                                                  &dofConstants, 0);
+        commandList->Dispatch(rhi::DispatchCount(m_width), rhi::DispatchCount(m_height), 1);
+
+        TransitionIfNeeded(commandList, m_sceneColorDof,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        tonemapSourceIndex = m_sceneColorDof.SrvIndex();
+
+        PIXEndEvent(commandList);
+    }
+
     PIXBeginEvent(commandList, PIX_COLOR(200, 120, 80), "PreviewTonemap");
 
-    TransitionIfNeeded(commandList, m_sceneColor, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     const TonemapConstants tonemapConstants{
-        m_sceneColor.SrvIndex(),   m_output.UavIndex(),
+        tonemapSourceIndex,        m_output.UavIndex(),
         m_width,                   m_height,
         m_exposure.Exposure(),     static_cast<uint32_t>(m_tonemap),
         static_cast<uint32_t>(m_debugView)};

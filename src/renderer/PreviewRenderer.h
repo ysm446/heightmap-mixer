@@ -68,6 +68,43 @@ struct LightSettings {
     DirectX::XMFLOAT3 Direction() const;
 };
 
+// 絞りの形。ボケの形になる。
+enum class ApertureShape : uint32_t {
+    Circle = 0,
+    Triangle = 1,
+    Hexagon = 2,
+    Octagon = 3,
+};
+
+// 被写界深度。**ビューポートの見え方だけの設定**で、合成結果には一切効かない。
+//
+// レンズの値は増やさない。焦点距離はカメラの画角から、F 値は露出の絞りから取る。
+// 被写界深度のためだけに同じ意味の値をもう一組持つと、どちらが効いているのか
+// 分からなくなる（露出とレンズが食い違った絵になる）。
+struct DofSettings {
+    bool enabled = false;
+    // **注視点までの距離をピント面にする。** 軌道カメラなので、見ているものが
+    // 常に注視点にある。手で合わせ直す手間をなくすため既定でオン。
+    bool focusOnTarget = true;
+    // 手動のピント距離（メートル。ワールドの 1 単位を 1m とみなす）。
+    float focusDistance = 3.2f;
+    // 画面上のボケ半径の上限。現実の式のままだと極端なボケと負荷になるので、
+    // 表示のための頭打ちとして持つ。
+    float maxBlurPixels = 24.0f;
+    // **ボケ量に掛ける誇張の倍率。** 1 で現実どおり。
+    //
+    // スケールの補正ではない。2m 角の地面を 3.2m から広角で撮れば、
+    // **現実のカメラでも全域にピントが合う**（29mm・F1.8 で錯乱円が 1 画素に届かない）。
+    // 物理的に正しくても素材の見せ方としては物足りないことがあるので、
+    // 物理の関係を保ったまま量だけ持ち上げるための係数として持つ。
+    // 倍率を使わずにボケを出したいなら、現実と同じく望遠へ寄せればよい
+    // （100mm・F1.8 なら倍率 1 のまま半径 10 画素ほどになる）。
+    float blurScale = 1.0f;
+    ApertureShape shape = ApertureShape::Circle;
+    // 多角形のボケの向き（度）。円のときは効かない。
+    float rotationDegrees = 0.0f;
+};
+
 struct MaterialSettings {
     // 合成結果を使わないときの単色マテリアル。**18% グレー**にしてある
     // （MaterialLayer::baseColor と同じ基準）。ルックデブで使う
@@ -141,6 +178,10 @@ public:
     bool& SkyboxBlur() { return m_skyboxBlur; }
     // ディレクショナルライトの影を落とすか。落とさないとシャドウパスも走らない。
     bool& ShadowEnabled() { return m_shadowEnabled; }
+    DofSettings& Dof() { return m_dof; }
+    const DofSettings& Dof() const { return m_dof; }
+    // 実際にピント面として使う距離。注視点に合わせる設定ならカメラの距離。
+    float FocusDistance() const;
     // テセレーション（画面上の辺の長さに応じた分割）を使うか。
     bool& TessellationEnabled() { return m_tessellationEnabled; }
     // 1 辺あたりの分割の上限。
@@ -177,6 +218,9 @@ private:
     Mesh m_cube;
 
     rhi::GpuTexture m_sceneColor;  // 線形 HDR
+    // 被写界深度を掛けた結果。**トーンマップはこちらを読む。**
+    // 元のシーンカラーを潰さないので、掛けるかどうかを毎フレーム選べる。
+    rhi::GpuTexture m_sceneColorDof;
     // メッシュ描画の 2 枚目のターゲット。xy: マテリアル UV、z: メッシュに当たったか。
     // ビューポートのカーソル位置からマテリアルの UV を引くために使う。
     rhi::GpuTexture m_materialUv;
@@ -207,6 +251,7 @@ private:
     bool m_showSkybox = kPreviewDefaults.showSkybox;
     bool m_skyboxBlur = kPreviewDefaults.skyboxBlur;
     bool m_shadowEnabled = kPreviewDefaults.shadowEnabled;
+    DofSettings m_dof;
     bool m_tessellationEnabled = kPreviewDefaults.tessellationEnabled;
     float m_tessellationFactor = kPreviewDefaults.tessellationFactor;
     bool m_skyRebuildRequested = false;

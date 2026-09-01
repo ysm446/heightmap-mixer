@@ -139,6 +139,7 @@ const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"}
 const char* const kShapeNames[] = {"sphere", "plane", "cube"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
 const char* const kSkySourceNames[] = {"procedural", "hdri"};
+const char* const kApertureShapeNames[] = {"circle", "triangle", "hexagon", "octagon"};
 
 template <size_t N>
 const char* EnumName(const char* const (&names)[N], uint32_t value) {
@@ -428,6 +429,18 @@ json WritePreview(renderer::PreviewRenderer& renderer, const fs::path& baseDir) 
     node["showSkybox"] = renderer.ShowSkybox();
     node["skyboxBlur"] = renderer.SkyboxBlur();
     node["shadow"] = renderer.ShadowEnabled();
+
+    // 被写界深度。見え方だけの設定だが、プロジェクトごとに変えるものなので残す。
+    const renderer::DofSettings& dof = renderer.Dof();
+    json dofNode;
+    dofNode["enabled"] = dof.enabled;
+    dofNode["focusOnTarget"] = dof.focusOnTarget;
+    dofNode["focusDistance"] = dof.focusDistance;
+    dofNode["blurScale"] = dof.blurScale;
+    dofNode["maxBlurPixels"] = dof.maxBlurPixels;
+    dofNode["shape"] = EnumName(kApertureShapeNames, static_cast<uint32_t>(dof.shape));
+    dofNode["rotationDegrees"] = dof.rotationDegrees;
+    node["depthOfField"] = std::move(dofNode);
     // 環境そのもの（HDRI・較正値・空のパラメータ）は天球アセットが持つ。
     // ここには「見え方」だけを書く。
 
@@ -527,6 +540,21 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer, const fs
         target.aperture = ReadFloat(exposure, "aperture", defaults.aperture);
         target.shutterSpeed = ReadFloat(exposure, "shutterSpeed", defaults.shutterSpeed);
         target.iso = ReadFloat(exposure, "iso", defaults.iso);
+    }
+
+    {
+        const json& dofNode = section("depthOfField");
+        renderer::DofSettings& target = renderer.Dof();
+        const renderer::DofSettings defaults;
+        target.enabled = ReadBool(dofNode, "enabled", defaults.enabled);
+        target.focusOnTarget = ReadBool(dofNode, "focusOnTarget", defaults.focusOnTarget);
+        target.focusDistance = ReadFloat(dofNode, "focusDistance", defaults.focusDistance);
+        target.blurScale = ReadFloat(dofNode, "blurScale", defaults.blurScale);
+        target.maxBlurPixels = ReadFloat(dofNode, "maxBlurPixels", defaults.maxBlurPixels);
+        target.shape = static_cast<renderer::ApertureShape>(EnumValue(
+            kApertureShapeNames, dofNode, "shape", static_cast<uint32_t>(defaults.shape)));
+        target.rotationDegrees =
+            ReadFloat(dofNode, "rotationDegrees", defaults.rotationDegrees);
     }
 
     {

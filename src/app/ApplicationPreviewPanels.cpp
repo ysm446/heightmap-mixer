@@ -102,6 +102,63 @@ void Application::DrawMaterialPanel() {
             ui::PropertyEnd();
             ui::EndPropertyTable();
         }
+
+        // **レンズの値はここで増やさない。** 焦点距離はカメラ、F 値は露出から取る。
+        // 同じ意味の値をもう一組持つと、どちらが効いているのか分からなくなる。
+        ui::SectionHeader("被写界深度");
+        renderer::DofSettings& dof = m_renderer.Dof();
+        const renderer::DofSettings kDefaultDof;
+        if (ui::BeginPropertyTable("dofRows")) {
+            ui::PropertyBool("有効", &dof.enabled, kDefaultDof.enabled,
+                             "ビューポートの見え方だけに掛かる。合成結果と書き出しには効かない");
+
+            ImGui::BeginDisabled(!dof.enabled);
+            ui::PropertyValue("焦点距離", "%.0f mm（カメラ）",
+                              renderer::FocalLengthFromFovY(m_renderer.GetCamera().FovY()));
+            // **露出の絞りをそのまま編集する。** ボケ量を決めるのは同じ F 値なので、
+            // 被写界深度用にもう一つ持たない。EV を直接指定しているときは露出の節に
+            // 絞りの行が出ないため、ここから触れるようにしておく。
+            ui::PropertyFloat("F 値", &m_renderer.Exposure().aperture, 1.0f, 32.0f,
+                              renderer::ExposureSettings{}.aperture,
+                              "露出の絞りと同じ値。小さいほどボケが強くなる", "F%.1f",
+                              ImGuiSliderFlags_Logarithmic);
+
+            ui::PropertyBool("注視点に追従", &dof.focusOnTarget, kDefaultDof.focusOnTarget,
+                             "軌道カメラなので、見ているものは常に注視点にある。"
+                             "切ると距離を手で決められる");
+            ImGui::BeginDisabled(dof.focusOnTarget);
+            ui::PropertyFloat("ピント距離", &dof.focusDistance, 0.1f, 50.0f,
+                              kDefaultDof.focusDistance,
+                              "カメラからピント面まで。ワールドの 1 単位を 1m とみなす",
+                              "%.2f m", ImGuiSliderFlags_Logarithmic);
+            ImGui::EndDisabled();
+            ui::PropertyValue("実効ピント距離", "%.2f m", m_renderer.FocusDistance());
+
+            ui::PropertyFloat("ボケの強さ", &dof.blurScale, 0.25f, 16.0f, kDefaultDof.blurScale,
+                              "1 で現実どおり。2m 角の地面を広角で撮れば現実でも"
+                              "全域にピントが合うので、見せたい量まで持ち上げるための誇張。"
+                              "倍率を使わずに出したいなら望遠へ寄せる",
+                              "x%.2f", ImGuiSliderFlags_Logarithmic);
+            ui::PropertyFloat("最大ぼけ", &dof.maxBlurPixels, 1.0f, 64.0f,
+                              kDefaultDof.maxBlurPixels,
+                              "画面上のぼけ半径の上限。現実の式のままだと極端になるので、"
+                              "表示のための頭打ちとして持つ。上げるほど重くなる",
+                              "%.0f px");
+
+            static const char* const kShapeLabels[] = {"円", "三角形", "六角形", "八角形"};
+            int shape = static_cast<int>(dof.shape);
+            if (ui::PropertyCombo("絞りの形", &shape, kShapeLabels, IM_ARRAYSIZE(kShapeLabels),
+                                  static_cast<int>(kDefaultDof.shape), "ボケの形になる")) {
+                dof.shape = static_cast<renderer::ApertureShape>(shape);
+            }
+            ImGui::BeginDisabled(dof.shape == renderer::ApertureShape::Circle);
+            ui::PropertyFloat("絞りの向き", &dof.rotationDegrees, 0.0f, 180.0f,
+                              kDefaultDof.rotationDegrees, "多角形のボケの角度", "%.0f 度");
+            ImGui::EndDisabled();
+            ImGui::EndDisabled();
+            ui::EndPropertyTable();
+        }
+        ui::HintText("ボケ量は焦点距離・F 値・ピント距離で決まる。ワールドの 1 単位 = 1m");
     }
     ImGui::End();
 }
