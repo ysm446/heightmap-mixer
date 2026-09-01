@@ -213,17 +213,14 @@ void Application::DrawLayerPanel() {
     const auto layerCount = static_cast<int>(layers.size());
     m_selectedLayer = std::clamp(m_selectedLayer, 0, (layerCount > 0) ? layerCount - 1 : 0);
 
-    // 幅が足りれば「一覧 | プロパティ」の 2 列にする。足りなければ縦に積む
-    // （テクスチャパネルと同じ作法）。一覧と編集を同時に見られるほうが、
+    // 「上が一覧、下がプロパティ」の 2 段。一覧と編集を同時に見られるので、
     // レイヤーを行き来しながらの調整がしやすい。
-    float listWidth = ui::Scaled(m_settings.Ui().layerListWidth);
-    const bool sideBySide =
-        ImGui::GetContentRegionAvail().x > listWidth + ui::Scaled(kLayerPropertiesMinWidth);
-    // 列の高さは分ける前に測る。子ウィンドウを開いた後だと残りが変わる。
-    const float columnHeight = ImGui::GetContentRegionAvail().y;
-    if (sideBySide) {
-        ImGui::BeginChild("layerListColumn", ImVec2(listWidth, columnHeight));
-    }
+    // **横ではなく縦に割る。** プロパティは「ラベル：値」の行なので幅を要求し、
+    // 横に割ると右カラム全体を広く取らないと成立しない。
+    float listHeight = ui::Scaled(m_settings.Ui().layerListHeight);
+    // 区画の幅は割る前に測る。子ウィンドウを開いた後だと残りが変わる。
+    const float paneWidth = ImGui::GetContentRegionAvail().x;
+    ImGui::BeginChild("layerListPane", ImVec2(0.0f, listHeight));
 
     if (ui::Button("追加")) {
         compositor::MaterialLayer layer;
@@ -252,32 +249,27 @@ void Application::DrawLayerPanel() {
     }
     ImGui::EndDisabled();
 
-    // 2 列のときは列の高さいっぱいまで伸ばす。下の 1 行はヒント用に空ける。
-    DrawLayerList(sideBySide ? -ImGui::GetTextLineHeightWithSpacing() : ui::Scaled(150.0f));
+    // 区画の高さいっぱいまで伸ばす。下の 1 行はヒント用に空ける。
+    DrawLayerList(-ImGui::GetTextLineHeightWithSpacing());
     ui::HintText("上が最前面。ドラッグで並べ替え");
+    ImGui::EndChild();
 
-    if (sideBySide) {
-        ImGui::EndChild();
-
-        // 境界をドラッグして列幅を変えられるようにする。
-        // 幅は設定に覚えさせ、起動のたびに戻らないようにする。
-        // 保存は掴んでいた手を離したときだけ（ドラッグ中に毎フレーム書かない）。
-        const float released = ui::VerticalSplitter(
-            "layerSplitter", &listWidth, ui::Scaled(kLayerListMinWidth),
-            ui::Scaled(kLayerListMaxWidth), columnHeight);
-        // 拡大率を掛ける前の値へ戻して持つ。Scaled(1) が現在の拡大率。
-        m_settings.Ui().layerListWidth = listWidth / std::max(ui::Scaled(1.0f), 0.01f);
-        if (released) {
-            m_settings.Save();
-        }
-
-        ImGui::BeginChild("layerPropertyColumn", ImVec2(0.0f, columnHeight));
+    // 境界をドラッグして一覧側の高さを変えられるようにする。
+    // 高さは設定に覚えさせ、起動のたびに戻らないようにする。
+    // 保存は掴んでいた手を離したときだけ（ドラッグ中に毎フレーム書かない）。
+    const bool released =
+        ui::HorizontalSplitter("layerSplitter", &listHeight, ui::Scaled(kLayerListMinHeight),
+                               ui::Scaled(kLayerListMaxHeight), paneWidth);
+    // 拡大率を掛ける前の値へ戻して持つ。Scaled(1) が現在の拡大率。
+    m_settings.Ui().layerListHeight = listHeight / std::max(ui::Scaled(1.0f), 0.01f);
+    if (released) {
+        m_settings.Save();
     }
 
+    ImGui::BeginChild("layerPropertyPane", ImVec2(0.0f, 0.0f));
+
     if (layerCount == 0) {
-        if (sideBySide) {
-            ImGui::EndChild();
-        }
+        ImGui::EndChild();
         ImGui::End();
         return;
     }
@@ -446,9 +438,7 @@ void Application::DrawLayerPanel() {
         MarkDocumentChanged();
     }
 
-    if (sideBySide) {
-        ImGui::EndChild();
-    }
+    ImGui::EndChild();
     ImGui::End();
 }
 

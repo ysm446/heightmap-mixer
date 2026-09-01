@@ -138,16 +138,16 @@ ImU32 ErrorColor();
 // 補助テキスト。操作の説明や単位の目安を 1 行で添えるときに使う。
 void HintText(const char* format, ...);
 
-// 2 つの列の境界。ドラッグで左の列の幅を変える。
+// 上下に積んだ 2 つの区画の境界。ドラッグで上の区画の高さを変える。
 //
-// width は**実ピクセル**（`Scaled()` を通した後の値）で受け渡しする。
-// height には列の高さを渡す。`GetContentRegionAvail()` に頼ると、
-// 直前の子ウィンドウの都合で高さが変わってしまう。
+// height は**実ピクセル**（`Scaled()` を通した後の値）で受け渡しする。
+// width には区画の幅を渡す。`GetContentRegionAvail()` に頼ると、
+// 直前の子ウィンドウの都合で幅が変わってしまう。
 //
 // 戻り値は「掴んでいた手を離したフレーム」で true。
 // 設定の保存のように、ドラッグ中に毎フレームやりたくない処理をここへ吊るす。
-bool VerticalSplitter(const char* id, float* width, float minWidth, float maxWidth,
-                      float height);
+bool HorizontalSplitter(const char* id, float* height, float minHeight, float maxHeight,
+                        float width);
 
 // 一覧のサムネイルの下に置く名前。**幅はサムネイルに合わせて渡すこと。**
 // **常に 2 行**で描く（行数が変わると升目の高さが揃わない）。

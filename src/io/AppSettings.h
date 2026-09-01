@@ -19,10 +19,10 @@ struct UiSettings {
     bool followSystemScale = false;
     // 追従しないときの拡大率。
     float manualScale = 1.0f;
-    // レイヤーパネルを 2 列にしたときの、一覧側の列幅（96 DPI 基準）。
+    // レイヤーパネルの一覧側（上の区画）の高さ（96 DPI 基準）。
     // 境界のドラッグで変わる。**拡大率を掛ける前の値で持つ**ので、
-    // 表示スケールを変えても列の見た目の幅が保たれる。
-    float layerListWidth = 300.0f;
+    // 表示スケールを変えても区画の見た目の高さが保たれる。
+    float layerListHeight = 260.0f;
 };
 
 // 表示に関する設定（設定ウィンドウの「表示」節）。

@@ -54,6 +54,7 @@ void Application::DrawMaterialLibraryPanel() {
 
     // マテリアル単体のファイル (.mmmat)。プロジェクト間で持ち回るために使う。
     // プロジェクトにはマテリアルの構造ごと埋め込まれるので、保存には要らない。
+    ImGui::SameLine();
     if (ui::Button("読み込み…", ui::kWideButtonWidth)) {
         const std::filesystem::path path =
             ShowOpenFileDialog(L"マテリアルを読み込む", MaterialFileFilters());

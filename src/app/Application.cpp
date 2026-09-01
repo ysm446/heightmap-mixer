@@ -416,7 +416,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v7");
+    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v9");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -484,14 +484,13 @@ void Application::DrawUi() {
 
 // 既定のドックレイアウト。
 //
-//   +----------+----------------+--------------------+
-//   | レイヤー  | ビューポート    | プレビュー設定      |
-//   | マテリアル |                |                    |
-//   |          |                +--------------------+
-//   |          |                | ライティングと露出   |
-//   |          |                +--------------------+
-//   |          |                | 情報                |
-//   +----------+----------------+--------------------+
+//   +--------------------------------+------------------+
+//   | ビューポート                    | レイヤー          |
+//   |                                | プレビュー設定     |
+//   |                                | ライティングと露出 |
+//   +---------------+----------------+ 情報              |
+//   | テクスチャ     | マテリアル / 天球 |                  |
+//   +---------------+----------------+------------------+
 //
 // 比率で組むので、ウィンドウの大きさが変わってもパネルははみ出さない。
 void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
@@ -503,31 +502,38 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     ImGuiID center = dockspaceId;
     ImGuiID right = 0;
     ImGuiID bottom = 0;
-    // **カラムは右の 1 本だけにする。** 左右に分けると 1 本あたりが狭くなり、
-    // レイヤーを「一覧 | プロパティ」の 2 列で出せない。
-    // まとめたぶん右を広く取り、ビューポートも左右に分けていた頃より広くなる。
-    ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.42f, &right, &center);
+    ImGuiID bottomRight = 0;
+    // **カラムは右の 1 本だけにする。** 左右に分けると 1 本あたりが狭くなる。
+    // 幅は「ラベル：値」の行が窮屈にならない範囲で**できるだけ細く**取る。
+    // パネルは中を上下に割って使うので、横幅を広く取る理由がない。
+    // 余った幅はビューポートへ回す（素材の見え方を確かめるのが主目的）。
+    ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, &right, &center);
     // アセットの帯。**右カラムを切り出した後の center を割る**ので、
     // 帯はビューポートの真下だけに伸び、右カラムの下へは回り込まない。
     ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, &bottom, &center);
+    // 帯をさらに左右へ割る。**素材の一覧はどれもサムネイルの格子**なので、
+    // 「ラベル：値」の行を並べる右カラムより、横に広い帯のほうが枡が多く入る。
+    ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Right, 0.45f, &bottomRight, &bottom);
 
     ImGui::DockBuilderDockWindow("ビューポート", center);
-    // テクスチャはビューポートの下の帯。マテリアルのマップ欄へドラッグして
-    // 割り当てるので、**割り当て先と同時に見えている必要がある。**
-    // マテリアルは右カラム、帯は中央の下なので、同時に見えている。
+    // テクスチャは帯の左、マテリアルは帯の右。**テクスチャのサムネイルを
+    // マテリアルのマップ欄へドラッグして割り当てる**ので、左右に並べて
+    // 掴む側と落とす側が同時に見えるようにする。
     ImGui::DockBuilderDockWindow("テクスチャ", bottom);
+    // **前面にしたい「マテリアル」を後にドックする。** 同じ枠では最後に
+    // ドックしたものが選ばれる。タブの並びは submit した順（マテリアル → 天球）。
+    ImGui::DockBuilderDockWindow("天球", bottomRight);
+    ImGui::DockBuilderDockWindow("マテリアル", bottomRight);
     // 右カラムへタブで重ねる。縦に積むと 1 枚あたりが短くなり、
     // どれもスクロールしないと全体が見えなくなる。
     ImGui::DockBuilderDockWindow("レイヤー", right);
-    ImGui::DockBuilderDockWindow("マテリアル", right);
-    ImGui::DockBuilderDockWindow("天球", right);
     ImGui::DockBuilderDockWindow("プレビュー設定", right);
     ImGui::DockBuilderDockWindow("ライティングと露出", right);
     ImGui::DockBuilderDockWindow("情報", right);
 
     ImGui::DockBuilderFinish(dockspaceId);
 
-    // 前面のタブは「レイヤー」。**1 つの枠にまとめたので、前面にできるのは 1 枚だけ。**
+    // 前面のタブは右カラムが「レイヤー」、帯の右が「マテリアル」。
     // この時点ではまだウィンドウが無いので、実際の指定は各パネルの Begin 直前で行う。
     m_focusDefaultTabs = 3;
 }
