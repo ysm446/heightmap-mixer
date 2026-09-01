@@ -12,8 +12,14 @@ namespace {
 using rhi::DispatchCount;
 // サムネイルの一辺。一覧で並べる大きさに対して十分で、VRAM も食わない。
 constexpr uint32_t kThumbnailSize = 128;
-// サムネイルの中でマップを何回並べるか。1 枚だと模様の粒が分かりにくい。
-constexpr float kThumbnailUvScale = 2.0f;
+// サムネイルの中でマップを何回並べるか。1 未満なら並べず、拡大して一部だけを写す。
+//
+// **0.25（マップの 1/4 だけを拡大して写す）。** 素材の判別は 84 px の
+// マテリアル一覧だけでなく、レイヤー一覧の行（32 px）でもできる必要がある。
+// 1 枚まるごと収めても行では模様が潰れるため、粒を大きく写すほうを採る。
+// サムネイルは「何が写っているか」を見分けるためのもので、
+// マップ全体を見せる場所ではない（それはテクスチャ一覧の役目）。
+constexpr float kThumbnailUvScale = 0.25f;
 
 // GPU 側の ThumbnailConstants と一致させること。
 struct ThumbnailConstants {
