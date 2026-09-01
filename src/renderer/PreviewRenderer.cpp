@@ -130,6 +130,21 @@ struct DofConstants {
     float pad0[2];
 };
 
+// メッシュ 1 回ぶんの描画を数える。
+void CountMeshDraw(RenderStats& stats, const Mesh& mesh, bool asPatches) {
+    if (!mesh.IsValid()) {
+        return;
+    }
+    ++stats.drawCalls;
+    stats.vertices += mesh.IndexCount();
+    if (asPatches) {
+        // 3 制御点のパッチとして投入する。実際の三角形はドメインシェーダが決める。
+        stats.patches += mesh.IndexCount() / 3;
+    } else {
+        stats.triangles += mesh.IndexCount() / 3;
+    }
+}
+
 // 絞りの形から羽根の数へ。0 なら円。
 float ApertureBladeCount(ApertureShape shape) {
     switch (shape) {
@@ -506,6 +521,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         return;
     }
 
+    // 描画の量はフレームごとに数え直す。**描くところで足す**ので、
+    // パスを増やしたときに数え漏らしても、増やした本人が気づきやすい。
+    m_stats = RenderStats{};
+
     // レイヤースタックに変更があれば、メッシュを描く前に評価し直す。
     m_evaluator.EvaluateIfDirty(device, pipelineCache, commandList, stack, textures, materials,
                                 paintMasks);
@@ -646,6 +665,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
             commandList->SetPipelineState(shadowPipeline);
             commandList->SetGraphicsRootConstantBufferView(1, shadowCb.gpuAddress);
             mesh.Draw(commandList, m_tessellationEnabled);
+            CountMeshDraw(m_stats, mesh, m_tessellationEnabled);
 
             TransitionIfNeeded(commandList, m_shadowMap,
                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -692,6 +712,9 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     commandList->SetPipelineState(meshPipeline);
     commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
     mesh.Draw(commandList, useTessellation);
+    CountMeshDraw(m_stats, mesh, useTessellation);
+    m_stats.tessellation = useTessellation;
+    m_stats.tessellationFactor = m_tessellationFactor;
 
     PIXEndEvent(commandList);
 
@@ -745,6 +768,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
             commandList->IASetVertexBuffers(0, 0, nullptr);
             commandList->IASetIndexBuffer(nullptr);
             commandList->DrawInstanced(3, 1, 0, 0);
+            // 画面全体を覆う三角形 1 枚。頂点は頂点シェーダが作る。
+            ++m_stats.drawCalls;
+            m_stats.vertices += 3;
+            m_stats.triangles += 1;
 
             PIXEndEvent(commandList);
         }

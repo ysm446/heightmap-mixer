@@ -68,6 +68,22 @@ struct LightSettings {
     DirectX::XMFLOAT3 Direction() const;
 };
 
+// 1 フレームぶんの描画の量。ビューポートの右上に出す。
+//
+// **投入した量（IA が読む量）を数える。** テセレーションを入れると実際に
+// 出る三角形はこれより多いが、CPU 側では分からないのでパッチ数と上限を添える。
+struct RenderStats {
+    uint32_t drawCalls = 0;
+    // 投入した頂点とインデックス。インデックス付き描画では
+    // 「頂点 = インデックス数」（IA がその回数だけ頂点を読む）。
+    uint64_t vertices = 0;
+    uint64_t triangles = 0;
+    // テセレーションのパッチ数。使っていなければ 0。
+    uint64_t patches = 0;
+    bool tessellation = false;
+    float tessellationFactor = 1.0f;
+};
+
 // 絞りの形。ボケの形になる。
 enum class ApertureShape : uint32_t {
     Circle = 0,
@@ -192,6 +208,8 @@ public:
     float& DisplacementScale() { return m_displacementScale; }
     float DisplacementScale() const { return m_displacementScale; }
     const compositor::MaterialEvaluator& Evaluator() const { return m_evaluator; }
+    // 直前のフレームの描画の量。
+    const RenderStats& Stats() const { return m_stats; }
     uint32_t MaterialResolution() const { return m_materialResolution; }
     void RequestMaterialResolution(uint32_t resolution) { m_requestedMaterialResolution = resolution; }
 
@@ -252,6 +270,7 @@ private:
     bool m_skyboxBlur = kPreviewDefaults.skyboxBlur;
     bool m_shadowEnabled = kPreviewDefaults.shadowEnabled;
     DofSettings m_dof;
+    RenderStats m_stats;
     bool m_tessellationEnabled = kPreviewDefaults.tessellationEnabled;
     float m_tessellationFactor = kPreviewDefaults.tessellationFactor;
     bool m_skyRebuildRequested = false;

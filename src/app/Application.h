@@ -278,6 +278,8 @@ private:
     // フレームレートの上限。0 で上限なし。背面のときは別の値を使う。
     // ビューポートの右上に FPS を出すか（`表示 > FPS`）。
     bool m_showFps = false;
+    // 同じく描画の量を出すか（`表示 > 統計`）。
+    bool m_showStats = false;
     int m_frameRateLimit = 0;
     int m_inactiveFrameRateLimit = 10;
     FrameLimiter m_frameLimiter;

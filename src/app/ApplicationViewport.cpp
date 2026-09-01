@@ -41,6 +41,15 @@ compositor::MaterialLayer* Application::CurrentPaintLayer() {
     return &layer;
 }
 
+// 3 桁ごとに区切る。**桁数の多い数はそのままだと読めない。**
+std::string GroupDigits(uint64_t value) {
+    std::string digits = std::to_string(value);
+    for (int i = static_cast<int>(digits.size()) - 3; i > 0; i -= 3) {
+        digits.insert(static_cast<size_t>(i), ",");
+    }
+    return digits;
+}
+
 // ビューポートに重ねる操作。いまは表示モードの切り替えだけ。
 //
 // トップメニューではなくビューポートの中に置く。見ている場所から目を離さずに
@@ -77,29 +86,69 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
         ImGui::EndPopup();
     }
 
-    // --- FPS ---------------------------------------------------------------
+    // --- FPS と描画の量 ------------------------------------------------------
     // **右上へ置く。** 左上は表示モードの切り替えとライトの数値で埋まっている。
     // ボタンではなく描き込みにする。押すものではないので、枠を持たせない。
-    if (!m_showFps) {
+    if (!m_showFps && !m_showStats) {
         return;
     }
-    // 1 桁台では小数まで出す。整数だけだと 0.8fps が「0 FPS」になり、
-    // 止まっているのか極端に遅いのかが読めない。
-    const float framerate = ImGui::GetIO().Framerate;
-    char fpsText[32] = {};
-    std::snprintf(fpsText, sizeof(fpsText), (framerate < 10.0f) ? "%.1f FPS" : "%.0f FPS",
-                  framerate);
-    const ImVec2 textSize = ImGui::CalcTextSize(fpsText);
+
+    // 行を組み立ててから 1 つの下地にまとめて描く。**枠を 2 つ並べない。**
+    // FPS と統計で別々の箱にすると、片方だけ出したときに位置が揃わない。
+    std::vector<std::string> lines;
+    if (m_showFps) {
+        // 1 桁台では小数まで出す。整数だけだと 0.8fps が「0 FPS」になり、
+        // 止まっているのか極端に遅いのかが読めない。
+        const float framerate = ImGui::GetIO().Framerate;
+        char text[32] = {};
+        std::snprintf(text, sizeof(text), (framerate < 10.0f) ? "%.1f FPS" : "%.0f FPS",
+                      framerate);
+        lines.emplace_back(text);
+    }
+    if (m_showStats) {
+        const renderer::RenderStats& stats = m_renderer.Stats();
+        char text[96] = {};
+        std::snprintf(text, sizeof(text), "ドローコール %u", stats.drawCalls);
+        lines.emplace_back(text);
+        std::snprintf(text, sizeof(text), "頂点 %s", GroupDigits(stats.vertices).c_str());
+        lines.emplace_back(text);
+        // テセレーション中は、三角形はドメインシェーダが決めるので CPU では分からない。
+        // **数えられないものを数えたふりをしない。** 投入したパッチ数と上限を出す。
+        if (stats.tessellation) {
+            std::snprintf(text, sizeof(text), "パッチ %s (x%.0f まで)",
+                          GroupDigits(stats.patches).c_str(), stats.tessellationFactor);
+        } else {
+            std::snprintf(text, sizeof(text), "三角形 %s", GroupDigits(stats.triangles).c_str());
+        }
+        lines.emplace_back(text);
+    }
+
     const ImVec2 padding(ui::Scaled(8.0f), ui::Scaled(4.0f));
-    const ImVec2 textMax(viewportMax.x - margin, viewportMin.y + margin + textSize.y +
-                                                     padding.y * 2.0f);
-    const ImVec2 textMin(textMax.x - textSize.x - padding.x * 2.0f, viewportMin.y + margin);
+    const float lineHeight = ImGui::GetTextLineHeight();
+    const float spacing = ImGui::GetStyle().ItemSpacing.y * 0.5f;
+    float widest = 0.0f;
+    for (const std::string& line : lines) {
+        widest = std::max(widest, ImGui::CalcTextSize(line.c_str()).x);
+    }
+    const float height = lineHeight * static_cast<float>(lines.size()) +
+                         spacing * static_cast<float>(lines.size() - 1);
+
+    const ImVec2 boxMax(viewportMax.x - margin,
+                        viewportMin.y + margin + height + padding.y * 2.0f);
+    const ImVec2 boxMin(boxMax.x - widest - padding.x * 2.0f, viewportMin.y + margin);
 
     // 明るい素材の上でも読めるように、暗い下地を敷く。
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    drawList->AddRectFilled(textMin, textMax, IM_COL32(8, 10, 12, 190), ui::Scaled(4.0f));
-    drawList->AddText(ImVec2(textMin.x + padding.x, textMin.y + padding.y),
-                      IM_COL32(235, 235, 235, 255), fpsText);
+    drawList->AddRectFilled(boxMin, boxMax, IM_COL32(8, 10, 12, 190), ui::Scaled(4.0f));
+
+    float y = boxMin.y + padding.y;
+    for (const std::string& line : lines) {
+        // **右へ揃える。** 桁数が変わるたびに数字の頭が動くと、目で追えない。
+        const float width = ImGui::CalcTextSize(line.c_str()).x;
+        drawList->AddText(ImVec2(boxMax.x - padding.x - width, y),
+                          IM_COL32(235, 235, 235, 255), line.c_str());
+        y += lineHeight + spacing;
+    }
 }
 
 // L + 左ドラッグでライトの向きを変える。

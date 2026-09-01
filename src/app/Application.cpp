@@ -164,6 +164,7 @@ bool Application::Initialize(const StartupOptions& options) {
         m_vsync = display.vsync;
         m_hotReloadEnabled = display.hotReload;
         m_showFps = display.showFps;
+        m_showStats = display.showStats;
         m_frameRateLimit = display.frameRateLimit;
         m_inactiveFrameRateLimit = display.inactiveFrameRateLimit;
         for (int i = 0; i < 4; ++i) {
@@ -447,9 +448,13 @@ void Application::DrawUi() {
                 m_rebuildLayout = true;
             }
             ImGui::Separator();
+            // 切り替えたその場で覚える。設定ウィンドウと同じ作法。
             if (ImGui::MenuItem("FPS", nullptr, &m_showFps)) {
-                // 切り替えたその場で覚える。設定ウィンドウと同じ作法。
                 m_settings.Display().showFps = m_showFps;
+                m_settings.Save();
+            }
+            if (ImGui::MenuItem("統計", nullptr, &m_showStats)) {
+                m_settings.Display().showStats = m_showStats;
                 m_settings.Save();
             }
             ImGui::Separator();
@@ -820,9 +825,13 @@ void Application::DrawSettingsWindow() {
         displayChanged |= ui::PropertyColor("背景色", m_clearColor, kDefaultClearColor);
         if (displayChanged) {
             // design-guide の「設定ウィンドウ」に従い、変えたらその場で書く。
+            // **この節で触る値はすべてここへ書き戻す。** 1 つでも漏れると、
+            // 画面では変わったのに次回の起動で戻る（気づきにくい）。
             io::DisplaySettings& display = m_settings.Display();
             display.vsync = m_vsync;
             display.hotReload = m_hotReloadEnabled;
+            display.frameRateLimit = m_frameRateLimit;
+            display.inactiveFrameRateLimit = m_inactiveFrameRateLimit;
             for (int i = 0; i < 4; ++i) {
                 display.clearColor[i] = m_clearColor[i];
             }
