@@ -370,6 +370,10 @@ int Application::Run() {
             m_materialStack.MarkDirty();
         }
 
+        // ハイトの範囲は深度テストのためレンダラが描く。設定の写しは持たない方針
+        // だが、レンダラは AppSettings を知らないので、描く直前に毎フレーム渡す。
+        m_renderer.ShowHeightGuide() = m_settings.Display().showHeightGuide;
+
         m_renderer.Render(m_device, m_pipelineCache, commandList, m_materialStack,
                           m_textureLibrary, m_materialLibrary, m_paintMasks);
 

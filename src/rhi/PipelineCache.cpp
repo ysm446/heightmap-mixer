@@ -63,6 +63,8 @@ std::wstring GraphicsPipelineDesc::MakeKey() const {
     key += std::to_wstring(static_cast<int>(fillMode));
     key += depthTest ? L"#t" : L"#f";
     key += depthWrite ? L"t" : L"f";
+    key += lineTopology ? L"t" : L"f";
+    key += alphaBlend ? L"t" : L"f";
     return key;
 }
 
@@ -244,6 +246,16 @@ ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc
     }
 
     psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+    if (desc.alphaBlend) {
+        D3D12_RENDER_TARGET_BLEND_DESC& blend = psoDesc.BlendState.RenderTarget[0];
+        blend.BlendEnable = TRUE;
+        blend.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+        blend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+        blend.BlendOp = D3D12_BLEND_OP_ADD;
+        blend.SrcBlendAlpha = D3D12_BLEND_ONE;
+        blend.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+        blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    }
     psoDesc.SampleMask = UINT_MAX;
 
     psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
@@ -267,7 +279,9 @@ ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc
 
     // テセレーションを使うときは、IA へパッチとして渡す。
     psoDesc.PrimitiveTopologyType = useTessellation ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH
-                                                    : D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+                                    : desc.lineTopology
+                                        ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE
+                                        : D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     psoDesc.RTVFormats[0] = desc.rtvFormat;
     if (desc.rtvFormat1 != DXGI_FORMAT_UNKNOWN) {
         // RTV1 を使うなら RTV0 も必須。歯抜けの MRT は E_INVALIDARG になる。

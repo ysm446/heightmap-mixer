@@ -353,12 +353,12 @@ void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewpo
     drawList->PopClipRect();
 }
 
-// ハイトの範囲。合成した Height の 0 / 0.5 / 1 がワールドのどこに来るかを枠で示す。
+// ハイトの範囲のラベル（0.0 / 0.5 / 1.0）。
 //
-// ディスプレイスメントは `(height - 0.5) × 変位量` を面の法線方向へ押し出すので、
-// 0.5 が元の面、0 / 1 がその上下 ±0.5 × 変位量になる。平面のときだけ描く
-// （球とキューブは法線方向への押し出しなので、直方体では表せない）。
-// 色は他のギズモと同じく固定（テーマから引かない）。
+// **枠の線はレンダラが描く**（`PreviewRenderer::DrawHeightGuideOverlay`）。
+// シーンの深度でテストしてメッシュの向こう側を隠すためで、ImGui の
+// オーバーレイでは深度が使えない。文字だけは ImGui で重ねる
+// （手前の角に添えるので、隠れてもラベルの意味は保たれる）。
 void Application::DrawHeightGuide(const ImVec2& viewportMin, const ImVec2& viewportMax) {
     if (!m_settings.Display().showHeightGuide) {
         return;
@@ -378,58 +378,31 @@ void Application::DrawHeightGuide(const ImVec2& viewportMin, const ImVec2& viewp
     const float half = renderer::PreviewRenderer::kPlaneSize * 0.5f;
     const float scale = m_renderer.DisplacementScale();
 
-    const auto project = [&](const XMFLOAT3& world) {
-        return ProjectToViewport(viewProjection, world, viewportMin, size);
-    };
-
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     drawList->PushClipRect(viewportMin, viewportMax, true);
 
-    const auto drawWorldLine = [&](const XMFLOAT3& a, const XMFLOAT3& b, ImU32 lineColor,
-                                   float thickness) {
-        const ProjectedPoint pa = project(a);
-        const ProjectedPoint pb = project(b);
-        if (pa.visible && pb.visible) {
-            drawList->AddLine(pa.screen, pb.screen, lineColor, thickness);
-        }
-    };
-
-    // 平面の縁に沿った矩形を、height 0 / 0.5 / 1 の高さに引く。
     struct Level {
         float height;
         ImU32 color;
         const char* label;
     };
-    // 0.5（元の面）は目安の中でも基準なので、少し落とした色で区別する。
+    // 0.5（元の面）は基準なので、レンダラの線と同じく少し落とした色にする。
     const Level levels[] = {
         {0.0f, IM_COL32(150, 160, 175, 200), "0.0"},
         {0.5f, IM_COL32(150, 160, 175, 110), "0.5"},
         {1.0f, IM_COL32(150, 160, 175, 200), "1.0"},
     };
 
-    const XMFLOAT2 corners[4] = {
-        {-half, -half}, {half, -half}, {half, half}, {-half, half}};
-
     for (const Level& level : levels) {
         const float y = (level.height - 0.5f) * scale;
-        for (int i = 0; i < 4; ++i) {
-            const XMFLOAT2& a = corners[i];
-            const XMFLOAT2& b = corners[(i + 1) % 4];
-            drawWorldLine(XMFLOAT3{a.x, y, a.y}, XMFLOAT3{b.x, y, b.y}, level.color, 1.6f);
-        }
         // ラベルは手前の角（+X, +Z）へ。線と重ならないよう少し外へずらす。
-        if (const ProjectedPoint corner = project(XMFLOAT3{half, y, half}); corner.visible) {
+        const ProjectedPoint corner =
+            ProjectToViewport(viewProjection, XMFLOAT3{half, y, half}, viewportMin, size);
+        if (corner.visible) {
             drawList->AddText(ImVec2(corner.screen.x + ui::Scaled(6.0f),
                                      corner.screen.y - ImGui::GetTextLineHeight() * 0.5f),
                               level.color, level.label);
         }
-    }
-
-    // 4 隅の縦の辺（height 0 → 1）。
-    for (const XMFLOAT2& corner : corners) {
-        drawWorldLine(XMFLOAT3{corner.x, -0.5f * scale, corner.y},
-                      XMFLOAT3{corner.x, 0.5f * scale, corner.y},
-                      IM_COL32(150, 160, 175, 140), 1.2f);
     }
 
     drawList->PopClipRect();

@@ -43,6 +43,10 @@ struct GraphicsPipelineDesc {
     D3D12_FILL_MODE fillMode = D3D12_FILL_MODE_SOLID;
     bool depthTest = true;
     bool depthWrite = true;
+    // ライン描画（ガイド線など）。IA へ LINELIST として渡す。テセレーションとは併用不可。
+    bool lineTopology = false;
+    // RTV0 に通常のアルファ合成（src.a / 1 - src.a）を掛ける。半透明のガイド線で使う。
+    bool alphaBlend = false;
 
     std::wstring MakeKey() const;
 };

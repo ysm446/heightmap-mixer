@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-02 09:11
+更新日時: 2026-09-02 09:56
 
 ## 現在の状況
 
@@ -42,6 +42,17 @@ Megascans の ORD（チャンネルパック）と EXR にも対応した。
 UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
 
 ## 完了済み
+
+- 2026-09-02 09:56 — **ハイトの範囲の枠を深度テスト付きに**。
+  線を ImGui から `PreviewRenderer::DrawHeightGuideOverlay`（`OverlayLines.hlsl`、
+  トーンマップ後・深度読み取りのラインパス）へ移した。ラベルは ImGui のまま。
+  - PSO に `lineTopology` / `alphaBlend` を追加。**サンプラと同じく、
+    トポロジやブレンドも PSO の一部**なので desc とキーに含める。
+  - `PreviewOutput` に RTV フラグを付けたら「Clear / Discard で初期化してから
+    使え」というデバッグレイヤーのエラーが出た（NOT_ZEROED ヒープの規則）。
+    生成直後に `DiscardResource` を 1 回入れて解決。
+  - 線がレンダーターゲットに入ったので、`--screenshot` にも写る
+    （08:50 の「写らない」は解消）。
 
 - 2026-09-02 09:11 — **メニューの整理**。`表示` → `ウィンドウ`（レイアウトのリセットと
   設定だけ）。FPS / 統計 / ハイトの範囲（「高さの目安」から改名）は

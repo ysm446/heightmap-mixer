@@ -211,6 +211,9 @@ public:
     // ハイトを形状に反映する量（0 で反映しない）。頂点シェーダで押し出す。
     float& DisplacementScale() { return m_displacementScale; }
     float DisplacementScale() const { return m_displacementScale; }
+    // ハイトの範囲（height 0 / 0.5 / 1 の枠）を描くか。設定は AppSettings が持ち、
+    // Application が毎フレーム写す。深度テストするためレンダラ側で描く。
+    bool& ShowHeightGuide() { return m_showHeightGuide; }
     const compositor::MaterialEvaluator& Evaluator() const { return m_evaluator; }
     // 直前のフレームの描画の量。
     const RenderStats& Stats() const { return m_stats; }
@@ -234,6 +237,10 @@ private:
     // ライトから見たビュー×投影。プレビューの被写体を囲む平行投影。
     DirectX::XMMATRIX LightViewProjection() const;
     void ReleaseTargets(rhi::Device& device);
+    // ハイトの範囲の枠。トーンマップ後の表示用テクスチャへ、
+    // シーンの深度でテストしながらラインを描く（平面のときだけ）。
+    void DrawHeightGuideOverlay(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                ID3D12GraphicsCommandList* commandList);
 
     Mesh m_sphere;
     Mesh m_plane;
@@ -277,6 +284,7 @@ private:
     RenderStats m_stats;
     bool m_tessellationEnabled = kPreviewDefaults.tessellationEnabled;
     float m_tessellationFactor = kPreviewDefaults.tessellationFactor;
+    bool m_showHeightGuide = false;
     bool m_skyRebuildRequested = false;
     // Environment がいま持っている HDRI。較正倍率だけを掛け直せるかの判断に使う。
     std::filesystem::path m_loadedHdriPath;

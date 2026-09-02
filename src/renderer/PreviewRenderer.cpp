@@ -16,6 +16,17 @@ namespace {
 constexpr DXGI_FORMAT kSceneColorFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 constexpr DXGI_FORMAT kDepthFormat = DXGI_FORMAT_D32_FLOAT;
 constexpr DXGI_FORMAT kOutputFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+// ガイド線の端点の最大数。シェーダの MM_OVERLAY_MAX_VERTICES と一致させること。
+constexpr uint32_t kOverlayLineMaxVertices = 128;
+
+// GPU 側の OverlayLineConstants と一致させること。
+struct OverlayLineConstants {
+    DirectX::XMFLOAT4X4 viewProjection;
+    float color[4];
+    // xyz: ワールド座標、w: 端点ごとの不透明度。
+    DirectX::XMFLOAT4 positions[kOverlayLineMaxVertices];
+};
 // マテリアル UV バッファ。UV はタイル 1 枚ぶんに畳んであるため半精度で足りる
 // （1.0 付近でも刻みは 2^-11 で、2K のペイントマスクの 1 テクセルに収まる）。
 constexpr DXGI_FORMAT kMaterialUvFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -480,12 +491,25 @@ bool PreviewRenderer::Resize(rhi::Device& device, uint32_t width, uint32_t heigh
     outputDesc.height = height;
     outputDesc.format = kOutputFormat;
     outputDesc.allowUnorderedAccess = true;
+    // トーンマップ（コンピュート）後に、深度テスト付きのガイド線を
+    // グラフィックスパスで重ねるため、RTV としても使えるようにする。
+    outputDesc.allowRenderTarget = true;
     outputDesc.createSrv = true;
     outputDesc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     outputDesc.debugName = L"PreviewOutput";
     if (!device.Allocator().CreateTexture2D(outputDesc, m_output)) {
         return false;
     }
+
+    // RTV フラグ付きのリソースは、最初に Clear / Discard / Copy で初期化しないと
+    // デバッグレイヤーが「未初期化のまま描画に使った」というエラーを出す
+    // （NOT_ZEROED ヒープの規則）。中身はトーンマップが毎フレーム全画素を
+    // 書き潰すので、Discard で十分。
+    device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+        TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        commandList->DiscardResource(m_output.resource.Get(), nullptr);
+        TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    });
 
     m_width = width;
     m_height = height;
@@ -841,8 +865,110 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
 
     commandList->Dispatch(rhi::DispatchCount(m_width), rhi::DispatchCount(m_height), 1);
 
+    PIXEndEvent(commandList);
+
+    // ハイトの範囲の枠。シーンの深度でテストするため、ImGui ではなくここで描く。
+    DrawHeightGuideOverlay(device, pipelineCache, commandList);
+
     // ImGui から SRV として読むため、ピクセルシェーダ可視の状態へ移す。
     TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+}
+
+// ハイトの範囲の枠（height 0 / 0.5 / 1 の位置）。
+//
+// トーンマップ後の表示用テクスチャへ、露出を通さない表示色のまま描く
+// （ギズモは画面上で一定の明るさに見えるべきもの）。深度は読むだけで書かない。
+// ラベル（0.0 / 0.5 / 1.0 の文字）は Application 側の ImGui が重ねる。
+void PreviewRenderer::DrawHeightGuideOverlay(rhi::Device& device,
+                                             rhi::PipelineCache& pipelineCache,
+                                             ID3D12GraphicsCommandList* commandList) {
+    // 平面のときだけ。球とキューブは法線方向への押し出しなので、
+    // 直方体の枠では高さの範囲を表せない。
+    if (!m_showHeightGuide || m_shape != PreviewShape::Plane) {
+        return;
+    }
+
+    rhi::GraphicsPipelineDesc pipelineDesc;
+    pipelineDesc.shaderPath = L"OverlayLines.hlsl";
+    pipelineDesc.vertexEntry = L"VsMain";
+    pipelineDesc.pixelEntry = L"PsMain";
+    pipelineDesc.rtvFormat = kOutputFormat;
+    pipelineDesc.dsvFormat = kDepthFormat;
+    pipelineDesc.layout = rhi::VertexLayout::None;
+    pipelineDesc.cullMode = D3D12_CULL_MODE_NONE;
+    pipelineDesc.depthTest = true;
+    pipelineDesc.depthWrite = false;
+    pipelineDesc.lineTopology = true;
+    pipelineDesc.alphaBlend = true;
+
+    ID3D12PipelineState* pipeline = pipelineCache.GetGraphics(pipelineDesc);
+    const rhi::UploadAllocation cb =
+        device.Upload().Allocate(sizeof(OverlayLineConstants), 256);
+    if (pipeline == nullptr || !cb.IsValid()) {
+        return;
+    }
+
+    OverlayLineConstants constants = {};
+    XMStoreFloat4x4(&constants.viewProjection,
+                    XMMatrixMultiply(m_camera.ViewMatrix(), m_camera.ProjectionMatrix()));
+    // ImGui のギズモと同じ無彩色（表示色）。
+    constants.color[0] = 150.0f / 255.0f;
+    constants.color[1] = 160.0f / 255.0f;
+    constants.color[2] = 175.0f / 255.0f;
+    constants.color[3] = 1.0f;
+
+    uint32_t count = 0;
+    const auto addLine = [&](const XMFLOAT3& a, const XMFLOAT3& b, float alpha) {
+        if (count + 2 > kOverlayLineMaxVertices) {
+            return;
+        }
+        constants.positions[count++] = XMFLOAT4{a.x, a.y, a.z, alpha};
+        constants.positions[count++] = XMFLOAT4{b.x, b.y, b.z, alpha};
+    };
+
+    constexpr float kHalf = kPlaneSize * 0.5f;
+    const XMFLOAT2 corners[4] = {{-kHalf, -kHalf}, {kHalf, -kHalf}, {kHalf, kHalf},
+                                 {-kHalf, kHalf}};
+
+    // height 0 / 0.5 / 1 の矩形。0.5（基準面）だけ薄くして区別する。
+    const float levels[3] = {0.0f, 0.5f, 1.0f};
+    const float levelAlphas[3] = {0.78f, 0.43f, 0.78f};
+    for (int level = 0; level < 3; ++level) {
+        const float y = (levels[level] - 0.5f) * m_displacementScale;
+        for (int i = 0; i < 4; ++i) {
+            const XMFLOAT2& a = corners[i];
+            const XMFLOAT2& b = corners[(i + 1) % 4];
+            addLine(XMFLOAT3{a.x, y, a.y}, XMFLOAT3{b.x, y, b.y}, levelAlphas[level]);
+        }
+    }
+    // 四隅の縦の辺（height 0 → 1）。
+    for (const XMFLOAT2& corner : corners) {
+        addLine(XMFLOAT3{corner.x, -0.5f * m_displacementScale, corner.y},
+                XMFLOAT3{corner.x, 0.5f * m_displacementScale, corner.y}, 0.55f);
+    }
+
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+    PIXBeginEvent(commandList, PIX_COLOR(160, 170, 190), "PreviewHeightGuide");
+
+    TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    // DoF が有効なフレームでは深度が SRV になっている。DSV として束ね直す
+    // （書き込みは PSO 側で無効にしてある）。
+    TransitionIfNeeded(commandList, m_depth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_output.rtv.cpu;
+    const D3D12_CPU_DESCRIPTOR_HANDLE dsv = m_depth.dsv.cpu;
+    commandList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+
+    commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
+    commandList->SetPipelineState(pipeline);
+    commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
+    commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+    commandList->IASetVertexBuffers(0, 0, nullptr);
+    commandList->IASetIndexBuffer(nullptr);
+    commandList->DrawInstanced(count, 1, 0, 0);
+    ++m_stats.drawCalls;
+    m_stats.vertices += count;
 
     PIXEndEvent(commandList);
 }
