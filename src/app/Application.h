@@ -224,6 +224,9 @@ private:
     bool m_showSettings = false;
     // 書き出しウィンドウ。設定ウィンドウと同じくドックへは収めない。
     bool m_showExport = false;
+    // 情報ウィンドウ。常設はせず「ウィンドウ」メニューから開く補助ウィンドウ。
+    // 数値の確認がたまに要るだけで、右カラムの常設タブにするほどではない。
+    bool m_showInfo = false;
     io::ExportSettings m_exportSettings;
     // 書き出しの実行要求。**GPU 待機とファイル入出力を伴うのでフレームの外で処理する。**
     bool m_pendingExport = false;
@@ -271,9 +274,10 @@ private:
     // ドックレイアウトの初期化。ini に配置が無ければ既定レイアウトを組む。
     bool m_layoutChecked = false;
     bool m_rebuildLayout = false;
-    // 既定レイアウトを組んだ直後に、前面へ出したいタブを押さえるための残りフレーム数。
-    // ini に無いウィンドウは作られた順で前面が決まってしまうため、明示的に上書きする。
-    int m_focusDefaultTabs = 0;
+    // 前面へ出したいタブ（レイヤー）を押さえるための残りフレーム数。
+    // ini は「最後に見ていたタブ」を復元するが、作業の起点はレイヤーなので、
+    // 起動直後と既定レイアウトを組み直した直後は明示的に上書きする。
+    int m_focusDefaultTabs = 3;
     // **表示設定（垂直同期・FPS 上限・ホットリロード・背景色・オーバーレイ）は
     // ここに写しを持たない。** `m_settings.Display()` を直接読み書きする。
     // 写しを持つと「UI では変わったのに設定へ書き戻し忘れて次回起動で戻る」

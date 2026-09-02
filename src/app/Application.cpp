@@ -444,6 +444,7 @@ void Application::DrawUi() {
                 m_rebuildLayout = true;
             }
             ImGui::Separator();
+            ImGui::MenuItem("情報", nullptr, &m_showInfo);
             ImGui::MenuItem("設定", nullptr, &m_showSettings);
             ImGui::EndMenu();
         }
@@ -455,7 +456,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v12");
+    const ImGuiID dockspaceId = ImGui::GetID("MaterialMixerDockSpace_v13");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -483,10 +484,10 @@ void Application::DrawUi() {
     DrawTextureLibraryPanel();
     DrawMaterialPanel();
     DrawLightingPanel();
-    DrawInfoPanel();
 
     DrawSettingsWindow();
     DrawExportWindow();
+    DrawInfoPanel();
 
     if (m_focusDefaultTabs > 0) {
         --m_focusDefaultTabs;
@@ -524,9 +525,11 @@ void Application::DrawUi() {
 //   | ビューポート                    | レイヤー          |
 //   |                                | プレビュー設定     |
 //   |                                | ライティング |
-//   +---------------+----------------+ 情報              |
+//   +---------------+----------------+                  |
 //   | テクスチャ     | マテリアル / 天球 |                  |
 //   +---------------+----------------+------------------+
+//
+// 情報はドックへは収めず、「ウィンドウ」メニューから補助ウィンドウとして開く。
 //
 // 比率で組むので、ウィンドウの大きさが変わってもパネルははみ出さない。
 void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
@@ -565,7 +568,6 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     ImGui::DockBuilderDockWindow("レイヤー", right);
     ImGui::DockBuilderDockWindow("プレビュー設定", right);
     ImGui::DockBuilderDockWindow("ライティング", right);
-    ImGui::DockBuilderDockWindow("情報", right);
 
     ImGui::DockBuilderFinish(dockspaceId);
 
@@ -825,8 +827,16 @@ void Application::DrawSettingsWindow() {
     ImGui::End();
 }
 
+// 実行時の数値の確認用。常設はせず「ウィンドウ」メニューから開く。
+// 設定ウィンドウと同じくドックへは収めない。
 void Application::DrawInfoPanel() {
-    if (ImGui::Begin("情報")) {
+    if (!m_showInfo) {
+        return;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(ui::Scaled(360.0f), ui::Scaled(320.0f)),
+                             ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("情報", &m_showInfo)) {
         const ImGuiIO& io = ImGui::GetIO();
 
         if (ui::BeginPropertyTable("infoRows")) {
