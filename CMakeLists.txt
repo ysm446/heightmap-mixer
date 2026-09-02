@@ -17,7 +17,7 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     endif()
 endif()
 
-project(material_mixer VERSION 0.1.0 LANGUAGES CXX)
+project(material_mixer VERSION 0.1.0 LANGUAGES CXX RC)
 
 if(NOT WIN32)
     message(FATAL_ERROR "本プロジェクトは Windows 専用です。")
@@ -79,6 +79,8 @@ find_package(tinyexr CONFIG REQUIRED)
 
 set(mm_sources
     src/app/Main.cpp
+    src/app/resources/Resource.h
+    src/app/resources/Resources.rc
     src/app/Application.cpp
     src/app/Application.h
     src/app/ApplicationDocument.cpp
