@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-02 08:27
+更新日時: 2026-09-02 12:50
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -105,7 +105,7 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
   {
     "name": "夕焼け",
     "source": "hdri",              // procedural / hdri
-    "hdri": "../../assets/hdr/pink_sunrise_4k.hdr",   // 使わなければ null
+    "hdri": "../../data/hdr/pink_sunrise_4k.hdr",   // 使わなければ null
     "skyLuminance": 12000.0,       // この HDRI の空を何 cd/m^2 とみなすか
     "iblIntensity": 1.0,
     "procedural": { "zenithColor": [...], "horizonColor": [...],
@@ -132,7 +132,7 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 
 ```json
 "textures": [
-  { "id": 1, "name": "T_Gravel_D.png", "path": "../../assets/textures/T_Gravel_D.png" }
+  { "id": 1, "name": "T_Gravel_D.png", "path": "../../data/textures/T_Gravel_D.png" }
 ]
 ```
 
@@ -199,9 +199,9 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
   "baseColorTint": [1.0, 1.0, 1.0],
   "roughness": 0.5, "metallic": 0.0, "ambientOcclusion": 1.0,
   "maps": {
-    "baseColor": "../../assets/textures/T_Gravel_D.png",
-    "normal":    "../../assets/textures/T_Gravel_N.png",
-    "roughness": { "texture": "../../assets/textures/T_Gravel_ORD.png", "channel": "g" }
+    "baseColor": "../../data/textures/T_Gravel_D.png",
+    "normal":    "../../data/textures/T_Gravel_N.png",
+    "roughness": { "texture": "../../data/textures/T_Gravel_ORD.png", "channel": "g" }
   }
 }
 ```

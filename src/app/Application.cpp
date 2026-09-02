@@ -55,22 +55,22 @@ std::filesystem::path ResolveShaderRoot() {
     return std::filesystem::path(MM_SHADER_DIR);
 }
 
-// スクリーンショットの置き場所。環境変数 MM_ASSETS_DIR で差し替えられる。
-// **仮の置き場所。** assets/ は .gitignore で外してあるので、
+// スクリーンショットの置き場所。環境変数 MM_DATA_DIR で差し替えられる。
+// **仮の置き場所。** data/ は .gitignore で外してあるので、
 // 撮ったものがリポジトリに混ざらない。
 std::filesystem::path ResolveScreenshotDirectory() {
-    std::filesystem::path assets(MM_ASSETS_DIR);
-    const DWORD needed = ::GetEnvironmentVariableW(L"MM_ASSETS_DIR", nullptr, 0);
+    std::filesystem::path dataDir(MM_DATA_DIR);
+    const DWORD needed = ::GetEnvironmentVariableW(L"MM_DATA_DIR", nullptr, 0);
     if (needed > 0) {
         std::wstring value;
         value.resize(needed);
-        const DWORD written = ::GetEnvironmentVariableW(L"MM_ASSETS_DIR", value.data(), needed);
+        const DWORD written = ::GetEnvironmentVariableW(L"MM_DATA_DIR", value.data(), needed);
         if (written > 0) {
             value.resize(written);
-            assets = std::filesystem::path(value);
+            dataDir = std::filesystem::path(value);
         }
     }
-    return assets / L"screenshots";
+    return dataDir / L"screenshots";
 }
 
 // 撮った時刻をそのままファイル名にする。連番だと前回の続きが分からない。

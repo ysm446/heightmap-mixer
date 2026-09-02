@@ -187,9 +187,9 @@ target_compile_definitions(material_mixer PRIVATE
     MM_APP_VERSION="${PROJECT_VERSION}"
     # シェーダはホットリロードのためソースツリーを直接参照する。
     MM_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders"
-    # スクリーンショットの既定の置き場所。assets/ は .gitignore で外してあるので、
+    # スクリーンショットの既定の置き場所。data/ は .gitignore で外してあるので、
     # 撮ったものがリポジトリに混ざらない。
-    MM_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    MM_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
     $<$<CONFIG:Debug>:MM_DEBUG=1>
 )
 
