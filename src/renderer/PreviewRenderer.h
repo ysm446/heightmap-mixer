@@ -159,6 +159,14 @@ public:
     bool Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache);
     void Shutdown(rhi::Device& device);
 
+    // プロジェクトが持つ設定をすべて既定へ戻す。「新規」で使う。
+    //
+    // **対象は io::ReadPreview が読む項目と一致させること。**
+    // 片方に足し忘れると、「新規にしたのに前のプロジェクトの値が残る」
+    // （こちらの漏れ）か「開いても既定に戻らない」（あちらの漏れ）になる。
+    // 天球は SkyLibrary が持つので、ここでは触らない。
+    void ResetSettings();
+
     // ビューポートに適用する天球を渡す。**毎フレーム呼んでよい。**
     // 前回と中身が違えば、必要な作り直し（環境マップの再生成か、
     // 較正倍率だけの掛け直し）を予約する。実際の生成はフレームの外で行う。

@@ -208,6 +208,10 @@ void Application::ResetProject() {
     m_materialStack.Layers() = defaults.Layers();
     m_materialStack.MarkDirty();
 
+    // **プレビュー設定も既定へ戻す。** 形状・変位量・カメラ・ライト・露出・
+    // 被写界深度はプロジェクトが持つ値なので、戻さないと前の中身が残る。
+    m_renderer.ResetSettings();
+
     m_selectedLayer = 0;
     m_selectedMaterial = 0;
     m_selectedTexture = 0;

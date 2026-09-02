@@ -286,6 +286,34 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
     }
 }
 
+void PreviewRenderer::ResetSettings() {
+    const PreviewDefaults& defaults = kPreviewDefaults;
+    m_shape = defaults.shape;
+    m_tonemap = defaults.tonemap;
+    m_useMaterialTextures = defaults.useMaterialTextures;
+    m_materialUvScale = defaults.materialUvScale;
+    m_displacementScale = defaults.displacementScale;
+    m_tessellationEnabled = defaults.tessellationEnabled;
+    m_tessellationFactor = defaults.tessellationFactor;
+    m_showSkybox = defaults.showSkybox;
+    m_skyboxBlur = defaults.skyboxBlur;
+    m_shadowEnabled = defaults.shadowEnabled;
+    // 解像度の作り直しは GPU 待機を伴うので、要求だけ積む。
+    RequestMaterialResolution(defaults.materialResolution);
+
+    // 各節の既定値は構造体の初期値。数値を直接書かない。
+    m_camera.SetState(CameraState{});
+    m_light = LightSettings{};
+    m_exposure = ExposureSettings{};
+    m_dof = DofSettings{};
+    m_material = MaterialSettings{};
+
+    // 表示モードはプロジェクトに保存しないが、ここでは戻す。
+    // ハイトやラフネスを覗いたまま「新規」を押すと、
+    // 真っ白な球が出て「何も描かれていない」ように見えるため。
+    m_debugView = DebugView::Shaded;
+}
+
 void PreviewRenderer::SetActiveSky(const SkyDefinition& sky) {
     if (NeedsEnvironmentRebuild(m_activeSky, sky)) {
         m_skyRebuildRequested = true;

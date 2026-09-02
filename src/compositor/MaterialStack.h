@@ -11,6 +11,13 @@ class MaterialStack {
 public:
     MaterialStack();
 
+    // 何も無いところに置く下地レイヤー 1 枚。
+    //
+    // **起伏も模様も持たせない。** 「新規」の直後は、ただの球が既定の背景の中に
+    // 見えるだけの状態から始める。読み込んだプロジェクトのレイヤーが空だったときの
+    // 補いにも同じものを使う（2 か所で別の下地を作らない）。
+    static MaterialLayer MakeBaseLayer();
+
     std::vector<MaterialLayer>& Layers() { return m_layers; }
     const std::vector<MaterialLayer>& Layers() const { return m_layers; }
 

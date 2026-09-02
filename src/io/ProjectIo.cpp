@@ -1061,10 +1061,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
     }
     if (refs.stack.Layers().empty()) {
         // 空のスタックは評価もできず操作の起点も無いので、下地を 1 枚だけ置く。
-        compositor::MaterialLayer base;
-        base.name = "ベース";
-        base.mask.source = compositor::MaskSource::Constant;
-        refs.stack.Layers().push_back(base);
+        refs.stack.Layers().push_back(compositor::MaterialStack::MakeBaseLayer());
     }
     refs.stack.MarkDirty();
 
