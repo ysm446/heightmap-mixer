@@ -22,7 +22,9 @@ inline constexpr float kWideButtonWidth = 148.0f;
 
 // 一覧のサムネイルに添える名前の文字サイズ（基準は 17）。
 // **これ以外の場所で文字サイズを変えない。**
-inline constexpr float kCaptionFontSize = 13.0f;
+// 本文よりはっきり小さくして、サムネイルの添え物だと分かるようにする。
+// 素材名は長い（`T_Rocky_Soil_..._D.EXR`）ので、小さいほど省略が減る。
+inline constexpr float kCaptionFontSize = 12.0f;
 
 // 列の境界を掴める幅（96 DPI 基準）。線そのものより広く取らないと狙って掴めない。
 inline constexpr float kSplitterGrabWidth = 8.0f;
