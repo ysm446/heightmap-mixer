@@ -22,6 +22,8 @@ static const uint kInvalidTextureIndex = 0xFFFFFFFFu;
 // レイヤーの種類（compositor::LayerKind）。どちらも立っていなければサーフェス。
 #define MM_FLAG_KIND_SHAPE  0x4u
 #define MM_FLAG_KIND_LIQUID 0x8u
+// 下地に沿わせる（Mixer の Wrap to Underlying。サーフェスのみ）。
+#define MM_FLAG_WRAP        0x10u
 
 struct LayerConstants
 {
@@ -99,9 +101,24 @@ float SampleLayerHeight(float2 uv, float uvPerOutputTexel)
     }
     if (source == MM_SOURCE_TEXTURE && g_layer.textureIndices1.y != kInvalidTextureIndex)
     {
-        const float sampled = SampleLayerScalar(g_layer.textureIndices1.y,
-                                                MM_CHANNEL_SLOT_HEIGHT, uv, uvPerOutputTexel);
-        return base + (sampled - kHeightPivot) * gain;
+        // シェイプのハイトマップは「タイルしない地形の 1 枚絵」前提なので
+        // クランプで読む。wrap だと境界のバイリニア補間が反対側の端と混ざり、
+        // 縁に壁や段差が出る。マテリアルのハイトマップはタイル素材なので wrap のまま。
+        Texture2D<float4> texture = ResourceDescriptorHeap[g_layer.textureIndices1.y];
+        const float lod = TextureLod(texture, uvPerOutputTexel);
+        // サンプラは三項演算子で選べない（unique global resource の制約）ので分岐する。
+        float4 sampled;
+        if ((g_layer.flags & MM_FLAG_KIND_SHAPE) != 0u)
+        {
+            sampled = texture.SampleLevel(g_samplerLinearClamp, uv, lod);
+        }
+        else
+        {
+            sampled = texture.SampleLevel(g_samplerLinearWrap, uv, lod);
+        }
+        const float value =
+            SelectChannel(sampled, UnpackChannel(g_layer.mapChannels.x, MM_CHANNEL_SLOT_HEIGHT));
+        return base + (value - kHeightPivot) * gain;
     }
 
     // 定数。ソースの値がないので基準の高さそのもの。
@@ -257,18 +274,27 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
                                     uvPerOutputTexel);
     }
 
-    const float layerHeight = SampleLayerHeight(uv, uvPerOutputTexel);
+    float layerHeight = SampleLayerHeight(uv, uvPerOutputTexel);
     const float3 layerNormal = ComputeLayerNormal(uv, noiseTexelSize, uvPerOutputTexel);
 
     const bool isBaseLayer = (g_layer.flags & MM_FLAG_BASE_LAYER) != 0u;
     const bool isShape = (g_layer.flags & MM_FLAG_KIND_SHAPE) != 0u;
     const bool isLiquid = (g_layer.flags & MM_FLAG_KIND_LIQUID) != 0u;
+    // 下地に沿わせるのは合成相手がいるときだけ。一番下では意味を持たない。
+    const bool isWrap = (g_layer.flags & MM_FLAG_WRAP) != 0u && !isBaseLayer;
 
     float weight = 1.0f;
     if (!isBaseLayer)
     {
         const float mask = SampleLayerMask(uv, outputUv, outputUv, uvPerOutputTexel);
         const float destinationHeight = heightTarget[texel];
+        if (isWrap)
+        {
+            // 自分の高さを「下地 + 相対的な起伏」へ読み替える。以降は通常の競合に
+            // 流れるが、勝った所の高さも下地基準なので大きな形が保たれる。
+            // 基準の高さの 0.5 からのずれは、そのまま被せ物の厚みになる。
+            layerHeight = destinationHeight + (layerHeight - kHeightPivot);
+        }
         if (isShape)
         {
             // シェイプは競合せず加算する。マスクは加算量の係数。
@@ -305,10 +331,11 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         {
             result = layerNormal;
         }
-        else if (isShape)
+        else if (isShape || isWrap)
         {
-            // シェイプは高さを加算するので、法線も下地を平坦化せずに重ねるだけ。
-            // 下地の細部を消さないのが加算の意味。
+            // シェイプは高さを加算し、沿わせたサーフェスは下地の形を保つ。
+            // どちらも下地の大きな法線が生きているべきなので、
+            // 平坦化せずに RNM で重ねるだけにする。
             const float3 destination = DecodeTangentNormal(normalTarget[texel]);
             result = ReorientNormal(destination, FlattenNormal(layerNormal, weight));
         }
@@ -345,7 +372,13 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         else
         {
             const float destination = isBaseLayer ? layerHeight : heightTarget[texel];
-            heightTarget[texel] = lerp(destination, layerHeight, weight);
+            float result = lerp(destination, layerHeight, weight);
+            // 沿わせると下地 + 厚みで 1 を超えうる。シェイプの加算と同じく切り詰める。
+            if (isWrap)
+            {
+                result = saturate(result);
+            }
+            heightTarget[texel] = result;
         }
     }
 }

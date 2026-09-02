@@ -446,6 +446,9 @@ void Application::DrawUi() {
             if (ImGui::MenuItem("統計", nullptr, &display.showStats)) {
                 m_settings.Save();
             }
+            if (ImGui::MenuItem("高さの目安", nullptr, &display.showHeightGuide)) {
+                m_settings.Save();
+            }
             ImGui::Separator();
             ImGui::MenuItem("設定", nullptr, &m_showSettings);
             ImGui::MenuItem("ImGui デモ", nullptr, &m_showDemoWindow);

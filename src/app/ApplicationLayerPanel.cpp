@@ -495,6 +495,10 @@ void Application::DrawLayerPanel() {
             changed |= ui::PropertyFloat("境界の柔らかさ", &layer.blendRange, 0.0f, 1.0f,
                                          defaults.blendRange,
                                          "0 に近いほど硬い置き換えになる", "%.2f");
+            changed |= ui::PropertyBool("下地に沿わせる", &layer.wrapToUnderlying,
+                                        defaults.wrapToUnderlying,
+                                        "下地の形を保ったまま表面を被せる（コーティング）。"
+                                        "基準の高さの 0.5 からのずれが被せ物の厚みになる");
 
             ui::PropertyLabel("書き込み", "このレイヤーが書き込むチャンネル");
             for (uint32_t i = 0; i < IM_ARRAYSIZE(kChannelLabels); ++i) {

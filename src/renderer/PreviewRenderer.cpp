@@ -34,7 +34,7 @@ constexpr DXGI_FORMAT kShadowDsvFormat = DXGI_FORMAT_D32_FLOAT;
 // プレビューのメッシュの大きさ。どれも原点中心（モデル行列は単位行列）。
 // BoundingRadius() がここから包む球の半径を出すので、値を直接書かないこと。
 constexpr float kSphereRadius = 1.0f;
-constexpr float kPlaneSize = 2.0f;  // 一辺の長さ。XZ 平面に広がる
+// 平面の一辺は PreviewRenderer::kPlaneSize（ヘッダ。オーバーレイも参照する）。
 constexpr float kCubeSize = 1.4f;   // 一辺の長さ
 
 // 影を落とす範囲。プレビューのメッシュ（最大でも半径 1.5 程度）を囲む。

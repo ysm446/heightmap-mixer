@@ -25,6 +25,8 @@ constexpr uint32_t kFlagBaseLayer = 0x2u;
 // レイヤーの種類。シェーダの MM_FLAG_KIND_* と一致させること。
 constexpr uint32_t kFlagKindShape = 0x4u;
 constexpr uint32_t kFlagKindLiquid = 0x8u;
+// 下地に沿わせる（サーフェスのみ）。シェーダの MM_FLAG_WRAP と一致させること。
+constexpr uint32_t kFlagWrap = 0x10u;
 
 // レイヤー一覧に出すマスクサムネイルの一辺。行の高さに対して十分な細かさがあればよい。
 constexpr uint32_t kMaskThumbnailSize = 64;
@@ -290,6 +292,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             constants.flags |= kFlagKindShape;
         } else if (layer.kind == LayerKind::Liquid) {
             constants.flags |= kFlagKindLiquid;
+        } else if (layer.wrapToUnderlying) {
+            constants.flags |= kFlagWrap;
         }
 
         // マップはレイヤーが参照するマテリアルから引く。

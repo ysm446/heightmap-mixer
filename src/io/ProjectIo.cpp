@@ -366,6 +366,7 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     node["normalStrength"] = layer.normalStrength;
     node["mask"] = WriteMask(layer.mask, writeTexture, writePaint);
     node["blendRange"] = layer.blendRange;
+    node["wrapToUnderlying"] = layer.wrapToUnderlying;
     node["uvScale"] = layer.uvScale;
     return node;
 }
@@ -421,6 +422,7 @@ compositor::MaterialLayer ReadLayer(
         ReadMask(*mask, layer.mask, readTexture, readPaint);
     }
     layer.blendRange = ReadFloat(node, "blendRange", defaults.blendRange);
+    layer.wrapToUnderlying = ReadBool(node, "wrapToUnderlying", defaults.wrapToUnderlying);
     layer.uvScale = ReadFloat(node, "uvScale", defaults.uvScale);
     return layer;
 }

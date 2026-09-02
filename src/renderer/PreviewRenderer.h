@@ -152,6 +152,10 @@ inline constexpr PreviewDefaults kPreviewDefaults{};
 
 class PreviewRenderer {
 public:
+    // プレビューの平面メッシュの一辺（XZ 平面、原点中心、Y = 0）。
+    // 高さの目安（ビューポートのオーバーレイ）が枠の大きさに使う。
+    static constexpr float kPlaneSize = 2.0f;
+
     bool Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache);
     void Shutdown(rhi::Device& device);
 

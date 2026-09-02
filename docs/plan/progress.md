@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-02 08:10
+更新日時: 2026-09-02 08:50
 
 ## 現在の状況
 
@@ -42,6 +42,26 @@ Megascans の ORD（チャンネルパック）と EXR にも対応した。
 UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
 
 ## 完了済み
+
+- 2026-09-02 08:50 — **高さの目安**（`表示 > 高さの目安`、`DrawHeightGuide`）。
+  height 0 / 0.5 / 1 の位置をワイヤーフレームの枠で示す。平面のときだけ。
+  設定は `DisplaySettings::showHeightGuide`。
+  `--screenshot` には写らない（ImGui のオーバーレイなので UI 込みの
+  `--screenshot-ui` で確認する）。
+
+- 2026-09-02 08:42 — **シェイプのハイトマップをクランプで読む**。
+  タイルしない 1 枚絵の縁が wrap のバイリニア補間で反対側と混ざっていた。
+  マテリアルのハイトマップ（タイル素材）は wrap のまま。
+  **サンプラは三項演算子で選べない**（DXC の
+  「local resource not guaranteed to map to unique global resource」）。分岐で書く。
+
+- 2026-09-02 08:27 — **サーフェスの「下地に沿わせる」（Wrap to Underlying）**。
+  - `MaterialLayer::wrapToUnderlying`。シェーダへは `MM_FLAG_WRAP`。
+  - 高さを「下地 + 相対的な起伏」へ読み替えてから通常の競合に流す
+    （専用の重み計算は持たない）。Normal は下地を平坦化せず RNM で重ねる。
+  - Mixer の `preserve details` / `blur underlying` は未対応（近傍参照のパスが要る。
+    必要になったら別途）。設計は [design/compositing.md](../design/compositing.md) の
+    「サーフェスの『下地に沿わせる』」。
 
 - 2026-09-02 08:10 — **M6 の続き（アイコン / ハイトマップ読み込み / ノイズのタイル化）**。
   - レイヤー一覧の種類アイコン（`ui::MountainIcon` / `ui::WavesIcon`。

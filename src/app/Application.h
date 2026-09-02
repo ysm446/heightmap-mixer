@@ -156,6 +156,9 @@ private:
     void HandleCameraShortcuts(bool itemHovered);
     // ライトの向きを示すギズモ。動かしている間と、その直後だけ出す。
     void DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewportMax);
+    // 高さの目安。height 0 / 0.5 / 1 がワールドのどこに来るかを枠で示す
+    // （`表示 > 高さの目安`。平面のときだけ描く）。
+    void DrawHeightGuide(const ImVec2& viewportMin, const ImVec2& viewportMax);
     // ビューポート上のドラッグをブラシへ渡す。ペイントモードのときだけ呼ぶ。
     void HandlePaintInput(compositor::MaterialLayer& layer, bool itemActive,
                           const ImVec2& imageOrigin, const ImVec2& imageSize);
