@@ -34,7 +34,7 @@ struct DisplaySettings {
     bool showFps = false;
     // ビューポートの右上に描画の量（ドローコール・頂点・三角形）を出すか。
     bool showStats = false;
-    // 高さの目安（height 0 / 0.5 / 1 の位置を示す枠）をビューポートに重ねるか。
+    // ハイトの範囲（height 0 / 0.5 / 1 の位置を示す枠）をビューポートに重ねるか。
     bool showHeightGuide = false;
     // 前面にあるときの FPS 上限。0 で上限なし。
     int frameRateLimit = 0;

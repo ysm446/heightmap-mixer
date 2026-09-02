@@ -50,7 +50,7 @@ std::string GroupDigits(uint64_t value) {
     return digits;
 }
 
-// ビューポートに重ねる操作。いまは表示モードの切り替えだけ。
+// ビューポートに重ねる操作。表示モードの切り替えと、重ねる情報の切り替え。
 //
 // トップメニューではなくビューポートの中に置く。見ている場所から目を離さずに
 // 切り替えられ、いまどの表示なのかも常に見える。
@@ -82,6 +82,28 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
             if (ImGui::Selectable(kDebugViewLabels[i], current == view)) {
                 current = view;
             }
+        }
+        ImGui::EndPopup();
+    }
+
+    // --- 重ねる情報の切り替え ------------------------------------------------
+    // FPS / 統計 / ハイトの範囲。どれもビューポートに重ねて出すものなので、
+    // トップメニューではなくここに置く。切り替えたその場で設定に覚える。
+    ImGui::SameLine();
+    if (ImGui::Button("表示")) {
+        ImGui::OpenPopup("##viewportDisplayMenu");
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("ビューポートに重ねる情報");
+    }
+    if (ImGui::BeginPopup("##viewportDisplayMenu")) {
+        io::DisplaySettings& settings = m_settings.Display();
+        bool changed = false;
+        changed |= ImGui::MenuItem("FPS", nullptr, &settings.showFps);
+        changed |= ImGui::MenuItem("統計", nullptr, &settings.showStats);
+        changed |= ImGui::MenuItem("ハイトの範囲", nullptr, &settings.showHeightGuide);
+        if (changed) {
+            m_settings.Save();
         }
         ImGui::EndPopup();
     }
@@ -331,7 +353,7 @@ void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewpo
     drawList->PopClipRect();
 }
 
-// 高さの目安。合成した Height の 0 / 0.5 / 1 がワールドのどこに来るかを枠で示す。
+// ハイトの範囲。合成した Height の 0 / 0.5 / 1 がワールドのどこに来るかを枠で示す。
 //
 // ディスプレイスメントは `(height - 0.5) × 変位量` を面の法線方向へ押し出すので、
 // 0.5 が元の面、0 / 1 がその上下 ±0.5 × 変位量になる。平面のときだけ描く

@@ -46,7 +46,9 @@ void Application::DrawMaterialPanel() {
                                   defaults.materialUvScale,
                                   "マテリアルをメッシュ上に何回並べるか", "%.2f", 0, 0.25f);
 
-                ui::PropertyFloat("変位量", &m_renderer.DisplacementScale(), 0.0f, 0.5f,
+                // 上限 1.0 は「平面の辺（2.0）の半分」。地形スケールの崖や渓谷まで
+                // 作れるようにするため。素材のプレビュー用途では 0.2 前後が普通。
+                ui::PropertyFloat("変位量", &m_renderer.DisplacementScale(), 0.0f, 1.0f,
                                   defaults.displacementScale,
                                   "ハイトを形状に反映する量（ディスプレイスメント）。"
                                   "0 なら形は変わらない",

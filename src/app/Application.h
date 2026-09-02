@@ -74,7 +74,7 @@ private:
     // 天球パネル。一覧で選んだものがそのままビューポートの環境になる。
     void DrawSkyLibraryPanel();
     void DrawTextureLibraryPanel();
-    // アプリの設定ウィンドウ（表示 > 設定）。プロジェクトに保存しない設定を置く。
+    // アプリの設定ウィンドウ（ウィンドウ > 設定）。プロジェクトに保存しない設定を置く。
     void DrawSettingsWindow();
     // 合成結果を画像へ書き出すウィンドウ（ファイル > テクスチャを書き出す…）。
     void DrawExportWindow();
@@ -146,8 +146,8 @@ private:
     compositor::MaterialLayer* CurrentPaintLayer();
     // レイヤーパネルのマスク欄に出すペイント関連の UI。
     bool DrawPaintSection(compositor::MaterialLayer& layer);
-    // ビューポートに重ねる操作（表示モードの切り替え）。画像の描画より後に呼ぶ。
-    // 右上には FPS を出す（`表示 > FPS`）ので、右端の座標も渡す。
+    // ビューポートに重ねる操作（表示モードと、重ねる情報の切り替え）。
+    // 画像の描画より後に呼ぶ。右上には FPS を出すので、右端の座標も渡す。
     void DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& viewportMax);
     // ビューポート上の L + 左ドラッグでライトの向きを変える。
     // 掴んでいる間は true を返す（軌道やブラシへ渡さない）。
@@ -156,8 +156,8 @@ private:
     void HandleCameraShortcuts(bool itemHovered);
     // ライトの向きを示すギズモ。動かしている間と、その直後だけ出す。
     void DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewportMax);
-    // 高さの目安。height 0 / 0.5 / 1 がワールドのどこに来るかを枠で示す
-    // （`表示 > 高さの目安`。平面のときだけ描く）。
+    // ハイトの範囲。height 0 / 0.5 / 1 がワールドのどこに来るかを枠で示す
+    // （ビューポート左上の `表示 > ハイトの範囲`。平面のときだけ描く）。
     void DrawHeightGuide(const ImVec2& viewportMin, const ImVec2& viewportMax);
     // ビューポート上のドラッグをブラシへ渡す。ペイントモードのときだけ呼ぶ。
     void HandlePaintInput(compositor::MaterialLayer& layer, bool itemActive,
@@ -268,7 +268,6 @@ private:
 
     // CoInitializeEx が成功したときだけ CoUninitialize する。
     bool m_comInitialized = false;
-    bool m_showDemoWindow = false;
     // ドックレイアウトの初期化。ini に配置が無ければ既定レイアウトを組む。
     bool m_layoutChecked = false;
     bool m_rebuildLayout = false;

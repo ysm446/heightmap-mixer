@@ -433,25 +433,14 @@ void Application::DrawUi() {
             ImGui::TextDisabled("対象はレイヤーとマテリアル");
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("表示")) {
+        // ビューポートの表示に関わる切り替え（FPS / 統計 / ハイトの範囲）は
+        // メニューではなくビューポート左上の「表示」ボタンに置く。
+        if (ImGui::BeginMenu("ウィンドウ")) {
             if (ImGui::MenuItem("レイアウトをリセット")) {
                 m_rebuildLayout = true;
             }
             ImGui::Separator();
-            // 切り替えたその場で覚える。設定ウィンドウと同じ作法。
-            io::DisplaySettings& display = m_settings.Display();
-            if (ImGui::MenuItem("FPS", nullptr, &display.showFps)) {
-                m_settings.Save();
-            }
-            if (ImGui::MenuItem("統計", nullptr, &display.showStats)) {
-                m_settings.Save();
-            }
-            if (ImGui::MenuItem("高さの目安", nullptr, &display.showHeightGuide)) {
-                m_settings.Save();
-            }
-            ImGui::Separator();
             ImGui::MenuItem("設定", nullptr, &m_showSettings);
-            ImGui::MenuItem("ImGui デモ", nullptr, &m_showDemoWindow);
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
@@ -494,10 +483,6 @@ void Application::DrawUi() {
 
     DrawSettingsWindow();
     DrawExportWindow();
-
-    if (m_showDemoWindow) {
-        ImGui::ShowDemoWindow(&m_showDemoWindow);
-    }
 
     if (m_focusDefaultTabs > 0) {
         --m_focusDefaultTabs;
@@ -751,7 +736,7 @@ void Application::DrawSettingsWindow() {
         ui::EndPropertyTable();
     }
     ui::HintText("拡大するとウィンドウも同じ倍率で大きくなる（作業面積は変わらない）");
-    ui::HintText("パネルの幅は ini にピクセルで残る。ずれたら 表示 > レイアウトをリセット");
+    ui::HintText("パネルの幅は ini にピクセルで残る。ずれたら ウィンドウ > レイアウトをリセット");
 
     ui::SectionHeader("ウィンドウ");
     if (ui::BeginPropertyTable("settingsWindowRows")) {
