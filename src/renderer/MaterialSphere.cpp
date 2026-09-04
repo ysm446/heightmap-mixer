@@ -75,6 +75,10 @@ struct SphereConstants {
     float backgroundMip;
     float exposure;
     uint32_t tonemapMode;
+
+    // ベースカラーの調整。**合成と同じ値を渡すこと**（違うとプレビューと本番で色が変わる）。
+    float colorAdjust[2];  // 色相（ラジアン）, 彩度
+    float pad0[2];
 };
 
 }  // namespace
@@ -178,6 +182,8 @@ void MaterialSphere::Render(rhi::Device& device, rhi::PipelineCache& pipelineCac
     constants.backgroundMip = kBackgroundMip;
     constants.exposure = exposure;
     constants.tonemapMode = static_cast<uint32_t>(tonemap);
+    constants.colorAdjust[0] = asset.hueShiftDegrees * (kPi / 180.0f);
+    constants.colorAdjust[1] = asset.saturation;
 
     const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(SphereConstants), 256);
     if (!cb.IsValid()) {

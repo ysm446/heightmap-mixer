@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-02 12:50
+更新日時: 2026-09-04 21:40
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -81,6 +81,9 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 あわせて `height.texture`（レイヤー直結のハイトマップ。スカラーのマップと同じ
 「テクスチャ + チャンネル」の組）と `wrapToUnderlying`（下地に沿わせる。
 サーフェスのコーティング）が増えた。どちらもキーの追加だけなので版は分けない。
+
+マテリアルの `hueShift`（度）と `saturation` も同じくキーの追加だけで、版は分けない。
+無ければ既定（0 / 1）になり、調整なしと同じ結果になる。
 
 ## `.mmproj`
 
@@ -197,6 +200,7 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
   "version": 3,
   "name": "砂利",
   "baseColorTint": [1.0, 1.0, 1.0],
+  "hueShift": 0.0, "saturation": 1.0,
   "roughness": 0.5, "metallic": 0.0, "ambientOcclusion": 1.0,
   "maps": {
     "baseColor": "../../data/textures/T_Gravel_D.png",

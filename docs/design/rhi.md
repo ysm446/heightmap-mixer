@@ -1,7 +1,7 @@
 # rhi — DirectX 12 ラッパの設計
 
 作成日時: 2026-08-31 12:09
-更新日時: 2026-08-31 12:09
+更新日時: 2026-09-04 21:40
 
 `src/rhi/` の設計方針。実装は M1 で確定した。
 
@@ -26,7 +26,7 @@ RWTexture2D<float4> output = ResourceDescriptorHeap[g_layer.outputIndices.x];
 
 | スロット | 内容 |
 | --- | --- |
-| `b0` | ルート定数 16 dword（テクスチャのインデックスや小さなパラメータ） |
+| `b0` | ルート定数 20 dword（テクスチャのインデックスや小さなパラメータ） |
 | `b1` | ルート CBV（大きめの定数バッファ） |
 | `s0` | スタティックサンプラ point clamp |
 | `s1` | スタティックサンプラ linear clamp |
