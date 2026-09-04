@@ -117,6 +117,18 @@ inline const char* const kDebugViewLabels[] = {
 inline const char* const kResolutionLabels[] = {"512", "1024", "2048", "4096"};
 inline constexpr uint32_t kResolutionValues[] = {512, 1024, 2048, 4096};
 
+// プレビューの窓（マテリアル / テクスチャ / 天球）の、上の区画に使う正方形の一辺。
+//
+// **幅に合わせる。** 窓を広げれば絵も大きくなり、区画に余白が残らない。
+// ただし窓が横長のときに幅ぶんの高さを取ると下のプロパティが消えるので、
+// 残りの高さ（プロパティ 1 画面ぶんを残した値）で頭打ちにする。
+// **この関数は上の区画を置く直前に呼ぶこと**（`GetContentRegionAvail` を見るため）。
+inline float PreviewPaneSize() {
+    const ImVec2 available = ImGui::GetContentRegionAvail();
+    const float maxHeight = available.y - ui::Scaled(140.0f);
+    return std::max(ui::Scaled(120.0f), std::min(available.x, maxHeight));
+}
+
 // レイヤー一覧のドラッグ＆ドロップで使うペイロードの種別。
 inline constexpr const char* kLayerDragDropType = "MM_LAYER";
 // レイヤー一覧の行に並べるサムネイルの一辺（96 DPI 基準）。行の高さはこれで決まる。
@@ -134,10 +146,6 @@ inline constexpr float kLayerRowEye = 20.0f;
 // 下限はツールバーの 1 行 + 行 2 つ + ヒントの 1 行が入る高さ。
 inline constexpr float kLayerListMinHeight = 120.0f;
 inline constexpr float kLayerListMaxHeight = 640.0f;
-
-// テクスチャの拡大プレビューの一辺（96 DPI 基準）。
-// サムネイル（72）では中身を確かめられないので、その 3 倍弱を取る。
-inline constexpr float kTexturePreviewSize = 200.0f;
 
 // テクスチャ一覧からマップ欄へのドラッグ＆ドロップで使うペイロードの種別。
 inline constexpr const char* kTextureDragDropType = "MM_TEXTURE";

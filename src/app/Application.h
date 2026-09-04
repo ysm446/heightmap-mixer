@@ -11,8 +11,10 @@
 #include "io/AppSettings.h"
 #include "io/MaterialExport.h"
 #include "io/RecentFiles.h"
+#include "renderer/MaterialSphere.h"
 #include "renderer/PreviewRenderer.h"
 #include "renderer/SkyLibrary.h"
+#include "renderer/SkySphere.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 #include "rhi/ShaderCompiler.h"
@@ -71,9 +73,32 @@ private:
     void DrawInfoPanel();
     void DrawLayerPanel();
     void DrawMaterialLibraryPanel();
+    // 一覧の右クリックメニュー（追加 / 複製 / 削除 / 読み込み / 書き出し）。
+    // target が kNoMaterialAsset なら、対象の要る項目は出さない。
+    void DrawMaterialContextMenu(compositor::MaterialAssetId target);
+    // マテリアル 1 つのプロパティ（基本 + マップ）。変更があれば真を返す。
+    // **置き場所はプレビューの窓だけ**（一覧はサムネイルだけを出す）。
+    bool DrawMaterialProperties(compositor::MaterialAsset& asset);
+    // マテリアルプレビューの窓（回せる球 + プロパティ）。
+    // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
+    void DrawMaterialSphereWindow();
     // 天球パネル。一覧で選んだものがそのままビューポートの環境になる。
     void DrawSkyLibraryPanel();
+    // 天球一覧の右クリックメニュー（追加 / 複製 / 削除）。
+    // target が kNoSkyAsset なら、対象の要る項目は出さない。
+    void DrawSkyContextMenu(renderer::SkyAssetId target);
+    // 天球プレビューの窓（回せる球 + 設定）。
+    // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
+    void DrawSkyPreviewWindow();
     void DrawTextureLibraryPanel();
+    // テクスチャ一覧の右クリックメニュー（読み込む / 削除）。
+    // target が kNoTexture なら、対象の要る項目は出さない。
+    void DrawTextureContextMenu(compositor::TextureId target);
+    // 削除の確認モーダルを開く。参照が無くても必ず通す。
+    void RequestTextureRemove(compositor::TextureId id);
+    // テクスチャプレビューの窓（拡大表示 + 詳細）。
+    // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
+    void DrawTexturePreviewWindow();
     // アプリの設定ウィンドウ（ウィンドウ > 設定）。プロジェクトに保存しない設定を置く。
     void DrawSettingsWindow();
     // 合成結果を画像へ書き出すウィンドウ（ファイル > テクスチャを書き出す…）。
@@ -168,6 +193,10 @@ private:
     rhi::ShaderCompiler m_shaderCompiler;
     rhi::PipelineCache m_pipelineCache;
     renderer::PreviewRenderer m_renderer;
+    // マテリアルプレビューの球。窓を開いている間だけ描く。
+    renderer::MaterialSphere m_materialSphere;
+    // 天球プレビューの球。同じく窓を開いている間だけ描く。
+    renderer::SkySphere m_skySphere;
     compositor::MaterialStack m_materialStack;
     compositor::TextureLibrary m_textureLibrary;
     compositor::MaterialLibrary m_materialLibrary;
@@ -222,6 +251,16 @@ private:
     io::AppSettings m_settings;
     // 設定ウィンドウを出しているか。ドックへは収めない補助ウィンドウ。
     bool m_showSettings = false;
+    // マテリアルプレビューの窓。ドックへは収めない補助ウィンドウ。
+    bool m_showMaterialSphere = false;
+    // テクスチャプレビューの窓。同じくドックへは収めない。
+    bool m_showTexturePreview = false;
+    // 天球プレビューの窓。同じくドックへは収めない。
+    bool m_showSkyPreview = false;
+    // その窓の中身をこのフレームに描いたか。**折りたたまれていれば球も描かない。**
+    // UI（DrawUi）はフレームの記録より前に走るので、その結果をここへ残して使う。
+    bool m_materialSphereVisible = false;
+    bool m_skyPreviewVisible = false;
     // 書き出しウィンドウ。設定ウィンドウと同じくドックへは収めない。
     bool m_showExport = false;
     // 情報ウィンドウ。常設はせず「ウィンドウ」メニューから開く補助ウィンドウ。

@@ -1,4 +1,4 @@
-// 天球パネル。ライブラリの一覧と、選択中の天球の設定。
+// 天球パネル。**一覧（サムネイル）だけ**を置き、設定はプレビューの窓が持つ。
 //
 // **一覧で選んだものが、そのままビューポートの環境になる。**
 // 環境は同時に 1 つしか使えないので、「選ぶ」と「適用する」を分けても
@@ -33,34 +33,11 @@ void Application::DrawSkyLibraryPanel() {
     const std::vector<renderer::SkyAsset>& assets = m_skyLibrary.Entries();
     const auto assetCount = static_cast<int>(assets.size());
 
-    if (ui::Button("追加")) {
-        const renderer::SkyAssetId added =
-            m_skyLibrary.Add("天球 " + std::to_string(assets.size() + 1));
-        m_skyLibrary.SetActive(added);
-        m_scrollToSelectedSky = true;
-    }
-    ImGui::SameLine();
-    if (ui::Button("複製")) {
-        if (const renderer::SkyAsset* source = m_skyLibrary.Active(); source != nullptr) {
-            const renderer::SkyAssetId added = m_skyLibrary.Duplicate(*source);
-            m_skyLibrary.SetActive(added);
-            m_scrollToSelectedSky = true;
-        }
-    }
-    ImGui::SameLine();
-    // 最後の 1 つは消させない。消しても既定が作り直されるだけで、
-    // ボタンが効いていないように見える。
-    ImGui::BeginDisabled(assetCount <= 1);
-    if (ui::Button("削除")) {
-        // その場で消すと、この後の一覧描画が erase 済みの要素を読んでしまう。
-        // 要求だけ積み、フレームの外で処理する。
-        m_pendingSkyRemove = m_skyLibrary.ActiveId();
-    }
-    ImGui::EndDisabled();
-
     // サムネイルの一覧。マテリアルと同じ作法で、パネルの幅に入るだけ横に並べる。
+    // **設定も操作のボタンも置かない。** 設定はプレビューの窓、
+    // 追加 / 複製 / 削除は右クリックのメニュー。
     const float thumbnailSize = ui::Scaled(84.0f);
-    if (ImGui::BeginChild("skyGrid", ImVec2(0.0f, ui::Scaled(200.0f)), ImGuiChildFlags_Borders)) {
+    if (ImGui::BeginChild("skyGrid", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders)) {
         const float step = thumbnailSize + ImGui::GetStyle().ItemSpacing.x;
         const auto columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / step));
 
@@ -79,12 +56,26 @@ void Application::DrawSkyLibraryPanel() {
             if (thumbnail.clicked) {
                 m_skyLibrary.SetActive(asset.id);
             }
+            // ダブルクリックでプレビューの窓を開く。**適用も一緒に動く**ので、
+            // 開いた窓には必ずいま押した天球が出る。
+            if (thumbnail.doubleClicked) {
+                m_skyLibrary.SetActive(asset.id);
+                m_showSkyPreview = true;
+                ImGui::SetWindowFocus("天球プレビュー");
+            }
             if (selected && m_scrollToSelectedSky) {
                 m_scrollToSelectedSky = false;
                 ImGui::SetScrollHereY(1.0f);
             }
             if (thumbnail.hovered) {
-                ImGui::SetTooltip("%s", asset.name.c_str());
+                ImGui::SetTooltip("%s\nダブルクリックで設定 / 右クリックでメニュー",
+                                  asset.name.c_str());
+            }
+            // 右クリックのメニュー。**押したサムネイルが対象。**
+            if (ImGui::BeginPopupContextItem("##skyMenu")) {
+                m_skyLibrary.SetActive(asset.id);
+                DrawSkyContextMenu(asset.id);
+                ImGui::EndPopup();
             }
             ImGui::EndGroup();
 
@@ -93,14 +84,129 @@ void Application::DrawSkyLibraryPanel() {
                 ImGui::SameLine();
             }
         }
+
+        // サムネイルの無い所での右クリック。対象が無いので「追加」だけ。
+        if (ImGui::BeginPopupContextWindow("##skyGridMenu",
+                                           ImGuiPopupFlags_MouseButtonRight |
+                                               ImGuiPopupFlags_NoOpenOverItems)) {
+            DrawSkyContextMenu(renderer::kNoSkyAsset);
+            ImGui::EndPopup();
+        }
     }
     ImGui::EndChild();
 
+    ImGui::End();
+}
+
+// 一覧の右クリックメニュー。**target が無効なら、対象の要る項目は出さない**
+// （サムネイルの無い所を押したとき）。ボタンの帯は持たず、追加も削除もここから行う。
+void Application::DrawSkyContextMenu(renderer::SkyAssetId target) {
+    const std::vector<renderer::SkyAsset>& assets = m_skyLibrary.Entries();
+    const renderer::SkyAsset* asset = m_skyLibrary.Find(target);
+
+    if (asset != nullptr) {
+        ImGui::TextDisabled("%s", asset->name.c_str());
+        ImGui::Separator();
+    }
+
+    if (ImGui::MenuItem("追加")) {
+        const renderer::SkyAssetId added =
+            m_skyLibrary.Add("天球 " + std::to_string(assets.size() + 1));
+        m_skyLibrary.SetActive(added);
+        m_scrollToSelectedSky = true;
+    }
+    if (asset != nullptr) {
+        if (ImGui::MenuItem("複製")) {
+            const renderer::SkyAssetId added = m_skyLibrary.Duplicate(*asset);
+            m_skyLibrary.SetActive(added);
+            m_scrollToSelectedSky = true;
+        }
+        // **最後の 1 つは消させない。** 消しても既定が作り直されるだけで、
+        // 効いていないように見える。
+        ImGui::BeginDisabled(assets.size() <= 1);
+        if (ImGui::MenuItem("削除")) {
+            // その場で消すと、この後の一覧描画が erase 済みの要素を読んでしまう。
+            // 要求だけ積み、フレームの外で処理する。
+            m_pendingSkyRemove = target;
+        }
+        ImGui::EndDisabled();
+    }
+}
+
+// 天球プレビューの窓。大きい絵と、その天球の設定。
+//
+// **映すのは適用中の天球**（一覧で選んだもの＝ビューポートの環境）。
+// マテリアル / テクスチャの窓と同じ作法で、窓の側に別の選択を持たせない。
+void Application::DrawSkyPreviewWindow() {
+    m_skyPreviewVisible = false;
+    if (!m_showSkyPreview) {
+        return;
+    }
+
+    // 縦長。絵の下に設定が続くので、幅は 1 列ぶんあれば足りる。
+    // **窓そのものはスクロールさせない。** スクロールするのは下の区画だけ。
+    ImGui::SetNextWindowSize(ImVec2(ui::Scaled(420.0f), ui::Scaled(620.0f)),
+                             ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("天球プレビュー", &m_showSkyPreview,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+        ImGui::End();
+        return;
+    }
+
+    m_skyLibrary.EnsureDefault();
     renderer::SkyAsset* active = m_skyLibrary.ActiveMutable();
     if (active == nullptr) {
         ImGui::End();
         return;
     }
+    // 球は**適用中の環境キューブ**から毎フレーム描く（フレームの中で走る）。
+    m_skyPreviewVisible = true;
+
+    // --- 上下 2 区画。上は幅に合わせた正方形の絵 -------------------------------
+    const float paneSize = PreviewPaneSize();
+    ImGui::BeginChild("skyPreviewPane", ImVec2(0.0f, paneSize), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    {
+        const float imageSize =
+            std::max(std::min(ImGui::GetContentRegionAvail().x, paneSize), ui::Scaled(32.0f));
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                             std::max(0.0f, (ImGui::GetContentRegionAvail().x - imageSize) * 0.5f));
+        const ImVec2 min = ImGui::GetCursorScreenPos();
+        const ImVec2 max(min.x + imageSize, min.y + imageSize);
+
+        // 画像より先に ID を持つアイテムを置く（マテリアルの球と同じ作法）。
+        ImGui::InvisibleButton("##skySphere", ImVec2(imageSize, imageSize),
+                               ImGuiButtonFlags_MouseButtonLeft);
+        if (ImGui::IsItemActive()) {
+            // 1px = 0.35 度。マテリアルの球と同じ効き方。
+            const ImVec2 delta = ImGui::GetIO().MouseDelta;
+            m_skySphere.Orbit(delta.x * 0.35f, delta.y * 0.35f);
+        }
+        // この区画はスクロールしないので、ホイールはズームへ回せる。
+        if (ImGui::IsItemHovered() && ImGui::GetIO().MouseWheel != 0.0f) {
+            m_skySphere.Zoom(ImGui::GetIO().MouseWheel);
+        }
+
+        // まだ絵が無いときは枠だけ描く。ImTextureID の 0 を AddImage へ渡すと
+        // デバッグビルドの ImGui がアサートで落ちる。
+        if (m_skySphere.HasOutput()) {
+            ImGui::GetWindowDrawList()->AddImage(
+                static_cast<ImTextureID>(m_skySphere.OutputHandle().ptr), min, max);
+        }
+        ImGui::GetWindowDrawList()->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border),
+                                            ImGui::GetStyle().FrameRounding, 0, ui::Scaled(1.0f));
+    }
+    ImGui::EndChild();
+
+    ImGui::Separator();
+
+    ImGui::BeginChild("skyPropertyPane", ImVec2(0.0f, 0.0f));
+    ui::HintText("ドラッグで回す / ホイールで寄る。露出はビューポートと同じ");
+    if (ui::Button("視点を戻す", ui::kWideButtonWidth)) {
+        m_skySphere.ResetView();
+    }
+    ui::HintText("一覧で選んだ天球が、そのままビューポートの環境になる");
+
     renderer::SkyDefinition& sky = active->sky;
     const renderer::SkyDefinition kDefaultSkyDefinition;
     // 見た目に関わる変更。サムネイルを作り直す（環境本体はレンダラが判断する）。
@@ -183,6 +289,7 @@ void Application::DrawSkyLibraryPanel() {
     if (changed) {
         m_skyLibrary.MarkThumbnailDirty(active->id);
     }
+    ImGui::EndChild();
 
     ImGui::End();
 }

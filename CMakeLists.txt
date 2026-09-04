@@ -148,12 +148,16 @@ set(mm_sources
     src/renderer/Camera.h
     src/renderer/Environment.cpp
     src/renderer/Environment.h
+    src/renderer/MaterialSphere.cpp
+    src/renderer/MaterialSphere.h
     src/renderer/Mesh.cpp
     src/renderer/Mesh.h
     src/renderer/PreviewRenderer.cpp
     src/renderer/PreviewRenderer.h
     src/renderer/SkyLibrary.cpp
     src/renderer/SkyLibrary.h
+    src/renderer/SkySphere.cpp
+    src/renderer/SkySphere.h
     src/ui/ImGuiLayer.cpp
     src/ui/ImGuiLayer.h
     src/ui/Toast.cpp
