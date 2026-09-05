@@ -251,6 +251,9 @@ private:
     io::AppSettings m_settings;
     // 設定ウィンドウを出しているか。ドックへは収めない補助ウィンドウ。
     bool m_showSettings = false;
+    // 設定の「文字サイズ」をドラッグしている間の値。負なら編集中ではない。
+    // 反映すると UI 全体が動くので、スライダーを離すまで設定へは書かない。
+    int m_fontSizeEditing = -1;
     // マテリアルプレビューの窓。ドックへは収めない補助ウィンドウ。
     bool m_showMaterialSphere = false;
     // テクスチャプレビューの窓。同じくドックへは収めない。

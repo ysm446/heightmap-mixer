@@ -18,8 +18,9 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg
 namespace mm {
 namespace {
 
-// フォントの基準サイズ。実際の大きさは ImGui 側で UI 拡大率が掛かる。
-constexpr float kFontSize = 17.0f;
+// フォントアトラスに読むときの大きさ。動的ラスタライズなので
+// これは出発点でしかない（実際の大きさは style.FontSizeBase で決める）。
+constexpr float kFontAtlasSize = ui::kDefaultFontSize;
 
 // ImGui バックエンドからのディスクリプタ確保要求を、こちらのアロケータへ橋渡しする。
 void SrvDescriptorAlloc(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* outCpu,
@@ -96,6 +97,8 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
     }
 
     LoadFonts();
+    // 読み込んだ大きさではなく、こちらが持っている基準サイズで描く。
+    ApplyScaleToStyle();
 
     m_device = &device;
     m_initialized = true;
@@ -111,10 +114,31 @@ void ImGuiLayer::SetUiScale(float scale) {
 
     // 余白・角丸・部品幅はテーマ側でまとめて掛け直す。
     ui::ApplyTheme(m_uiScale);
-    // フォントは 1.92 の動的ラスタライズに任せる。アトラスは作り直さない。
-    ImGui::GetStyle().FontScaleDpi = m_uiScale;
+    ApplyScaleToStyle();
 
     MM_LOG_INFO("UI の拡大率を %.0f%% にしました", m_uiScale * 100.0f);
+}
+
+void ImGuiLayer::SetFontSize(float sizeInPixels) {
+    const float clamped = std::clamp(sizeInPixels, ui::kMinFontSize, ui::kMaxFontSize);
+    if (std::abs(clamped - m_fontSize) < 0.001f) {
+        return;
+    }
+    m_fontSize = clamped;
+
+    // テーマは触らない。**余白や部品幅は拡大率だけで決める**ので、
+    // 文字サイズを変えても行の詰まり方は変わらない（高さだけが文字に追従する）。
+    ApplyScaleToStyle();
+
+    MM_LOG_INFO("フォントサイズを %.0f px にしました", m_fontSize);
+}
+
+// フォントは 1.92 の動的ラスタライズに任せる。アトラスは作り直さない。
+// 実際に描かれる大きさは FontSizeBase × FontScaleDpi。
+void ImGuiLayer::ApplyScaleToStyle() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.FontSizeBase = m_fontSize;
+    style.FontScaleDpi = m_uiScale;
 }
 
 void ImGuiLayer::LoadFonts() {
@@ -128,7 +152,7 @@ void ImGuiLayer::LoadFonts() {
     ImGuiIO& io = ImGui::GetIO();
     for (const char* path : kCandidates) {
         // 基準サイズで読む。拡大率は FontScaleDpi が掛ける。
-        if (io.Fonts->AddFontFromFileTTF(path, kFontSize) != nullptr) {
+        if (io.Fonts->AddFontFromFileTTF(path, kFontAtlasSize) != nullptr) {
             MM_LOG_INFO("フォントを読み込みました: %s", path);
             return;
         }
@@ -147,6 +171,7 @@ void ImGuiLayer::Shutdown() {
     m_initialized = false;
     m_device = nullptr;
     m_uiScale = 1.0f;
+    m_fontSize = ui::kDefaultFontSize;
 }
 
 void ImGuiLayer::BeginFrame() {

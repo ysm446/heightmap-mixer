@@ -715,6 +715,10 @@ uint32_t Application::DefaultClientHeight() const {
 // 1920x1080 のまま**で、文字と部品だけが大きくなる。
 // 拡大率だけ上げるとパネルが窮屈になるので、既定では大きさを揃える。
 void Application::ApplyUiScale() {
+    // 文字サイズは拡大率と別に効く。ウィンドウの大きさは変えない
+    // （作業面積は拡大率で決まるもので、文字の大小で動かすものではない）。
+    m_imgui.SetFontSize(static_cast<float>(m_settings.Ui().fontSize));
+
     const float desired = DesiredUiScale();
     if (std::abs(desired - m_imgui.UiScale()) < 0.001f) {
         return;
@@ -765,6 +769,30 @@ void Application::DrawSettingsWindow() {
             if (ui::PropertyCombo("拡大率", &selected, kScaleLabels, IM_ARRAYSIZE(kScaleLabels), 0,
                                   "UI の大きさ。ウィンドウの大きさは変わらない")) {
                 ui.manualScale = kScaleValues[selected];
+                changed = true;
+            }
+        }
+
+        // 文字だけの大きさ。拡大率と違って余白や部品幅は変わらないので、
+        // 「情報量は増やしたいが文字は読みたい」という詰め方の調整に使える。
+        // ラベルは短く保つ。ラベル列に収まらないと途中で切れる。
+        //
+        // **スライダーを離してから反映する。** ドラッグ中に反映すると UI 全体が
+        // 動き、掴んでいるスライダーごとずれて狙った値で止められない。
+        int fontSize = (m_fontSizeEditing >= 0) ? m_fontSizeEditing : ui.fontSize;
+        bool fontSizeActive = false;
+        ui::PropertyInt("文字サイズ", &fontSize, static_cast<int>(ui::kMinFontSize),
+                        static_cast<int>(ui::kMaxFontSize), defaults.fontSize,
+                        "UI 全体の文字の大きさ（px）。拡大率とは別に掛かる。"
+                        "部品の高さは文字から決まるので、行の高さも一緒に変わる。"
+                        "スライダーを離したときに反映する",
+                        &fontSizeActive);
+        if (fontSizeActive) {
+            m_fontSizeEditing = fontSize;
+        } else {
+            m_fontSizeEditing = -1;
+            if (fontSize != ui.fontSize) {
+                ui.fontSize = fontSize;
                 changed = true;
             }
         }

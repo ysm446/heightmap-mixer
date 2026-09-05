@@ -135,8 +135,8 @@ bool NearlyEqual(float a, float b) {
 // スライダーやコンボの幅。値列の残り幅から既定値マーカーぶんを引いて丸める。
 float ValueWidth(float minWidth, float maxWidth) {
     const float reserved = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x;
-    return std::clamp(ImGui::GetContentRegionAvail().x - reserved, Scaled(minWidth),
-                      Scaled(maxWidth));
+    return std::clamp(ImGui::GetContentRegionAvail().x - reserved, TextScaled(minWidth),
+                      TextScaled(maxWidth));
 }
 
 }  // namespace
@@ -358,6 +358,16 @@ float Scaled(float value) {
     return value * g_dpiScale;
 }
 
+float FontScale() {
+    // FontSizeBase は ImGuiLayer が設定から入れる。0 は「まだ入れていない」なので等倍。
+    const float base = ImGui::GetStyle().FontSizeBase;
+    return (base > 0.0f) ? (base / kDefaultFontSize) : 1.0f;
+}
+
+float TextScaled(float value) {
+    return value * g_dpiScale * FontScale();
+}
+
 void ApplyTheme(float dpiScale) {
     g_dpiScale = (dpiScale > 0.0f) ? dpiScale : 1.0f;
 
@@ -481,7 +491,8 @@ bool BeginPropertyTable(const char* id) {
     if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp)) {
         return false;
     }
-    ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, Scaled(kLabelColumnWidth));
+    ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed,
+                            TextScaled(kLabelColumnWidth));
     ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
     return true;
 }
@@ -541,12 +552,15 @@ bool PropertyFloat(const char* label, float* value, float minValue, float maxVal
 }
 
 bool PropertyInt(const char* label, int* value, int minValue, int maxValue, int defaultValue,
-                 const char* tooltip) {
+                 const char* tooltip, bool* outActive) {
     *value = std::clamp(*value, minValue, maxValue);
 
     PropertyLabel(label, NumericTooltip(tooltip));
     ImGui::SetNextItemWidth(ValueWidth(kSliderMinWidth, kSliderMaxWidth));
     bool changed = ImGui::SliderInt("##value", value, minValue, maxValue);
+    if (outActive != nullptr) {
+        *outActive = ImGui::IsItemActive();
+    }
 
     if (ResetDot(*value == defaultValue, std::to_string(defaultValue))) {
         *value = std::clamp(defaultValue, minValue, maxValue);
@@ -646,7 +660,7 @@ bool PropertyCombo(const char* label, int* value, const char* const items[], int
 bool PropertyTextInput(const char* label, char* buffer, size_t bufferSize, const char* tooltip) {
     PropertyLabel(label, tooltip);
     ImGui::SetNextItemWidth(
-        std::min(Scaled(kTextInputWidth), ImGui::GetContentRegionAvail().x));
+        std::min(TextScaled(kTextInputWidth), ImGui::GetContentRegionAvail().x));
     const bool changed = ImGui::InputText("##value", buffer, bufferSize);
     PropertyEnd();
     return changed;
@@ -662,7 +676,7 @@ void PropertyValue(const char* label, const char* format, ...) {
 }
 
 bool Button(const char* label, float width) {
-    return ImGui::Button(label, ImVec2(Scaled(width), 0.0f));
+    return ImGui::Button(label, ImVec2(TextScaled(width), 0.0f));
 }
 
 namespace {
@@ -774,7 +788,7 @@ void GridCaption(const char* text, float width) {
         return;
     }
     // ImGui 1.92 は同じフォントを別サイズで積める。第 2 フォントは読み込まない。
-    ImGui::PushFont(nullptr, kCaptionFontSize);
+    ImGui::PushFont(nullptr, kCaptionFontSize * FontScale());
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 
     // 2 行目が空でも行は描く。**空行を飛ばすと升目の高さが揃わない。**
