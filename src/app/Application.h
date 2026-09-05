@@ -282,6 +282,7 @@ private:
     renderer::SkyAssetId m_pendingSkyRemove = renderer::kNoSkyAsset;
     // 確認待ちのテクスチャ。参照が残っているときだけ入る。
     compositor::TextureId m_textureRemoveCandidate = compositor::kNoTexture;
+    bool m_textureRemovePopupPending = false;
     std::vector<std::string> m_textureRemoveUsers;
     bool m_pendingProjectNew = false;
 

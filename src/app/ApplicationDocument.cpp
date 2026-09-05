@@ -45,6 +45,8 @@ DocumentSnapshot Application::CaptureDocument() const {
         material.ambientOcclusion = asset.ambientOcclusion;
         material.height = asset.height;
         material.baseColorTint = asset.baseColorTint;
+        material.hueShiftDegrees = asset.hueShiftDegrees;
+        material.saturation = asset.saturation;
         material.roughnessValue = asset.roughnessValue;
         material.metallicValue = asset.metallicValue;
         material.ambientOcclusionValue = asset.ambientOcclusionValue;
@@ -90,6 +92,8 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
         asset.ambientOcclusion.texture = ValidTexture(asset.ambientOcclusion.texture);
         asset.height.texture = ValidTexture(asset.height.texture);
         asset.baseColorTint = material.baseColorTint;
+        asset.hueShiftDegrees = material.hueShiftDegrees;
+        asset.saturation = material.saturation;
         asset.roughnessValue = material.roughnessValue;
         asset.metallicValue = material.metallicValue;
         asset.ambientOcclusionValue = material.ambientOcclusionValue;

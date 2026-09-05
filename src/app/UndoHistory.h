@@ -29,6 +29,8 @@ struct MaterialSnapshot {
     compositor::MapSlot ambientOcclusion;
     compositor::MapSlot height;
     DirectX::XMFLOAT3 baseColorTint{0.5f, 0.5f, 0.5f};
+    float hueShiftDegrees = 0.0f;
+    float saturation = 1.0f;
     float roughnessValue = 0.5f;
     float metallicValue = 0.0f;
     float ambientOcclusionValue = 1.0f;

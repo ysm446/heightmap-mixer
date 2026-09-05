@@ -169,6 +169,12 @@ void Application::DrawTextureLibraryPanel() {
     if (deleteKey) {
         RequestTextureRemove(entries[static_cast<size_t>(m_selectedTexture)].id);
     }
+    // メニュー内で開くと ID とポップアップの階層が変わるため、
+    // BeginPopupModal と同じ親パネルで開く（右クリックからの要求は次フレーム）。
+    if (m_textureRemovePopupPending) {
+        m_textureRemovePopupPending = false;
+        ImGui::OpenPopup(kTextureRemoveModalTitle);
+    }
     DrawTextureRemoveModal();
 
     // サムネイルの一覧。枠の幅に入るだけ横に並べる。
@@ -284,7 +290,7 @@ void Application::RequestTextureRemove(compositor::TextureId id) {
     }
     m_textureRemoveCandidate = id;
     m_textureRemoveUsers = CollectTextureUsers(id);
-    ImGui::OpenPopup(kTextureRemoveModalTitle);
+    m_textureRemovePopupPending = true;
 }
 
 // テクスチャプレビューの窓。拡大した中身と、そのテクスチャの詳細。
